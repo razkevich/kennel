@@ -267,11 +267,11 @@ func (m Model) renderRoom(r room, maxW, maxRows int, sel string) string {
 	}
 	grid := strings.Join(gridRows, "\n")
 	if n == 0 {
-		msg := sDim.Italic(true).Render(r.blurb)
+		msg := sDim.Italic(true).Width(innerW - 2).Align(lipgloss.Center).Render(r.blurb)
 		if r.look.Decor != "" {
-			msg = r.look.Decor + "  " + msg
+			msg = center(r.look.Decor, innerW-2) + "\n" + msg
 		}
-		grid = lipgloss.NewStyle().Width(innerW).Height(4).Align(lipgloss.Center, lipgloss.Center).Render(truncate(msg, innerW))
+		grid = lipgloss.NewStyle().Width(innerW).Height(4).Align(lipgloss.Center, lipgloss.Center).Render(msg)
 	}
 	gw := lipgloss.Width(grid)
 	if gw < innerW {

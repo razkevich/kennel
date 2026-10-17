@@ -14,7 +14,7 @@ func fmtType(v any) string { return fmt.Sprintf("%T", v) }
 
 func TestMapShowsRoomsAndPups(t *testing.T) {
 	h := newHarness(t, opener.Print)
-	h.contains("kennel", "🗺  Map", "The Yard", "Lobby", "Firehouse", "Helping Out", "Courtroom", "Under the Rug", "Dumpster",
+	h.contains("kennel", "🧭 Map", "The Yard", "Lobby", "Firehouse", "Helping Out", "Courtroom", "Under the Rug", "Dumpster",
 		"CHECKOUT-V2", "FLAKY-CI", "❗1 needs you", "⚡2 working")
 	// The hover card describes the selected pup.
 	h.contains("COST-REPORT", "● working")

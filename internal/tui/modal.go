@@ -160,12 +160,12 @@ func stripSpaces(s string) string { return "  " + strings.TrimSpace(s) }
 
 func renameModal(p *pack.Pup) *modal {
 	help := "kennel remembers it; when the pup is asleep it's also written to the session like /rename"
-	return textModal("✏️  rename "+p.Title(), help, p.Title(), "NEW-NAME", func(m *Model, text, _ string) tea.Cmd {
+	return textModal("📝 rename "+p.Title(), help, p.Title(), "NEW-NAME", func(m *Model, text, _ string) tea.Cmd {
 		if err := m.app.Rename(p.ID, text); err != nil {
 			return toast(err.Error(), true)
 		}
 		m.rebuildScopes()
-		return tea.Batch(m.refreshResults(), toast("✏️  renamed to "+text, false))
+		return tea.Batch(m.refreshResults(), toast("📝 renamed to "+text, false))
 	})
 }
 
@@ -194,13 +194,13 @@ func replyModal(p *pack.Pup) *modal {
 }
 
 func trashModal(p *pack.Pup) *modal {
-	return confirmModal("🗑  move "+p.Title()+" to kennel's trash?", "the transcript is moved to ~/.kennel/trash, never deleted", func(m *Model, _, _ string) tea.Cmd {
+	return confirmModal("🚮 move "+p.Title()+" to kennel's trash?", "the transcript is moved to ~/.kennel/trash, never deleted", func(m *Model, _, _ string) tea.Cmd {
 		dst, err := m.app.Trash(p.ID)
 		if err != nil {
 			return toast(err.Error(), true)
 		}
 		m.rebuildScopes()
-		return tea.Batch(m.refreshResults(), toast("🗑  moved to "+dst, false))
+		return tea.Batch(m.refreshResults(), toast("🚮 moved to "+dst, false))
 	})
 }
 
@@ -213,7 +213,7 @@ func newSessionModal(cwd string) *modal {
 	})
 }
 
-var kennelIcons = []string{"🏠", "🦴", "🎾", "🐾", "🌭", "🧸", "🛁", "🏕️", "🚀", "🧪", "💼", "🔧"}
+var kennelIcons = []string{"🏠", "🦴", "🎾", "🐾", "🌭", "🧸", "🛁", "⛺", "🚀", "🧪", "💼", "🔧"}
 var kennelColors = []string{"#fab387", "#a6e3a1", "#89b4fa", "#cba6f7", "#f5c2e7", "#f9e2af", "#94e2d5", "#f38ba8"}
 
 func newKennelModal() *modal {

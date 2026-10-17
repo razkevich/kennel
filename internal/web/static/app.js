@@ -116,7 +116,7 @@ const app = {
 
 // ---------- layout ----------
 function layout(state) {
-  const viewW = Math.max(18, Math.floor(($("#stage").clientWidth || 1000) / TILE) - 2);
+  const viewW = Math.max(18, Math.floor(($("#stage").clientWidth || 1000) / (TILE * 0.85)) - 2);
   const rooms = [];
   let x = 2, y = 2, rowH = 0, worldW = 0;
   for (const r of state.rooms) {
@@ -976,5 +976,6 @@ window.kennel = {
   },
 };
 
+setTimeout(() => $("#help").classList.add("faded"), 9000);
 resize();
 loadState().then(() => { listen(); requestAnimationFrame(frame); }).catch((e) => toast(e.message, true));

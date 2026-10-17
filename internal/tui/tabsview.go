@@ -199,7 +199,7 @@ func (m Model) artView(w, h int) string {
 	arts := m.app.Artifacts()
 	now := m.app.Now()
 	inner := w - 4
-	lines := []string{sAccent.Render("🖼  Artifacts") + sSub.Render(fmt.Sprintf(" — %d pages your pups published", len(arts))), ""}
+	lines := []string{sAccent.Render("🎨 Artifacts") + sSub.Render(fmt.Sprintf(" — %d pages your pups published", len(arts))), ""}
 	if len(arts) == 0 {
 		lines = append(lines, sDim.Render("  no artifacts yet"))
 	}
@@ -220,7 +220,7 @@ func (m Model) artView(w, h int) string {
 			star = lipgloss.NewStyle().Foreground(cYellow).Render("★ ")
 		}
 		title := orDefault(a.Title, a.URL)
-		l1 := bar + star + "🖼  " + sText.Bold(true).Render(truncate(title, inner/2)) + sDim.Render("  from ") +
+		l1 := bar + star + "🎨 " + sText.Bold(true).Render(truncate(title, inner/2)) + sDim.Render("  from ") +
 			lipgloss.NewStyle().Foreground(furColor(a.Pup.ID, a.Pup.Color)).Render(a.Pup.Title()) + sDim.Render("  "+ago(now, a.At))
 		l2 := "       " + sDim.Render(truncate(a.URL, inner-8))
 		block := l1 + "\n" + l2
@@ -256,7 +256,7 @@ func (m Model) gearView(w, h int) string {
 		}
 		tabs = append(tabs, st.Render(icon+" "+s.Name))
 	}
-	lines := []string{sAccent.Render("⚙️  Gear") + sSub.Render(" — MCP servers, skills, plugins, subagents, commands and hooks"), "", truncateANSI(strings.Join(tabs, " "), inner), ""}
+	lines := []string{sAccent.Render("🔩 Gear") + sSub.Render(" — MCP servers, skills, plugins, subagents, commands and hooks"), "", truncateANSI(strings.Join(tabs, " "), inner), ""}
 	items := m.gearItems()
 	if len(m.gearScopes) > 0 {
 		lines = append(lines, sDim.Render(shortPath(m.gearScopes[m.gearScope].Root)))

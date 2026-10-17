@@ -189,7 +189,7 @@ func (m Model) row(r search.Result, selected bool, w int) string {
 	}
 	meta := []string{p.Repo()}
 	if b := p.Branch(); b != "" {
-		meta = append(meta, " "+b)
+		meta = append(meta, "⎇ "+b)
 	}
 	meta = append(meta, fmt.Sprintf("%d msgs", p.NUser))
 	if p.Cost >= 0.01 {
@@ -341,7 +341,7 @@ func (m Model) preview(w, h int) string {
 		}
 	}
 	if len(p.Artifacts) > 0 {
-		body = append(body, section("🖼  artifacts"))
+		body = append(body, section("🎨 artifacts"))
 		for _, a := range lastN(p.Artifacts, 4) {
 			body = append(body, sText.Render(truncate(orDefault(a.Title, a.URL), inner)))
 		}

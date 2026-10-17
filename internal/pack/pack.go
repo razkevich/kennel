@@ -132,7 +132,7 @@ var Smarts = []Smart{
 		Look: Look{Border: "rounded", Floor: "⠂", Decor: "🌳", Wide: true}, Match: func(p *Pup, _ time.Time) bool { return p.Status.Live() }},
 	{Key: "best", Name: "Best in Show", Icon: "🏆", Color: "#f9e2af", Blurb: "starred",
 		Look: Look{Border: "double", Floor: " ", Decor: "🏆"}, Match: func(p *Pup, _ time.Time) bool { return p.Meta.Starred }},
-	{Key: "today", Name: "Today", Icon: "☀️", Color: "#fab387", Blurb: "touched in the last 24h",
+	{Key: "today", Name: "Today", Icon: "🌞", Color: "#fab387", Blurb: "touched in the last 24h",
 		Look: Look{Border: "rounded", Floor: " "}, Match: func(p *Pup, now time.Time) bool {
 			return !p.Meta.Archived && !p.Empty() && now.Sub(p.Updated) < 24*time.Hour
 		}},
@@ -141,7 +141,7 @@ var Smarts = []Smart{
 			return !p.Meta.Archived && slackPaste.MatchString(p.FirstPrompt)
 		}},
 	{Key: "court", Name: "Courtroom", Icon: "🔍", Color: "#cba6f7", Blurb: "PR reviews",
-		Look: Look{Border: "thick", Floor: " ", Decor: "⚖️"}, Match: func(p *Pup, _ time.Time) bool {
+		Look: Look{Border: "thick", Floor: " ", Decor: "🔨"}, Match: func(p *Pup, _ time.Time) bool {
 			return !p.Meta.Archived && reviewRe.MatchString(p.FirstPrompt) && strings.Contains(strings.ToLower(p.FirstPrompt), "review")
 		}},
 	{Key: "fire", Name: "Firehouse", Icon: "🔥", Color: "#f38ba8", Blurb: "incidents, prod, things on fire",
@@ -149,11 +149,11 @@ var Smarts = []Smart{
 			return !p.Meta.Archived && (fireRe.MatchString(p.FirstPrompt) || fireRe.MatchString(p.Title()))
 		}},
 	{Key: "yak", Name: "Yak Shaving", Icon: "🐃", Color: "#f5c2e7", Blurb: "tools, setup, dotfiles",
-		Look: Look{Border: "normal", Floor: "⁘", Decor: "✂️"}, Match: func(p *Pup, _ time.Time) bool {
+		Look: Look{Border: "normal", Floor: "⁘", Decor: "🪒"}, Match: func(p *Pup, _ time.Time) bool {
 			return !p.Meta.Archived && yakRe.MatchString(p.FirstPrompt) && len(p.PRs) == 0 && p.NUser < 40
 		}},
-	{Key: "marathon", Name: "Marathons", Icon: "🏔️", Color: "#94e2d5", Blurb: "huge, long-running sessions",
-		Look: Look{Border: "double", Floor: "∴", Decor: "🏔️", Wide: true}, Match: func(p *Pup, _ time.Time) bool {
+	{Key: "marathon", Name: "Marathons", Icon: "🏃", Color: "#94e2d5", Blurb: "huge, long-running sessions",
+		Look: Look{Border: "double", Floor: "∴", Decor: "🏁", Wide: true}, Match: func(p *Pup, _ time.Time) bool {
 			return !p.Meta.Archived && (p.NUser >= 60 || p.Updated.Sub(p.Started) > 24*time.Hour)
 		}},
 	{Key: "shipped", Name: "Shipped", Icon: "🚀", Color: "#b4befe", Blurb: "opened a PR",
@@ -166,8 +166,8 @@ var Smarts = []Smart{
 		Look: Look{Border: "hidden", Floor: "▒", Decor: "🧹"}, Match: func(p *Pup, now time.Time) bool {
 			return !p.Meta.Archived && !p.Status.Live() && p.NUser >= 5 && len(p.PRs) == 0 && now.Sub(p.Updated) > 7*24*time.Hour
 		}},
-	{Key: "dumpster", Name: "Dumpster", Icon: "🗑️", Color: "#6c7086", Blurb: "empty or archived",
-		Look: Look{Border: "normal", Floor: "▚", Decor: "🗑️"}, Match: func(p *Pup, _ time.Time) bool { return p.Meta.Archived || p.Empty() }},
+	{Key: "dumpster", Name: "Dumpster", Icon: "🚮", Color: "#6c7086", Blurb: "empty or archived",
+		Look: Look{Border: "normal", Floor: "▚", Decor: "🐀"}, Match: func(p *Pup, _ time.Time) bool { return p.Meta.Archived || p.Empty() }},
 }
 
 func SmartByKey(key string) *Smart {

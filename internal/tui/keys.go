@@ -198,7 +198,7 @@ func (m Model) pupActions(key string, p *pack.Pup) (tea.Model, tea.Cmd, bool) {
 		m.rebuildScopes()
 		verb := "restored"
 		if m.app.Pup(p.ID).Meta.Archived {
-			verb = "🗑  archived"
+			verb = "🚮 archived"
 		}
 		return m, tea.Batch(m.refreshResults(), toast(verb+" "+p.Title(), false)), true
 	case "r":

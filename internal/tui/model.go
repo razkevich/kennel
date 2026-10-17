@@ -32,7 +32,7 @@ const (
 	TabGear
 )
 
-var tabNames = []string{"🗺  Map", "🐾 Pups", "💬 Ask", "⏰ Jobs", "🖼  Artifacts", "⚙️  Gear"}
+var tabNames = []string{"🧭 Map", "🐾 Pups", "💬 Ask", "⏰ Jobs", "🎨 Artifacts", "🔩 Gear"}
 
 type Options struct {
 	// Static disables background timers; tests drive the model explicitly.

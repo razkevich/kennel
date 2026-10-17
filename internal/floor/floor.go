@@ -63,7 +63,7 @@ func Rooms(a *app.App, floor int) []Room {
 			}
 			rooms = append(rooms, r)
 		}
-		lobby := Room{Key: "lobby", Title: "Lobby", Icon: "🛋️", Color: lavender, Look: pack.Look{Border: "rounded", Floor: " "}, Blurb: "everyone else this month"}
+		lobby := Room{Key: "lobby", Title: "Lobby", Icon: "🪑", Color: lavender, Look: pack.Look{Border: "rounded", Floor: " "}, Blurb: "everyone else this month"}
 		for _, p := range pups {
 			if !placed[p.ID] && !p.Meta.Archived && !p.Empty() && now.Sub(p.Updated) < recentWindow {
 				lobby.Pups = append(lobby.Pups, p)
