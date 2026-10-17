@@ -259,7 +259,7 @@ func truncateANSI(s string, w int) string {
 
 func (m Model) preview(w, h int) string {
 	p := m.selected()
-	box := lipgloss.NewStyle().Width(w-3).Height(h).MaxHeight(h).PaddingLeft(1).PaddingRight(1).
+	box := lipgloss.NewStyle().Width(w - 3).Height(h).MaxHeight(h).PaddingLeft(1).PaddingRight(1).
 		BorderLeft(true).BorderStyle(lipgloss.NormalBorder()).BorderForeground(cFaint)
 	if p == nil {
 		return box.Render("\n\n" + center(sDim.Render("select a pup"), w-4))

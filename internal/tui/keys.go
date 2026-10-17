@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/razkevich/kennel/internal/claude"
 	"github.com/razkevich/kennel/internal/pack"
+	"github.com/razkevich/kennel/internal/things"
 )
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -279,12 +280,72 @@ func (m Model) mapKeys(key string) (tea.Model, tea.Cmd) {
 	case "F":
 		m.floor = (m.floor + 1) % len(floors)
 		m.mapSel = ""
+	case "N":
+		m.modal = newThingModal("")
 	default:
+		if t := m.selectedThing(); t != nil {
+			if mm, cmd, ok := m.thingActions(key, *t); ok {
+				return mm, cmd
+			}
+			return m, nil
+		}
 		if mm, cmd, ok := m.pupActions(key, m.selected()); ok {
 			return mm, cmd
 		}
 	}
 	return m, nil
+}
+
+func (m Model) selectedThing() *things.Thing {
+	switch m.tab {
+	case TabMap:
+		return m.app.Thing(mapSelection(m.mapSel, m.mapGeometry()))
+	case TabJobs:
+		rows := m.jobRows()
+		if m.jobsCursor < len(rows) && rows[m.jobsCursor].thing != "" {
+			return m.app.Thing(rows[m.jobsCursor].thing)
+		}
+	}
+	return nil
+}
+
+func (m Model) thingActions(key string, t things.Thing) (tea.Model, tea.Cmd, bool) {
+	switch key {
+	case "enter", "o":
+		a := m.app
+		return m, func() tea.Msg {
+			text, err := a.StartOrFocus(t)
+			return openedMsg{text: text, err: err}
+		}, true
+	case "X":
+		if !t.Running {
+			return m, toast(t.Name+" isn't running", true), true
+		}
+		m.modal = stopThingModal(t)
+		return m, nil, true
+	case "S":
+		if t.Saved {
+			return m, toast(t.Name+" is already saved", false), true
+		}
+		m.modal = newThingModal(t.Name + " | " + t.Command + " | " + t.Cwd)
+		return m, nil, true
+	case "D":
+		if !t.Saved {
+			return m, toast("only saved things can be forgotten", true), true
+		}
+		m.modal = forgetThingModal(t)
+		return m, nil, true
+	case "m":
+		if !t.Saved {
+			return m, toast("save it first with S", true), true
+		}
+		m.modal = m.moveThingModal(t)
+		return m, nil, true
+	case "N":
+		m.modal = newThingModal("")
+		return m, nil, true
+	}
+	return m, nil, false
 }
 
 func (m Model) pupKeys(key string) (tea.Model, tea.Cmd) {
@@ -373,6 +434,14 @@ func (m Model) askKeys(key string) (tea.Model, tea.Cmd) {
 
 func (m Model) jobKeys(key string) (tea.Model, tea.Cmd) {
 	rows := m.jobRows()
+	if key == "N" {
+		m.modal = newThingModal("")
+		return m, nil
+	}
+	if t := m.selectedThing(); t != nil && key != "up" && key != "down" && key != "j" && key != "k" {
+		mm, cmd, _ := m.thingActions(key, *t)
+		return mm, cmd
+	}
 	switch key {
 	case "up", "k":
 		m.moveCursor(-1)

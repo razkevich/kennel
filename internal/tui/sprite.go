@@ -7,6 +7,7 @@ import (
 	"github.com/mattn/go-runewidth"
 	"github.com/razkevich/kennel/internal/claude"
 	"github.com/razkevich/kennel/internal/pack"
+	"github.com/razkevich/kennel/internal/things"
 )
 
 const spriteW = 13
@@ -124,4 +125,59 @@ func truncate(s string, w int) string {
 
 func center(s string, w int) string {
 	return lipgloss.PlaceHorizontal(w, lipgloss.Center, s)
+}
+
+// thingSprite draws a non-agent terminal as an object, not a pup: a little
+// device whose screen animates while it runs.
+func thingSprite(t things.Thing, frame int, selected bool) string {
+	on := t.Running
+	frameSt := lipgloss.NewStyle().Foreground(cPeach)
+	screenSt := lipgloss.NewStyle().Foreground(cGreen)
+	if !on {
+		frameSt = lipgloss.NewStyle().Foreground(cDim)
+		screenSt = sFaint
+	}
+	icon := things.Icon[t.Kind]
+	dot := sFaint.Render("○")
+	if on {
+		dot = lipgloss.NewStyle().Foreground(cGreen).Render("●")
+	}
+	screen := thingScreen(t.Kind, on, frame)
+	nameSt := lipgloss.NewStyle().Foreground(cSub)
+	if on {
+		nameSt = nameSt.Foreground(cText)
+	}
+	if selected {
+		nameSt = lipgloss.NewStyle().Foreground(cBase).Background(cPeach).Bold(true)
+	}
+	lines := []string{
+		center(icon+" "+dot, spriteW),
+		center(frameSt.Render("▐")+screenSt.Render(screen)+frameSt.Render("▌"), spriteW),
+		center(frameSt.Render("▝▀▀▀▀▀▀▀▘"), spriteW),
+		center(nameSt.Render(truncate(t.Name, spriteW-2)), spriteW),
+	}
+	return strings.Join(lines, "\n")
+}
+
+func thingScreen(k things.Kind, on bool, frame int) string {
+	if !on {
+		return "  off  "
+	}
+	switch k {
+	case things.Monitor:
+		bars := []rune("▁▂▃▄▅▆▇")
+		out := make([]rune, 7)
+		for i := range out {
+			out[i] = bars[(frame*3+i*5+i*i)%len(bars)]
+		}
+		return string(out)
+	case things.Server:
+		return [...]string{" ▲ ▲▴ ", " ▴▲ ▲ ", " ▲▴▲ ▴", " ▴ ▲▲ "}[frame%4] + " "
+	case things.Logs:
+		return [...]string{"≡ ≡≡ ≡ ", " ≡≡ ≡≡", "≡≡ ≡ ≡", "≡ ≡ ≡≡"}[frame%4] + ""
+	case things.Job:
+		n := frame % 8
+		return strings.Repeat("▰", min(n, 7)) + strings.Repeat("▱", 7-min(n, 7))
+	}
+	return [...]string{" ·     ", "  ·    ", "   ·   ", "    ·  "}[frame%4]
 }

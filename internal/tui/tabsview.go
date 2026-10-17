@@ -9,6 +9,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/razkevich/kennel/internal/gear"
+	"github.com/razkevich/kennel/internal/things"
 )
 
 var citeRe = regexp.MustCompile(`\[(\d+)\]`)
@@ -98,6 +99,7 @@ func (m Model) askView(w, h int) string {
 }
 
 type jobRow struct {
+	thing     string
 	kind      string
 	icon      string
 	title     string
@@ -110,6 +112,19 @@ type jobRow struct {
 
 func (m Model) jobRows() []jobRow {
 	var rows []jobRow
+	for _, t := range m.app.Things() {
+		state := "stopped"
+		if t.Running {
+			state = "running"
+			if t.Pane != "" {
+				state += " · herdr " + t.Pane
+			}
+		}
+		if !t.Saved {
+			state += " · found in herdr (S to save)"
+		}
+		rows = append(rows, jobRow{thing: t.Key(), kind: "thing", icon: things.Icon[t.Kind], title: t.Name, detail: "$ " + t.Command + "   " + shortPath(t.Cwd), state: state, live: t.Running})
+	}
 	for _, j := range m.app.Jobs() {
 		title := orDefault(strings.TrimSpace(strings.ReplaceAll(j.Name, "⑂", "")), j.Short)
 		if p := m.app.Pup(j.SessionID); p != nil {
@@ -138,7 +153,7 @@ func (m Model) jobsView(w, h int) string {
 	rows := m.jobRows()
 	now := m.app.Now()
 	inner := w - 4
-	lines := []string{sAccent.Render("⏰ Jobs") + sSub.Render(" — background agents from the Claude daemon and cron tasks scheduled inside sessions"), ""}
+	lines := []string{sAccent.Render("⏰ Jobs & Things") + sSub.Render(" — terminals that aren't agents, background agents, and cron tasks inside sessions"), ""}
 	if len(rows) == 0 {
 		lines = append(lines, sDim.Render("  no background agents or scheduled tasks yet — they show up here when you run claude in the background or /loop"))
 	}
@@ -152,7 +167,7 @@ func (m Model) jobsView(w, h int) string {
 		r := rows[i]
 		if r.kind != kind {
 			kind = r.kind
-			label := map[string]string{"background": "BACKGROUND AGENTS", "cron": "SCHEDULED TASKS"}[kind]
+			label := map[string]string{"thing": "THINGS  (N new · ⏎ start/focus · X stop · S save · D forget)", "background": "BACKGROUND AGENTS", "cron": "SCHEDULED TASKS"}[kind]
 			lines = append(lines, sDim.Bold(true).Render(label))
 		}
 		sel := i == m.jobsCursor
@@ -165,7 +180,11 @@ func (m Model) jobsView(w, h int) string {
 			stColor = cGreen
 		}
 		state := lipgloss.NewStyle().Foreground(stColor).Render(r.state)
-		l1 := bar + r.icon + " " + sText.Bold(true).Render(truncate(r.title, inner/2)) + "  " + state + sDim.Render("  "+ago(now, r.when))
+		when := ""
+		if !r.when.IsZero() {
+			when = "  " + ago(now, r.when)
+		}
+		l1 := bar + r.icon + " " + sText.Bold(true).Render(truncate(r.title, inner/2)) + "  " + state + sDim.Render(when)
 		l2 := "     " + sSub.Render(truncate(r.detail, inner-6))
 		block := l1 + "\n" + l2
 		if sel {

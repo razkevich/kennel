@@ -2,7 +2,9 @@ package store
 
 import (
 	"database/sql"
+
 	"encoding/json"
+	"github.com/razkevich/kennel/internal/things"
 	"regexp"
 	"strings"
 	"time"
@@ -135,6 +137,51 @@ func (s *Store) SaveMeta(m PupMeta) error {
 		ON CONFLICT(session_id) DO UPDATE SET kennel_id=excluded.kennel_id, alias=excluded.alias, starred=excluded.starred,
 		archived=excluded.archived, seen_at=excluded.seen_at, note=excluded.note`,
 		m.SessionID, kennel, m.Alias, m.Starred, m.Archived, ms(m.SeenAt), m.Note)
+	return err
+}
+
+func (s *Store) Things() ([]things.Thing, error) {
+	rows, err := s.DB.Query(`SELECT id, name, command, cwd, kind, coalesce(kennel_id,0) FROM things ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []things.Thing
+	for rows.Next() {
+		var t things.Thing
+		var kind string
+		if err := rows.Scan(&t.ID, &t.Name, &t.Command, &t.Cwd, &kind, &t.KennelID); err != nil {
+			return nil, err
+		}
+		t.Kind = things.Kind(kind)
+		t.Saved = true
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) SaveThing(t *things.Thing) error {
+	var kennel any
+	if t.KennelID != 0 {
+		kennel = t.KennelID
+	}
+	if t.ID == 0 {
+		res, err := s.DB.Exec(`INSERT INTO things(name, command, cwd, kind, kennel_id, created) VALUES(?,?,?,?,?,?)`,
+			t.Name, t.Command, t.Cwd, string(t.Kind), kennel, time.Now().UnixMilli())
+		if err != nil {
+			return err
+		}
+		t.ID, _ = res.LastInsertId()
+		t.Saved = true
+		return nil
+	}
+	_, err := s.DB.Exec(`UPDATE things SET name=?, command=?, cwd=?, kind=?, kennel_id=? WHERE id=?`,
+		t.Name, t.Command, t.Cwd, string(t.Kind), kennel, t.ID)
+	return err
+}
+
+func (s *Store) DeleteThing(id int64) error {
+	_, err := s.DB.Exec(`DELETE FROM things WHERE id=?`, id)
 	return err
 }
 

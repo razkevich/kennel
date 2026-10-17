@@ -20,6 +20,7 @@ import (
 	"github.com/razkevich/kennel/internal/pack"
 	"github.com/razkevich/kennel/internal/search"
 	"github.com/razkevich/kennel/internal/store"
+	"github.com/razkevich/kennel/internal/things"
 )
 
 type Config struct {
@@ -46,6 +47,9 @@ type App struct {
 	jobs    []claude.Job
 	herdr   []opener.HerdrAgent
 	live    map[string]claude.Live
+	things  []things.Thing
+	panes   []things.HerdrPane
+	procs   []things.Proc
 }
 
 func DefaultConfig() Config {
@@ -81,10 +85,17 @@ func New(cfg Config) (*App, error) {
 		return nil, err
 	}
 	a := &App{Cfg: cfg, Store: st, Indexer: &indexer.Indexer{Store: st, ClaudeDir: cfg.ClaudeDir}}
+	if cfg.Demo {
+		if err := a.seedDemoThings(); err != nil {
+			st.Close()
+			return nil, err
+		}
+	}
 	if err := a.Reload(); err != nil {
 		st.Close()
 		return nil, err
 	}
+	a.RefreshLive(false)
 	return a, nil
 }
 
@@ -124,8 +135,13 @@ func (a *App) Reload() error {
 	a.mu.RUnlock()
 	pups := pack.Build(sessions, meta, kennels, live)
 	applyHerdr(pups, herdr)
+	saved, err := a.Store.Things()
+	if err != nil {
+		return err
+	}
 	a.mu.Lock()
 	a.pups, a.kennels, a.live, a.jobs = pups, kennels, live, jobs
+	a.things = things.Resolve(saved, a.panes, a.procs)
 	a.mu.Unlock()
 	return nil
 }
@@ -139,11 +155,17 @@ func (a *App) RefreshLive(withHerdr bool) []Transition {
 		herdr = opener.HerdrAgents(a.Cfg.Runner)
 	}
 	jobs := claude.ReadJobs(a.Cfg.ClaudeDir)
+	panes, procs, scanned := a.scanThings(withHerdr)
+	saved, _ := a.Store.Things()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if !withHerdr {
 		herdr = a.herdr
 	}
+	if scanned {
+		a.panes, a.procs = panes, procs
+	}
+	a.things = things.Resolve(saved, a.panes, a.procs)
 	var out []Transition
 	for _, p := range a.pups {
 		prev := p.Status
@@ -453,4 +475,109 @@ func (a *App) Artifacts() []ArtifactRef {
 type ArtifactRef struct {
 	claude.Artifact
 	Pup *pack.Pup
+}
+
+// ---- things ----
+
+func (a *App) Things() []things.Thing {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.things
+}
+
+// scanThings reads herdr panes and processes; in demo mode a fixture stands in for both.
+func (a *App) scanThings(withHerdr bool) ([]things.HerdrPane, []things.Proc, bool) {
+	if a.Cfg.Demo {
+		b, err := os.ReadFile(filepath.Join(a.Cfg.ClaudeDir, demo.PanesFile))
+		if err != nil {
+			return nil, nil, true
+		}
+		return things.ParseHerdrPanes(b), nil, true
+	}
+	if !withHerdr {
+		return nil, nil, false
+	}
+	var panes []things.HerdrPane
+	if out, err := a.Cfg.Runner.Run("herdr", "pane", "list"); err == nil {
+		panes = things.ParseHerdrPanes(out)
+	}
+	var procs []things.Proc
+	if out, err := a.Cfg.Runner.Run("ps", "-axo", "pid=,command="); err == nil {
+		procs = things.ParsePS(out)
+	}
+	return panes, procs, true
+}
+
+// Thing finds a thing by its Key.
+func (a *App) Thing(key string) *things.Thing {
+	for _, t := range a.Things() {
+		if t.Key() == key {
+			return &t
+		}
+	}
+	return nil
+}
+
+func (a *App) seedDemoThings() error {
+	existing, err := a.Store.Things()
+	if err != nil || len(existing) > 0 {
+		return err
+	}
+	for _, t := range demo.Things() {
+		t := t
+		if err := a.Store.SaveThing(&t); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (a *App) SaveThing(t *things.Thing) error {
+	if t.Kind == "" {
+		t.Kind = things.Infer(t.Command)
+	}
+	if err := a.Store.SaveThing(t); err != nil {
+		return err
+	}
+	return a.Reload()
+}
+
+func (a *App) DeleteThing(id int64) error {
+	if err := a.Store.DeleteThing(id); err != nil {
+		return err
+	}
+	return a.Reload()
+}
+
+// StartOrFocus brings a running thing's pane forward, or starts it.
+func (a *App) StartOrFocus(t things.Thing) (string, error) {
+	if t.Running && t.Tab != "" {
+		if _, err := a.Cfg.Runner.Run("herdr", "tab", "focus", t.Tab); err != nil {
+			return "", err
+		}
+		return "focused " + t.Name, nil
+	}
+	if t.Running {
+		return fmt.Sprintf("%s is already running (pid %d) outside herdr", t.Name, t.PID), nil
+	}
+	if !t.Saved {
+		return "", fmt.Errorf("%s isn't saved; press S to keep it", t.Name)
+	}
+	if err := a.CheckCwd(t.Cwd); err != nil {
+		return "", err
+	}
+	return a.Opener().RunCommand(t.Cwd, t.Name, t.Command)
+}
+
+// Stop interrupts a running thing: Ctrl-C in its herdr pane, or SIGINT to its process.
+func (a *App) Stop(t things.Thing) error {
+	switch {
+	case t.Pane != "":
+		_, err := a.Cfg.Runner.Run("herdr", "pane", "send-keys", t.Pane, "ctrl+c")
+		return err
+	case t.PID > 0:
+		_, err := a.Cfg.Runner.Run("kill", "-INT", fmt.Sprint(t.PID))
+		return err
+	}
+	return fmt.Errorf("%s isn't running", t.Name)
 }

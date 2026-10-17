@@ -10,24 +10,50 @@ import (
 	zone "github.com/lrstanley/bubblezone"
 	"github.com/razkevich/kennel/internal/app"
 	"github.com/razkevich/kennel/internal/pack"
+	"github.com/razkevich/kennel/internal/things"
 )
 
 var floors = []string{"🏡 Campus", "📁 Projects", "🏠 Kennels"}
 
 type room struct {
-	key   string
-	title string
-	icon  string
-	color lipgloss.Color
-	look  pack.Look
-	blurb string
-	pups  []*pack.Pup
+	key    string
+	title  string
+	icon   string
+	color  lipgloss.Color
+	look   pack.Look
+	blurb  string
+	pups   []*pack.Pup
+	things []things.Thing
+}
+
+// mapItem is whatever stands on a tile: a pup (agent session) or a thing (any other terminal).
+type mapItem struct {
+	pup   *pack.Pup
+	thing *things.Thing
+}
+
+func (it mapItem) id() string {
+	if it.pup != nil {
+		return it.pup.ID
+	}
+	return it.thing.Key()
+}
+
+func (r room) items() []mapItem {
+	out := make([]mapItem, 0, len(r.pups)+len(r.things))
+	for _, p := range r.pups {
+		out = append(out, mapItem{pup: p})
+	}
+	for i := range r.things {
+		out = append(out, mapItem{thing: &r.things[i]})
+	}
+	return out
 }
 
 type roomLayout struct {
-	key  string
-	pups []*pack.Pup
-	cols int
+	key   string
+	items []mapItem
+	cols  int
 }
 
 // campusOrder decides which room a pup stands in when several smart kennels match.
@@ -35,9 +61,15 @@ var campusOrder = []string{"yard", "best", "fire", "helping", "court", "yak", "w
 
 const recentWindow = 21 * 24 * time.Hour
 
+func workshop() room {
+	return room{key: "workshop", title: "Workshop", icon: "🔧", color: cPeach, look: pack.Look{Border: "thick", Floor: "▪", Decor: "🧰"},
+		blurb: "monitors, servers and long jobs — N to add one"}
+}
+
 func (m Model) rooms() []room {
 	now := m.app.Now()
 	pups := m.app.Pups()
+	allThings := m.app.Things()
 	var rooms []room
 	switch m.floor {
 	case 0:
@@ -63,11 +95,14 @@ func (m Model) rooms() []room {
 				lobby.pups = append(lobby.pups, p)
 			}
 		}
-		rooms = append(rooms[:1], append([]room{lobby}, rooms[1:]...)...)
+		ws := workshop()
+		ws.things = allThings
+		rooms = append(rooms[:1], append([]room{lobby, ws}, rooms[1:]...)...)
 	case 1:
 		floorsChars := []string{"·", "⠂", "∴", "⁘", "~", " "}
 		borders := []string{"rounded", "double", "thick", "normal"}
 		palette := []lipgloss.Color{cSky, cPeach, cMauve, cGreen, cYellow, cPink, cTeal, cLav, cRed, cBlue}
+		homed := map[string]bool{}
 		for i, pr := range m.app.Projects() {
 			r := room{key: "project:" + pr.Root, title: pr.Name, icon: "📁", color: palette[i%len(palette)],
 				look: pack.Look{Border: borders[i%len(borders)], Floor: floorsChars[i%len(floorsChars)], Wide: pr.Count > 12}, blurb: shortPath(pr.Root)}
@@ -76,9 +111,19 @@ func (m Model) rooms() []room {
 					r.pups = append(r.pups, p)
 				}
 			}
+			for _, t := range allThings {
+				if t.Cwd != "" && strings.HasPrefix(t.Cwd, pr.Root) {
+					r.things = append(r.things, t)
+					homed[t.Key()] = true
+				}
+			}
 			rooms = append(rooms, r)
 		}
+		if ws := homeless(allThings, homed); len(ws.things) > 0 {
+			rooms = append(rooms, ws)
+		}
 	case 2:
+		homed := map[string]bool{}
 		for _, k := range m.app.Kennels() {
 			icon := k.Icon
 			if icon == "" {
@@ -94,6 +139,12 @@ func (m Model) rooms() []room {
 					r.pups = append(r.pups, p)
 				}
 			}
+			for _, t := range allThings {
+				if t.KennelID == k.ID {
+					r.things = append(r.things, t)
+					homed[t.Key()] = true
+				}
+			}
 			rooms = append(rooms, r)
 		}
 		if len(m.app.Kennels()) == 0 {
@@ -107,8 +158,21 @@ func (m Model) rooms() []room {
 			}
 		}
 		rooms = append(rooms, strays)
+		if ws := homeless(allThings, homed); len(ws.things) > 0 {
+			rooms = append(rooms, ws)
+		}
 	}
 	return rooms
+}
+
+func homeless(all []things.Thing, homed map[string]bool) room {
+	ws := workshop()
+	for _, t := range all {
+		if !homed[t.Key()] {
+			ws.things = append(ws.things, t)
+		}
+	}
+	return ws
 }
 
 func shortPath(p string) string {
@@ -146,8 +210,8 @@ func (m Model) mapView(w, h int) string {
 		if rowW+bw > w-1 && len(row) > 0 {
 			flush()
 		}
-		for _, p := range layout[i].pups {
-			if p.ID == sel {
+		for _, it := range layout[i].items {
+			if it.id() == sel {
 				selLine = len(lines)
 			}
 		}
@@ -178,8 +242,9 @@ func (m Model) floorBar() string {
 	return " " + strings.Join(parts, sFaint.Render("  ·  ")) + sFaint.Render("   (F to change floor)")
 }
 
-func geometry(r room, maxW, maxRows int) (cols, rows int, shown []*pack.Pup, more int) {
-	n := len(r.pups)
+func geometry(r room, maxW, maxRows int) (cols, rows int, shown []mapItem, more int) {
+	items := r.items()
+	n := len(items)
 	maxCols := 4
 	if r.look.Wide {
 		maxCols = 6
@@ -190,9 +255,9 @@ func geometry(r room, maxW, maxRows int) (cols, rows int, shown []*pack.Pup, mor
 		cols = 2
 	}
 	rows = max(1, min(maxRows, (n+cols-1)/cols))
-	shown = r.pups
+	shown = items
 	if n > cols*rows {
-		shown = r.pups[:cols*rows-1]
+		shown = items[:cols*rows-1]
 		more = n - len(shown)
 	}
 	return
@@ -209,21 +274,21 @@ func (m Model) mapGeometry() []roomLayout {
 	var out []roomLayout
 	for _, r := range m.rooms() {
 		cols, _, shown, _ := geometry(r, m.w-2, m.mapMaxRows())
-		out = append(out, roomLayout{key: r.key, pups: shown, cols: cols})
+		out = append(out, roomLayout{key: r.key, items: shown, cols: cols})
 	}
 	return out
 }
 
-// mapSelection is the selected pup if it's on this floor, else the first pup shown.
+// mapSelection is the selected item if it's on this floor, else the first one shown.
 func mapSelection(sel string, layout []roomLayout) string {
 	first := ""
 	for _, l := range layout {
-		for _, p := range l.pups {
-			if p.ID == sel {
+		for _, it := range l.items {
+			if it.id() == sel {
 				return sel
 			}
 			if first == "" {
-				first = p.ID
+				first = it.id()
 			}
 		}
 	}
@@ -231,14 +296,14 @@ func mapSelection(sel string, layout []roomLayout) string {
 }
 
 func (m Model) renderRoom(r room, maxW, maxRows int, sel string) string {
-	n := len(r.pups)
+	n := len(r.pups) + len(r.things)
 	cols, rows, shown, more := geometry(r, maxW, maxRows)
 
 	innerW := cols * spriteW
 	color := r.color
 	selectedHere := false
-	for _, p := range shown {
-		if p.ID == sel {
+	for _, it := range shown {
+		if it.id() == sel {
 			selectedHere = true
 		}
 	}
@@ -289,8 +354,12 @@ func (m Model) renderRoom(r room, maxW, maxRows int, sel string) string {
 			i := rIdx*cols + c
 			switch {
 			case i < len(shown):
-				p := shown[i]
-				cells = append(cells, zone.Mark(ZonePup(p.ID), pupSprite(p, m.frame+i, p.ID == sel)))
+				it := shown[i]
+				if it.pup != nil {
+					cells = append(cells, zone.Mark(ZonePup(it.pup.ID), pupSprite(it.pup, m.frame+i, it.id() == sel)))
+				} else {
+					cells = append(cells, zone.Mark(ZoneThing(it.thing.Key()), thingSprite(*it.thing, m.frame+i, it.id() == sel)))
+				}
 			case i == len(shown) && more > 0:
 				moreCell := lipgloss.NewStyle().Width(spriteW).Height(4).Align(lipgloss.Center, lipgloss.Center).
 					Foreground(cSub).Render(fmt.Sprintf("+%d\nmore", more))
@@ -323,8 +392,7 @@ func (m Model) renderRoom(r room, maxW, maxRows int, sel string) string {
 	floorStrip := floorCell(innerW)
 
 	border := borderFor(r.look.Border)
-	bc := lipgloss.Color(string(color))
-	st := lipgloss.NewStyle().Border(border).BorderForeground(bc).Padding(0, 1)
+	st := lipgloss.NewStyle().Border(border).BorderForeground(color).Padding(0, 1)
 	if !selectedHere {
 		st = st.BorderForeground(dimmed(color))
 	}
@@ -349,13 +417,16 @@ func blend(a, b string, t float64) string {
 }
 
 func (m Model) hoverCard(w int, sel string) string {
+	if t := m.app.Thing(sel); t != nil {
+		return m.thingCard(w, *t)
+	}
 	p := m.app.Pup(sel)
 	if p == nil {
 		msg := "No pups on this floor yet."
 		if m.floor == 2 {
 			msg = "No kennels yet — press K to build one, then m on a pup to move it in."
 		}
-		return lipgloss.NewStyle().Width(w-2).Height(3).Border(lipgloss.RoundedBorder()).BorderForeground(cFaint).Render(sDim.Render(msg))
+		return lipgloss.NewStyle().Width(w - 2).Height(3).Border(lipgloss.RoundedBorder()).BorderForeground(cFaint).Render(sDim.Render(msg))
 	}
 	now := m.app.Now()
 	st := statusColor(p.Status)
@@ -379,6 +450,35 @@ func (m Model) hoverCard(w int, sel string) string {
 		Render(truncate(line1, w-6) + "\n" + snippet + "\n" + actions)
 }
 
+func (m Model) thingCard(w int, t things.Thing) string {
+	color := cDim
+	state := "stopped"
+	if t.Running {
+		color, state = cGreen, "running"
+		if t.Pane != "" {
+			state += " in herdr " + t.Pane
+		} else if t.PID > 0 {
+			state += fmt.Sprintf(" (pid %d)", t.PID)
+		}
+	}
+	title := lipgloss.NewStyle().Foreground(cPeach).Bold(true).Render(things.Icon[t.Kind] + " " + t.Name)
+	line1 := title + "  " + lipgloss.NewStyle().Foreground(color).Render("● "+state) + sDim.Render("  "+string(t.Kind)+" · "+shortPath(t.Cwd))
+	line2 := sSub.Render("$ " + truncate(t.Command, w-8))
+	var acts []string
+	if t.Running {
+		acts = append(acts, hint("⏎", "focus"), hint("X", "stop"))
+	} else {
+		acts = append(acts, hint("⏎", "start"))
+	}
+	if t.Saved {
+		acts = append(acts, hint("m", "move"), hint("D", "forget"))
+	} else {
+		acts = append(acts, hint("S", "save as a thing"))
+	}
+	return lipgloss.NewStyle().Width(w-2).Border(lipgloss.RoundedBorder()).BorderForeground(color).Padding(0, 1).
+		Render(truncate(line1, w-6) + "\n" + line2 + "\n" + strings.Join(acts, "  "))
+}
+
 func prNumber(url string) string {
 	if i := strings.LastIndex(url, "/"); i >= 0 {
 		return "#" + url[i+1:]
@@ -392,25 +492,19 @@ func (m *Model) moveMap(dx, dy int) {
 	m.mapSel = mapSelection(m.mapSel, m.mapLayout)
 	ri, pi := -1, -1
 	for r, l := range m.mapLayout {
-		for i, p := range l.pups {
-			if p.ID == m.mapSel {
+		for i, it := range l.items {
+			if it.id() == m.mapSel {
 				ri, pi = r, i
 			}
 		}
 	}
 	if ri < 0 {
-		for _, l := range m.mapLayout {
-			if len(l.pups) > 0 {
-				m.mapSel = l.pups[0].ID
-				return
-			}
-		}
 		return
 	}
 	l := m.mapLayout[ri]
 	next := pi + dx + dy*l.cols
-	if next >= 0 && next < len(l.pups) && (dy != 0 || (pi/l.cols == next/l.cols)) {
-		m.mapSel = l.pups[next].ID
+	if next >= 0 && next < len(l.items) && (dy != 0 || (pi/l.cols == next/l.cols)) {
+		m.mapSel = l.items[next].id()
 		return
 	}
 	dir := 1
@@ -418,11 +512,11 @@ func (m *Model) moveMap(dx, dy int) {
 		dir = -1
 	}
 	for r := ri + dir; r >= 0 && r < len(m.mapLayout); r += dir {
-		if ps := m.mapLayout[r].pups; len(ps) > 0 {
+		if its := m.mapLayout[r].items; len(its) > 0 {
 			if dir > 0 {
-				m.mapSel = ps[0].ID
+				m.mapSel = its[0].id()
 			} else {
-				m.mapSel = ps[len(ps)-1].ID
+				m.mapSel = its[len(its)-1].id()
 			}
 			return
 		}
@@ -434,8 +528,8 @@ func (m *Model) jumpRoom(dir int) {
 	m.mapSel = mapSelection(m.mapSel, m.mapLayout)
 	ri := 0
 	for r, l := range m.mapLayout {
-		for _, p := range l.pups {
-			if p.ID == m.mapSel {
+		for _, it := range l.items {
+			if it.id() == m.mapSel {
 				ri = r
 			}
 		}
@@ -443,8 +537,8 @@ func (m *Model) jumpRoom(dir int) {
 	n := len(m.mapLayout)
 	for step := 1; step <= n; step++ {
 		r := ((ri+dir*step)%n + n) % n
-		if ps := m.mapLayout[r].pups; len(ps) > 0 {
-			m.mapSel = ps[0].ID
+		if its := m.mapLayout[r].items; len(its) > 0 {
+			m.mapSel = its[0].id()
 			return
 		}
 	}

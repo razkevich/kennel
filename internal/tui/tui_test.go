@@ -283,3 +283,68 @@ func TestHelpAndSmallWindow(t *testing.T) {
 	h.key("2")
 	h.contains("press / to search")
 }
+
+func TestThingsOnMapAndInJobs(t *testing.T) {
+	h := newHarness(t, opener.Herdr)
+	h.contains("Workshop", "atlas dev", "prod pods", "api logs", "tf plan", "btop")
+
+	// Click the running dev server: selects it, card shows its command.
+	devKey := ""
+	stopped := ""
+	for _, th := range h.app.Things() {
+		switch th.Name {
+		case "atlas dev":
+			devKey = th.Key()
+			if !th.Running || th.Tab != "w1:t2" {
+				t.Fatalf("dev server should be running in w1:t2: %+v", th)
+			}
+		case "tf plan":
+			stopped = th.Key()
+			if th.Running {
+				t.Fatal("tf plan should be stopped")
+			}
+		}
+	}
+	h.click(ZoneThing(devKey))
+	h.contains("$ pnpm dev", "running in herdr w1:p2")
+	h.key("enter")
+	if c := h.rec.Calls(); c[len(c)-1] != "herdr tab focus w1:t2" {
+		t.Fatalf("enter on running thing should focus its tab: %v", c)
+	}
+	h.key("X")
+	h.contains("stop atlas dev?")
+	h.key("y")
+	if c := h.rec.Calls(); c[len(c)-1] != "herdr pane send-keys w1:p2 ctrl+c" {
+		t.Fatalf("stop: %v", c)
+	}
+
+	h.key("4")
+	h.contains("THINGS", "found in herdr (S to save)", "$ terraform plan -out tf.plan")
+	rows := h.model().jobRows()
+	for i, r := range rows {
+		if r.thing == stopped {
+			for range i {
+				h.key("down")
+			}
+		}
+	}
+	h.key("enter")
+	calls := strings.Join(h.rec.Calls(), "\n")
+	if !strings.Contains(calls, "herdr tab create --cwd /Users/demo/code/infra --focus --label tf plan") ||
+		!strings.Contains(calls, "herdr pane run w1:p9 terraform plan -out tf.plan") {
+		t.Fatalf("starting a stopped thing:\n%s", calls)
+	}
+
+	h.key("N")
+	h.typeText("docs | mkdocs serve | ~/code/atlas")
+	h.key("enter")
+	found := false
+	for _, th := range h.app.Things() {
+		if th.Name == "docs" && th.Command == "mkdocs serve" && th.Kind == "server" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("new thing not saved")
+	}
+}

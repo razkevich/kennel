@@ -42,7 +42,7 @@ type Options struct {
 	// Clipboard copies text; defaults to pbcopy.
 	Clipboard func(string) error
 	// OpenURL opens a link; defaults to `open`.
-	OpenURL func(string) error
+	OpenURL  func(string) error
 	StartTab Tab
 }
 
@@ -528,10 +528,11 @@ func waitAsk(ch chan ask.Event) tea.Cmd {
 }
 
 // Zone ids are stable strings so tests can click on them.
-func ZonePup(id string) string   { return "pup:" + id }
-func ZoneRow(id string) string   { return "row:" + id }
+func ZonePup(id string) string    { return "pup:" + id }
+func ZoneRow(id string) string    { return "row:" + id }
 func ZoneScope(key string) string { return "scope:" + key }
-func ZoneTab(t Tab) string       { return fmt.Sprintf("tab:%d", t) }
+func ZoneTab(t Tab) string        { return fmt.Sprintf("tab:%d", t) }
+func ZoneThing(key string) string { return "thing:" + key }
 
 func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.modal != nil || m.transcript != nil {
@@ -568,6 +569,18 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	for i, s := range m.scopes {
 		if zone.Get(ZoneScope(s.key)).InBounds(msg) {
 			return m.pickScope(i)
+		}
+	}
+	for _, t := range m.app.Things() {
+		if zone.Get(ZoneThing(t.Key())).InBounds(msg) {
+			double := m.lastClickID == t.Key() && time.Since(m.lastClickAt) < 450*time.Millisecond
+			m.lastClickID, m.lastClickAt = t.Key(), time.Now()
+			m.mapSel = t.Key()
+			if double {
+				mm, cmd, _ := m.thingActions("enter", t)
+				return mm, cmd
+			}
+			return m, nil
 		}
 	}
 	for _, p := range m.app.Pups() {

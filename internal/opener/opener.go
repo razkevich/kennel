@@ -233,3 +233,58 @@ func shellQuote(s string) string {
 func asQuote(s string) string {
 	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s) + `"`
 }
+
+// RunCommand opens a terminal running an arbitrary command (a "thing").
+func (o Opener) RunCommand(cwd, title, command string) (string, error) {
+	switch Resolve(o.Kind) {
+	case Herdr:
+		out, err := o.Runner.Run("herdr", "tab", "create", "--cwd", cwd, "--focus", "--label", title)
+		if err != nil {
+			return "", err
+		}
+		var resp struct {
+			Result struct {
+				RootPane struct {
+					PaneID string `json:"pane_id"`
+				} `json:"root_pane"`
+			} `json:"result"`
+		}
+		if err := json.Unmarshal(out, &resp); err != nil || resp.Result.RootPane.PaneID == "" {
+			return "", fmt.Errorf("herdr tab create: unexpected response: %s", strings.TrimSpace(string(out)))
+		}
+		if _, err := o.Runner.Run("herdr", "pane", "run", resp.Result.RootPane.PaneID, command); err != nil {
+			return "", err
+		}
+		return "started " + title + " in herdr", nil
+	case Ghostty:
+		script := fmt.Sprintf(`tell application "Ghostty"
+	set cfg to new surface configuration
+	set initial working directory of cfg to %s
+	set initial input of cfg to %s
+	if (count of windows) > 0 then
+		new tab in front window with configuration cfg
+	else
+		new window with configuration cfg
+	end if
+	activate
+end tell`, asQuote(cwd), asQuote(command+"\n"))
+		if _, err := o.Runner.Run("osascript", "-e", script); err != nil {
+			return "", err
+		}
+		return "started " + title + " in Ghostty", nil
+	case Print:
+		return "cd " + shellQuote(cwd) + " && " + command, nil
+	}
+	return "", fmt.Errorf("opener %q must be run inline", o.Kind)
+}
+
+// InlineShell runs a command through the user's shell in kennel's terminal.
+func InlineShell(cwd, command string) *exec.Cmd {
+	sh := os.Getenv("SHELL")
+	if sh == "" {
+		sh = "/bin/sh"
+	}
+	c := exec.Command(sh, "-lc", command)
+	c.Dir = cwd
+	return c
+}

@@ -10,10 +10,32 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/razkevich/kennel/internal/things"
 )
 
 // Marker is created in generated dirs; kennel treats every registered pid there as alive.
 const Marker = "kennel-demo"
+
+// PanesFile stands in for `herdr pane list` in demo mode.
+const PanesFile = "kennel-demo-panes.json"
+
+// Things are saved demo things; the first three appear running via PanesFile.
+func Things() []things.Thing {
+	return []things.Thing{
+		{Name: "atlas dev", Command: "pnpm dev", Cwd: "/Users/demo/code/atlas", Kind: things.Server},
+		{Name: "prod pods", Command: "k9s --context prod", Cwd: "/Users/demo/code/infra", Kind: things.Monitor},
+		{Name: "api logs", Command: "kubectl logs -f deploy/api", Cwd: "/Users/demo/code/infra", Kind: things.Logs},
+		{Name: "tf plan", Command: "terraform plan -out tf.plan", Cwd: "/Users/demo/code/infra", Kind: things.Job},
+		{Name: "storybook", Command: "pnpm storybook", Cwd: "/Users/demo/code/mobile", Kind: things.Server},
+	}
+}
+
+const demoPanes = `{"result":{"panes":[
+ {"pane_id":"w1:p2","tab_id":"w1:t2","terminal_title_stripped":"pnpm dev","foreground_cwd":"/Users/demo/code/atlas"},
+ {"pane_id":"w1:p3","tab_id":"w1:t3","terminal_title_stripped":"k9s","foreground_cwd":"/Users/demo/code/infra"},
+ {"pane_id":"w1:p4","tab_id":"w1:t4","terminal_title_stripped":"kubectl logs -f deploy/api","foreground_cwd":"/Users/demo/code/infra"},
+ {"pane_id":"w1:p5","tab_id":"w1:t5","terminal_title_stripped":"btop","foreground_cwd":"/Users/demo"}]}}`
 
 type Turn struct {
 	User      string
@@ -48,7 +70,7 @@ func Specs() []Spec {
 		{Title: "CHECKOUT-V2", Repo: "atlas", Branches: []string{"feat/checkout-v2"}, PR: "https://github.com/acme/atlas/pull/412", Color: "green",
 			Recap:     "Checkout v2 is behind the flag and passing e2e. Next: wire Apple Pay sheet and ask design for the empty-cart state.",
 			Artifacts: []string{"https://claude.ai/artifact/demo-checkout-flow Checkout v2 flow map"},
-			Ago:   4 * time.Minute, Span: 5 * time.Hour, Live: "busy", Model: "claude-opus-5-5", CostUSD: 14.20,
+			Ago:       4 * time.Minute, Span: 5 * time.Hour, Live: "busy", Model: "claude-opus-5-5", CostUSD: 14.20,
 			Turns: []Turn{
 				{"let's rebuild the checkout flow as a single page, keep the old one behind a flag", "I'll split this into three steps: a `CheckoutV2` route behind `flags.checkoutV2`, a shared cart summary, and the payment step. Starting with the route and flag plumbing.", []string{"Bash: rg -n \"checkout\" src/routes", "Edit: src/routes/checkout/v2.tsx"}},
 				{"the stripe elements iframe flickers on mobile safari", "The flicker comes from remounting `<PaymentElement>` whenever the cart total changes. Memoizing the `options` object and keying the element by client secret fixes it.", []string{"Edit: src/checkout/PaymentStep.tsx", "Bash: pnpm test checkout"}},
@@ -71,8 +93,8 @@ func Specs() []Spec {
 			}},
 		{Title: "RATE-LIMITS", Repo: "atlas", Branches: []string{"feat/rate-limits"}, Color: "purple",
 			Artifacts: []string{"https://claude.ai/artifact/demo-ratelimit-design Rate limiter design"},
-			Recap: "Token-bucket limiter merged for the public API. Follow-up: per-tenant overrides from the admin panel.",
-			Ago:   26 * time.Hour, Span: 3 * time.Hour, Model: "claude-sonnet-5-5", CostUSD: 4.80,
+			Recap:     "Token-bucket limiter merged for the public API. Follow-up: per-tenant overrides from the admin panel.",
+			Ago:       26 * time.Hour, Span: 3 * time.Hour, Model: "claude-sonnet-5-5", CostUSD: 4.80,
 			Turns: []Turn{
 				{"add rate limiting to the public api, redis backed", "Using a token bucket in Redis via a single Lua script so check-and-decrement is atomic. Limits come from the API key's plan.", []string{"Write: src/api/ratelimit.ts", "Write: src/api/ratelimit.lua"}},
 				{"return proper headers", "Responses now include `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset`, plus `Retry-After` on 429.", nil},
@@ -92,7 +114,7 @@ func Specs() []Spec {
 		{Title: "INCIDENT-0612", Repo: "infra", Branches: []string{"main"}, Color: "red",
 			Recap:     "Root cause: connection pool exhaustion after the 2.14 deploy doubled worker count. Postmortem drafted.",
 			Artifacts: []string{"https://claude.ai/artifact/demo-0612-timeline Incident 0612 timeline", "https://claude.ai/artifact/demo-0612-pool Pool saturation chart"},
-			Ago:   6 * 24 * time.Hour, Span: 7 * time.Hour, Model: "claude-opus-5-5", CostUSD: 9.40,
+			Ago:       6 * 24 * time.Hour, Span: 7 * time.Hour, Model: "claude-opus-5-5", CostUSD: 9.40,
 			Turns: []Turn{
 				{"api p99 is at 8s and climbing, help me find out why", "Pool wait time spikes at 14:02, right after the 2.14 rollout. Worker count went from 8 to 16 per pod but `max_connections` per pod stayed at 20 — workers now queue for connections.", []string{"Bash: kubectl top pods -n api", "Bash: kubectl logs deploy/api --since=30m | rg 'pool timeout'"}},
 				{"write the postmortem", "Drafted in docs/postmortems/0612.md with timeline, impact (38 min degraded), root cause and three action items.", []string{"Write: docs/postmortems/0612.md"}},
@@ -102,10 +124,10 @@ func Specs() []Spec {
 		{Repo: "infra", Branches: []string{"main"}, Ago: 5 * time.Hour, Span: 20 * time.Minute, Model: "claude-sonnet-5-5", CostUSD: 0.40,
 			Turns: []Turn{{"review https://github.com/acme/infra/pull/91", "Mostly good. One issue: the new IAM role grants `s3:*` on the bucket; scope it to `GetObject`/`PutObject` on the `exports/` prefix.", []string{"Bash: gh pr diff 91"}}}},
 		{Title: "SEARCH-RELEVANCE", Repo: "atlas", Branches: []string{"exp/hybrid-search"}, Color: "pink", AITitle: "Hybrid search experiment",
-			Job: "done | Hybrid retrieval beats BM25 by 0.13 NDCG@10; report written to eval/REPORT.md.",
+			Job:       "done | Hybrid retrieval beats BM25 by 0.13 NDCG@10; report written to eval/REPORT.md.",
 			Recap:     "BM25 + embeddings hybrid improves NDCG@10 from 0.61 to 0.74 on the eval set. Needs a latency budget decision.",
 			Artifacts: []string{"https://claude.ai/artifact/demo-search-eval Search relevance eval report"},
-			Ago:   3 * 24 * time.Hour, Span: 6 * time.Hour, Model: "claude-opus-5-5", CostUSD: 11.00,
+			Ago:       3 * 24 * time.Hour, Span: 6 * time.Hour, Model: "claude-opus-5-5", CostUSD: 11.00,
 			Turns: []Turn{
 				{"our product search is bad for typos and synonyms. try hybrid bm25 + embeddings", "Built an offline eval with 300 labeled queries. BM25 alone: NDCG@10 0.61. Hybrid with reciprocal rank fusion: 0.74. Typos improve the most.", []string{"Bash: python eval/run.py --mode hybrid"}},
 				{"what's the latency cost", "p50 +18ms, p95 +41ms with the embedding call cached per query. Most of it is the vector search; HNSW with ef=64 keeps recall at 0.97.", nil},
@@ -164,6 +186,9 @@ func Generate(dir string, now time.Time) error {
 		return err
 	}
 	if err := writeGear(dir); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(dir, PanesFile), []byte(demoPanes), 0o644); err != nil {
 		return err
 	}
 	pid := 40000
@@ -311,14 +336,14 @@ func writeGear(dir string) error {
   }
 }
 `,
-		filepath.Join(dir, "skills", "deploy-checklist", "SKILL.md"):   "---\nname: deploy-checklist\ndescription: Walk through the release checklist before any production deploy\n---\n",
-		filepath.Join(dir, "skills", "grafana-dash", "SKILL.md"):       "---\nname: grafana-dash\ndescription: Open Grafana dashboards as live terminal charts\n---\n",
-		filepath.Join(dir, "skills", "weekly-report", "SKILL.md"):      "---\nname: weekly-report\ndescription: Summarize the week's merged PRs and incidents for the team update\n---\n",
-		filepath.Join(dir, "skills-disabled", "old-jira", "SKILL.md"):  "---\nname: old-jira\ndescription: Legacy Jira helper (replaced by Linear MCP)\n---\n",
-		filepath.Join(dir, "agents", "reviewer.md"):                     "---\nname: reviewer\ndescription: Strict code reviewer for correctness and security\n---\n",
-		filepath.Join(dir, "commands", "standup.md"):                    "---\ndescription: Draft my standup from yesterday's sessions\n---\n",
-		filepath.Join(dir, "plugins", "cache", "superpowers-dev", "superpowers", "6.3.0", "skills", "brainstorming", "SKILL.md"):          "---\ndescription: Turn ideas into designs before writing code\n---\n",
-		filepath.Join(dir, "plugins", "cache", "superpowers-dev", "superpowers", "6.3.0", "skills", "systematic-debugging", "SKILL.md"):   "---\ndescription: Find root causes before proposing fixes\n---\n",
+		filepath.Join(dir, "skills", "deploy-checklist", "SKILL.md"):                                                                           "---\nname: deploy-checklist\ndescription: Walk through the release checklist before any production deploy\n---\n",
+		filepath.Join(dir, "skills", "grafana-dash", "SKILL.md"):                                                                               "---\nname: grafana-dash\ndescription: Open Grafana dashboards as live terminal charts\n---\n",
+		filepath.Join(dir, "skills", "weekly-report", "SKILL.md"):                                                                              "---\nname: weekly-report\ndescription: Summarize the week's merged PRs and incidents for the team update\n---\n",
+		filepath.Join(dir, "skills-disabled", "old-jira", "SKILL.md"):                                                                          "---\nname: old-jira\ndescription: Legacy Jira helper (replaced by Linear MCP)\n---\n",
+		filepath.Join(dir, "agents", "reviewer.md"):                                                                                            "---\nname: reviewer\ndescription: Strict code reviewer for correctness and security\n---\n",
+		filepath.Join(dir, "commands", "standup.md"):                                                                                           "---\ndescription: Draft my standup from yesterday's sessions\n---\n",
+		filepath.Join(dir, "plugins", "cache", "superpowers-dev", "superpowers", "6.3.0", "skills", "brainstorming", "SKILL.md"):               "---\ndescription: Turn ideas into designs before writing code\n---\n",
+		filepath.Join(dir, "plugins", "cache", "superpowers-dev", "superpowers", "6.3.0", "skills", "systematic-debugging", "SKILL.md"):        "---\ndescription: Find root causes before proposing fixes\n---\n",
 		filepath.Join(dir, "plugins", "cache", "claude-plugins-official", "frontend-design", "1.0.0", "skills", "frontend-design", "SKILL.md"): "---\ndescription: Distinctive, intentional UI design\n---\n",
 	}
 	for path, content := range files {

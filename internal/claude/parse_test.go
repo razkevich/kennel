@@ -91,8 +91,8 @@ func TestReadLive(t *testing.T) {
 
 func TestAutoTitle(t *testing.T) {
 	cases := map[string]string{
-		"Priya Patel  [10:14 AM]\nhey team — the invoice": "ask from Priya",
-		"review https://github.com/acme/infra/pull/91":     "review infra#91",
+		"Priya Patel  [10:14 AM]\nhey team — the invoice":    "ask from Priya",
+		"review https://github.com/acme/infra/pull/91":       "review infra#91",
 		"can you make my zsh startup faster, it takes 900ms": "make my zsh startup faster, it",
 		"why does `pnpm build` warn":                         "why does `pnpm build` warn",
 	}

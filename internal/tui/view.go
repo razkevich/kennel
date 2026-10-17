@@ -149,7 +149,7 @@ func (m Model) hints() string {
 		case TabAsk:
 			hs = []string{hint("⏎", "ask"), hint("↑↓", "sources"), hint("1-9", "jump to [n]"), hint("r", "re-ask"), hint("i", "edit")}
 		case TabJobs:
-			hs = []string{hint("⏎", "open"), hint("g", "go to pup"), hint("t", "message")}
+			hs = []string{hint("⏎", "open/start"), hint("N", "new thing"), hint("X", "stop"), hint("g", "go to pup"), hint("t", "message")}
 		case TabArtifacts:
 			hs = []string{hint("⏎", "open"), hint("y", "copy link"), hint("s", "star"), hint("g", "go to pup")}
 		case TabGear:
@@ -175,7 +175,7 @@ func (m Model) helpView() string {
 		keys  [][2]string
 	}{
 		{"getting around", [][2]string{{"1-6 / [ ]", "switch tabs"}, {"ctrl+k", "jump anywhere"}, {"u", "next pup that needs you"}, {"/", "search (names + transcripts)"}, {"a", "ask your pack (RAG)"}, {"F", "map floor: campus / projects / kennels"}}},
-		{"a pup", [][2]string{{"⏎", "open / focus in herdr or Ghostty"}, {"f", "fork session"}, {"R", "resume with remote control"}, {"t", "quick reply (herdr)"}, {"v / space", "read transcript"}, {"n", "new session here"}}},
+		{"a pup", [][2]string{{"⏎", "open / focus in herdr or Ghostty"}, {"N", "new thing (monitor, server, logs…)"}, {"f", "fork session"}, {"R", "resume with remote control"}, {"t", "quick reply (herdr)"}, {"v / space", "read transcript"}, {"n", "new session here"}}},
 		{"organize", [][2]string{{"s", "star (Best in Show)"}, {"r", "rename"}, {"m", "move to kennel"}, {"N", "note"}, {"x", "archive"}, {"D", "trash (recoverable)"}, {"K", "new kennel"}}},
 		{"handy", [][2]string{{"y / Y", "copy id / resume command"}, {"p / A", "open PR / artifact"}, {"search", "is:live is:starred repo:x since:7d has:pr"}, {"q", "quit"}}},
 	}

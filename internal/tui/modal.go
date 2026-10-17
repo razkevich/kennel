@@ -11,6 +11,7 @@ import (
 	"github.com/razkevich/kennel/internal/gear"
 	"github.com/razkevich/kennel/internal/pack"
 	"github.com/razkevich/kennel/internal/store"
+	"github.com/razkevich/kennel/internal/things"
 	"github.com/sahilm/fuzzy"
 )
 
@@ -373,5 +374,76 @@ func (m *Model) switcherModal() *modal {
 			m.selectPup(v)
 		}
 		return nil
+	})
+}
+
+func newThingModal(prefill string) *modal {
+	help := "name | command | folder   — e.g.  api logs | kubectl logs -f deploy/api | ~/code/infra"
+	return textModal("🔧 new thing", help, prefill, "dev server | pnpm dev | ~/code/app", func(m *Model, text, _ string) tea.Cmd {
+		parts := strings.Split(text, "|")
+		if len(parts) < 2 || strings.TrimSpace(parts[1]) == "" {
+			return toast("need at least: name | command", true)
+		}
+		t := things.Thing{Name: strings.TrimSpace(parts[0]), Command: strings.TrimSpace(parts[1])}
+		if len(parts) > 2 {
+			t.Cwd = expandHome(strings.TrimSpace(parts[2]))
+		}
+		if t.Cwd == "" {
+			t.Cwd, _ = os.UserHomeDir()
+		}
+		t.Kind = things.Infer(t.Command)
+		if err := m.app.SaveThing(&t); err != nil {
+			return toast(err.Error(), true)
+		}
+		return toast(things.Icon[t.Kind]+" saved "+t.Name, false)
+	})
+}
+
+func expandHome(p string) string {
+	if strings.HasPrefix(p, "~/") || p == "~" {
+		home, _ := os.UserHomeDir()
+		return home + p[1:]
+	}
+	return p
+}
+
+func stopThingModal(t things.Thing) *modal {
+	how := "Ctrl-C in its herdr pane"
+	if t.Pane == "" {
+		how = fmt.Sprintf("SIGINT to pid %d", t.PID)
+	}
+	return confirmModal("✋ stop "+t.Name+"?", how, func(m *Model, _, _ string) tea.Cmd {
+		a := m.app
+		return func() tea.Msg {
+			if err := a.Stop(t); err != nil {
+				return toastMsg{text: err.Error(), err: true}
+			}
+			return toastMsg{text: "✋ stopped " + t.Name}
+		}
+	})
+}
+
+func forgetThingModal(t things.Thing) *modal {
+	return confirmModal("forget "+t.Name+"?", "removes it from kennel; nothing running is touched", func(m *Model, _, _ string) tea.Cmd {
+		if err := m.app.DeleteThing(t.ID); err != nil {
+			return toast(err.Error(), true)
+		}
+		return toast("forgot "+t.Name, false)
+	})
+}
+
+func (m *Model) moveThingModal(t things.Thing) *modal {
+	choices := []choice{{label: "🔧 Workshop (no kennel)", value: "0"}}
+	for _, k := range m.app.Kennels() {
+		choices = append(choices, choice{label: k.Icon + " " + k.Name, value: fmt.Sprint(k.ID)})
+	}
+	return pickerModal("🚚 move "+t.Name+" to…", choices, func(m *Model, _, value string) tea.Cmd {
+		var id int64
+		fmt.Sscan(value, &id)
+		t.KennelID = id
+		if err := m.app.SaveThing(&t); err != nil {
+			return toast(err.Error(), true)
+		}
+		return toast("🚚 moved "+t.Name, false)
 	})
 }
