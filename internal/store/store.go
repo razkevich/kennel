@@ -191,23 +191,44 @@ func ms(t time.Time) int64 {
 	return t.UnixMilli()
 }
 
-// Save upserts a session and appends its new chunks in one transaction.
-// When reset is true, previously indexed chunks for the session are dropped first.
+// SaveItem is one session's worth of index updates.
+type SaveItem struct {
+	Session *claude.Session
+	File    FileState
+	Chunks  []claude.Chunk
+	// Reset drops previously indexed chunks first (file rewritten or first seen).
+	Reset bool
+}
+
+// Save upserts one session and appends its new chunks.
 func (s *Store) Save(sess *claude.Session, fs FileState, chunks []claude.Chunk, reset bool) error {
+	return s.SaveBatch([]SaveItem{{Session: sess, File: fs, Chunks: chunks, Reset: reset}})
+}
+
+// SaveBatch writes many sessions in one transaction; per-file commits dominate
+// a cold index of a large history otherwise.
+func (s *Store) SaveBatch(items []SaveItem) error {
 	tx, err := s.DB.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if reset {
-		if _, err := tx.Exec(`DELETE FROM chunks WHERE session_id=?`, sess.ID); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(`DELETE FROM sessions WHERE path=? AND id<>?`, sess.Path, sess.ID); err != nil {
-			return err
-		}
+	ins, err := tx.Prepare(`INSERT INTO chunks(text, session_id, role, ts, seq) VALUES(?,?,?,?,?)`)
+	if err != nil {
+		return err
 	}
-	_, err = tx.Exec(`INSERT INTO sessions(`+sessionCols+`, file_size, file_mtime, file_offset, chunk_seq)
+	defer ins.Close()
+	for _, it := range items {
+		sess, fs := it.Session, it.File
+		if it.Reset {
+			if _, err := tx.Exec(`DELETE FROM chunks WHERE session_id=?`, sess.ID); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(`DELETE FROM sessions WHERE path=? AND id<>?`, sess.Path, sess.ID); err != nil {
+				return err
+			}
+		}
+		_, err = tx.Exec(`INSERT INTO sessions(`+sessionCols+`, file_size, file_mtime, file_offset, chunk_seq)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET project=excluded.project, path=excluded.path, cwd=excluded.cwd, last_cwd=excluded.last_cwd,
 		custom_title=excluded.custom_title, agent_name=excluded.agent_name, ai_title=excluded.ai_title,
@@ -217,21 +238,15 @@ func (s *Store) Save(sess *claude.Session, fs FileState, chunks []claude.Chunk, 
 		started=excluded.started, updated=excluded.updated, n_user=excluded.n_user, n_asst=excluded.n_asst,
 		n_tools=excluded.n_tools, cost=excluded.cost, file_size=excluded.file_size, file_mtime=excluded.file_mtime,
 		file_offset=excluded.file_offset, chunk_seq=excluded.chunk_seq`,
-		sess.ID, sess.Project, sess.Path, sess.Cwd, sess.LastCwd, sess.CustomTitle, sess.AgentName, sess.AITitle,
-		sess.FirstPrompt, sess.LastPrompt, sess.Recap, sess.Color, sess.ContinuedIn, sess.Worktree, sess.Version, sess.Remote,
-		js(sess.Branches), js(sess.PRs), jsonOf(sess.Artifacts), jsonOf(sess.Crons), js(sess.Models), ms(sess.Started), ms(sess.Updated),
-		sess.NUser, sess.NAssistant, sess.NTools, sess.Cost, fs.Size, fs.Mtime, fs.Offset, fs.Seq)
-	if err != nil {
-		return err
-	}
-	if len(chunks) > 0 {
-		st, err := tx.Prepare(`INSERT INTO chunks(text, session_id, role, ts, seq) VALUES(?,?,?,?,?)`)
+			sess.ID, sess.Project, sess.Path, sess.Cwd, sess.LastCwd, sess.CustomTitle, sess.AgentName, sess.AITitle,
+			sess.FirstPrompt, sess.LastPrompt, sess.Recap, sess.Color, sess.ContinuedIn, sess.Worktree, sess.Version, sess.Remote,
+			js(sess.Branches), js(sess.PRs), jsonOf(sess.Artifacts), jsonOf(sess.Crons), js(sess.Models), ms(sess.Started), ms(sess.Updated),
+			sess.NUser, sess.NAssistant, sess.NTools, sess.Cost, fs.Size, fs.Mtime, fs.Offset, fs.Seq)
 		if err != nil {
 			return err
 		}
-		defer st.Close()
-		for _, c := range chunks {
-			if _, err := st.Exec(c.Text, sess.ID, string(c.Role), ms(c.TS), c.Seq); err != nil {
+		for _, c := range it.Chunks {
+			if _, err := ins.Exec(c.Text, sess.ID, string(c.Role), ms(c.TS), c.Seq); err != nil {
 				return err
 			}
 		}

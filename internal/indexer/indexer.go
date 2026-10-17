@@ -103,6 +103,21 @@ func (ix *Indexer) Sync(ctx context.Context, progress func(Progress)) (Progress,
 	go func() { wg.Wait(); close(out) }()
 
 	var firstErr error
+	var batch []store.SaveItem
+	chunks := 0
+	flush := func() {
+		if len(batch) == 0 {
+			return
+		}
+		if err := ix.Store.SaveBatch(batch); err != nil && firstErr == nil {
+			firstErr = err
+		}
+		p.Changed += len(batch)
+		batch, chunks = batch[:0], 0
+		if progress != nil {
+			progress(p)
+		}
+	}
 	for r := range out {
 		p.Done++
 		if r.err != nil {
@@ -114,14 +129,13 @@ func (ix *Indexer) Sync(ctx context.Context, progress func(Progress)) (Progress,
 		if r.sess.ID == "" {
 			continue
 		}
-		if err := ix.Store.Save(r.sess, r.fs, r.chunks, r.reset); err != nil && firstErr == nil {
-			firstErr = err
-		}
-		p.Changed++
-		if progress != nil {
-			progress(p)
+		batch = append(batch, store.SaveItem{Session: r.sess, File: r.fs, Chunks: r.chunks, Reset: r.reset})
+		chunks += len(r.chunks)
+		if len(batch) >= 64 || chunks >= 20000 {
+			flush()
 		}
 	}
+	flush()
 	if ctx.Err() != nil {
 		return p, ctx.Err()
 	}
