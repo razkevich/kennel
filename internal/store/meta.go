@@ -1,0 +1,150 @@
+package store
+
+import (
+	"database/sql"
+	"encoding/json"
+	"regexp"
+	"strings"
+	"time"
+)
+
+type Kennel struct {
+	ID    int64
+	Name  string
+	Icon  string
+	Color string
+	Cwd   string
+	Rules Rules
+	Sort  int
+}
+
+// Rules auto-assign pups to a kennel when they have no explicit kennel.
+type Rules struct {
+	CwdPrefix []string `json:"cwd_prefix,omitempty"`
+	Match     string   `json:"match,omitempty"`
+}
+
+func (r Rules) Empty() bool { return len(r.CwdPrefix) == 0 && r.Match == "" }
+
+// Matches tests cwd prefixes and a case-insensitive regex against title/branches.
+func (r Rules) Matches(cwd string, texts ...string) bool {
+	for _, p := range r.CwdPrefix {
+		if p != "" && strings.HasPrefix(cwd, p) {
+			return true
+		}
+	}
+	if r.Match == "" {
+		return false
+	}
+	re, err := regexp.Compile("(?i)" + r.Match)
+	if err != nil {
+		return false
+	}
+	for _, t := range texts {
+		if re.MatchString(t) {
+			return true
+		}
+	}
+	return false
+}
+
+type PupMeta struct {
+	SessionID string
+	KennelID  int64
+	Alias     string
+	Starred   bool
+	Archived  bool
+	SeenAt    time.Time
+	Note      string
+}
+
+func (s *Store) Kennels() ([]Kennel, error) {
+	rows, err := s.DB.Query(`SELECT id, name, icon, color, cwd, rules, sort FROM kennels ORDER BY sort, id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Kennel
+	for rows.Next() {
+		var k Kennel
+		var rules string
+		if err := rows.Scan(&k.ID, &k.Name, &k.Icon, &k.Color, &k.Cwd, &rules, &k.Sort); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(rules), &k.Rules)
+		out = append(out, k)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) SaveKennel(k *Kennel) error {
+	rules := ""
+	if !k.Rules.Empty() {
+		b, _ := json.Marshal(k.Rules)
+		rules = string(b)
+	}
+	if k.ID == 0 {
+		var maxSort sql.NullInt64
+		_ = s.DB.QueryRow(`SELECT max(sort) FROM kennels`).Scan(&maxSort)
+		k.Sort = int(maxSort.Int64) + 1
+		res, err := s.DB.Exec(`INSERT INTO kennels(name, icon, color, cwd, rules, sort, created) VALUES(?,?,?,?,?,?,?)`,
+			k.Name, k.Icon, k.Color, k.Cwd, rules, k.Sort, time.Now().UnixMilli())
+		if err != nil {
+			return err
+		}
+		k.ID, _ = res.LastInsertId()
+		return nil
+	}
+	_, err := s.DB.Exec(`UPDATE kennels SET name=?, icon=?, color=?, cwd=?, rules=?, sort=? WHERE id=?`,
+		k.Name, k.Icon, k.Color, k.Cwd, rules, k.Sort, k.ID)
+	return err
+}
+
+func (s *Store) DeleteKennel(id int64) error {
+	_, err := s.DB.Exec(`UPDATE pup_meta SET kennel_id=NULL WHERE kennel_id=?; DELETE FROM kennels WHERE id=?`, id, id)
+	return err
+}
+
+func (s *Store) Meta() (map[string]PupMeta, error) {
+	rows, err := s.DB.Query(`SELECT session_id, coalesce(kennel_id,0), alias, starred, archived, seen_at, note FROM pup_meta`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]PupMeta{}
+	for rows.Next() {
+		var m PupMeta
+		var seen int64
+		if err := rows.Scan(&m.SessionID, &m.KennelID, &m.Alias, &m.Starred, &m.Archived, &seen, &m.Note); err != nil {
+			return nil, err
+		}
+		if seen > 0 {
+			m.SeenAt = time.UnixMilli(seen)
+		}
+		out[m.SessionID] = m
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) SaveMeta(m PupMeta) error {
+	var kennel any
+	if m.KennelID != 0 {
+		kennel = m.KennelID
+	}
+	_, err := s.DB.Exec(`INSERT INTO pup_meta(session_id, kennel_id, alias, starred, archived, seen_at, note) VALUES(?,?,?,?,?,?,?)
+		ON CONFLICT(session_id) DO UPDATE SET kennel_id=excluded.kennel_id, alias=excluded.alias, starred=excluded.starred,
+		archived=excluded.archived, seen_at=excluded.seen_at, note=excluded.note`,
+		m.SessionID, kennel, m.Alias, m.Starred, m.Archived, ms(m.SeenAt), m.Note)
+	return err
+}
+
+func (s *Store) Get(k string) string {
+	var v string
+	_ = s.DB.QueryRow(`SELECT v FROM kv WHERE k=?`, k).Scan(&v)
+	return v
+}
+
+func (s *Store) Set(k, v string) error {
+	_, err := s.DB.Exec(`INSERT INTO kv(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v`, k, v)
+	return err
+}
