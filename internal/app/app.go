@@ -64,6 +64,9 @@ func DefaultConfig() Config {
 	if cfg.Opener == "" {
 		cfg.Opener = opener.Auto
 	}
+	if os.Getenv("KENNEL_FAKE_LLM") != "" {
+		cfg.LLM = ask.Fake{}
+	}
 	return cfg
 }
 

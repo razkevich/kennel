@@ -318,6 +318,7 @@ func runMap(cfg app.Config, args []string) error {
 	fs := flag.NewFlagSet("map", flag.ExitOnError)
 	port := fs.Int("port", 7317, "port to listen on (localhost only)")
 	noOpen := fs.Bool("no-open", false, "don't open the browser")
+	token := fs.String("token", "", "fixed API token (default: random per run)")
 	fs.Parse(args)
 	a, err := openApp(cfg, true)
 	if err != nil {
@@ -326,5 +327,5 @@ func runMap(cfg app.Config, args []string) error {
 	defer a.Close()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	return web.Serve(ctx, a, fmt.Sprintf("127.0.0.1:%d", *port), !*noOpen)
+	return web.Serve(ctx, a, fmt.Sprintf("127.0.0.1:%d", *port), !*noOpen, *token)
 }

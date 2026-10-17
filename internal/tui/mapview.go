@@ -8,12 +8,12 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	zone "github.com/lrstanley/bubblezone"
-	"github.com/razkevich/kennel/internal/app"
+	"github.com/razkevich/kennel/internal/floor"
 	"github.com/razkevich/kennel/internal/pack"
 	"github.com/razkevich/kennel/internal/things"
 )
 
-var floors = []string{"🏡 Campus", "📁 Projects", "🏠 Kennels"}
+var floors = floor.Names
 
 type room struct {
 	key    string
@@ -56,123 +56,18 @@ type roomLayout struct {
 	cols  int
 }
 
-// campusOrder decides which room a pup stands in when several smart kennels match.
-var campusOrder = []string{"yard", "best", "fire", "helping", "court", "yak", "water", "marathon", "shipped", "rug", "dumpster"}
-
 const recentWindow = 21 * 24 * time.Hour
 
-func workshop() room {
-	return room{key: "workshop", title: "Workshop", icon: "🔧", color: cPeach, look: pack.Look{Border: "thick", Floor: "▪", Decor: "🧰"},
-		blurb: "monitors, servers and long jobs — N to add one"}
-}
-
 func (m Model) rooms() []room {
-	now := m.app.Now()
-	pups := m.app.Pups()
-	allThings := m.app.Things()
-	var rooms []room
-	switch m.floor {
-	case 0:
-		placed := map[string]bool{}
-		for _, key := range campusOrder {
-			sm := pack.SmartByKey(key)
-			r := room{key: key, title: sm.Name, icon: sm.Icon, color: lipgloss.Color(sm.Color), look: sm.Look, blurb: sm.Blurb}
-			for _, p := range pups {
-				if placed[p.ID] || !sm.Match(p, now) {
-					continue
-				}
-				if key != "rug" && key != "dumpster" && !p.Status.Live() && now.Sub(p.Updated) > recentWindow {
-					continue
-				}
-				placed[p.ID] = true
-				r.pups = append(r.pups, p)
-			}
-			rooms = append(rooms, r)
+	var out []room
+	for _, r := range floor.Rooms(m.app, m.floor) {
+		blurb := r.Blurb
+		if strings.HasPrefix(blurb, "/") {
+			blurb = shortPath(blurb)
 		}
-		lobby := room{key: "lobby", title: "Lobby", icon: "🛋️", color: cLav, look: pack.Look{Border: "rounded", Floor: " "}, blurb: "everyone else this month"}
-		for _, p := range pups {
-			if !placed[p.ID] && !p.Meta.Archived && !p.Empty() && now.Sub(p.Updated) < recentWindow {
-				lobby.pups = append(lobby.pups, p)
-			}
-		}
-		ws := workshop()
-		ws.things = allThings
-		rooms = append(rooms[:1], append([]room{lobby, ws}, rooms[1:]...)...)
-	case 1:
-		floorsChars := []string{"·", "⠂", "∴", "⁘", "~", " "}
-		borders := []string{"rounded", "double", "thick", "normal"}
-		palette := []lipgloss.Color{cSky, cPeach, cMauve, cGreen, cYellow, cPink, cTeal, cLav, cRed, cBlue}
-		homed := map[string]bool{}
-		for i, pr := range m.app.Projects() {
-			r := room{key: "project:" + pr.Root, title: pr.Name, icon: "📁", color: palette[i%len(palette)],
-				look: pack.Look{Border: borders[i%len(borders)], Floor: floorsChars[i%len(floorsChars)], Wide: pr.Count > 12}, blurb: shortPath(pr.Root)}
-			for _, p := range pups {
-				if app.ProjectRoot(p.Cwd) == pr.Root && !p.Meta.Archived && !p.Empty() && (p.Status.Live() || now.Sub(p.Updated) < recentWindow) {
-					r.pups = append(r.pups, p)
-				}
-			}
-			for _, t := range allThings {
-				if t.Cwd != "" && strings.HasPrefix(t.Cwd, pr.Root) {
-					r.things = append(r.things, t)
-					homed[t.Key()] = true
-				}
-			}
-			rooms = append(rooms, r)
-		}
-		if ws := homeless(allThings, homed); len(ws.things) > 0 {
-			rooms = append(rooms, ws)
-		}
-	case 2:
-		homed := map[string]bool{}
-		for _, k := range m.app.Kennels() {
-			icon := k.Icon
-			if icon == "" {
-				icon = "🏠"
-			}
-			color := lipgloss.Color(k.Color)
-			if k.Color == "" {
-				color = cPeach
-			}
-			r := room{key: fmt.Sprintf("kennel:%d", k.ID), title: k.Name, icon: icon, color: color, look: pack.Look{Border: "rounded", Floor: "·"}}
-			for _, p := range pups {
-				if p.Kennel != nil && p.Kennel.ID == k.ID && !p.Meta.Archived {
-					r.pups = append(r.pups, p)
-				}
-			}
-			for _, t := range allThings {
-				if t.KennelID == k.ID {
-					r.things = append(r.things, t)
-					homed[t.Key()] = true
-				}
-			}
-			rooms = append(rooms, r)
-		}
-		if len(m.app.Kennels()) == 0 {
-			rooms = append(rooms, room{key: "new-kennel", title: "Your first kennel", icon: "＋", color: cPeach,
-				look: pack.Look{Border: "hidden", Floor: " ", Decor: "🔨"}, blurb: "No kennels yet — press K to build one"})
-		}
-		strays := room{key: "strays", title: "Strays", icon: "🐾", color: cDim, look: pack.Look{Border: "hidden", Floor: "⠂", Wide: true}, blurb: "recent pups without a kennel — m to move one in"}
-		for _, p := range pups {
-			if p.Kennel == nil && !p.Meta.Archived && !p.Empty() && (p.Status.Live() || now.Sub(p.Updated) < 7*24*time.Hour) {
-				strays.pups = append(strays.pups, p)
-			}
-		}
-		rooms = append(rooms, strays)
-		if ws := homeless(allThings, homed); len(ws.things) > 0 {
-			rooms = append(rooms, ws)
-		}
+		out = append(out, room{key: r.Key, title: r.Title, icon: r.Icon, color: lipgloss.Color(r.Color), look: r.Look, blurb: blurb, pups: r.Pups, things: r.Things})
 	}
-	return rooms
-}
-
-func homeless(all []things.Thing, homed map[string]bool) room {
-	ws := workshop()
-	for _, t := range all {
-		if !homed[t.Key()] {
-			ws.things = append(ws.things, t)
-		}
-	}
-	return ws
+	return out
 }
 
 func shortPath(p string) string {

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>kennel</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐕</text></svg>">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header id="top">
+  <div class="logo"><span class="face">▼•ᴥ•▼</span> kennel</div>
+  <nav id="floors" aria-label="floors"></nav>
+  <div id="counts"></div>
+  <div class="search">
+    <input id="q" type="search" placeholder="Search names, prompts, transcripts…  ( / )" autocomplete="off" spellcheck="false">
+    <div id="results" hidden></div>
+  </div>
+</header>
+
+<main>
+  <div id="stage">
+    <canvas id="map" aria-label="kennel map"></canvas>
+    <div id="hint" hidden></div>
+    <div id="card" hidden></div>
+    <div id="help">
+      <b>arrows/WASD</b> walk · <b>X</b> interact · <b>click</b> select · <b>double-click</b> open · <b>drag/scroll</b> pan · <b>pinch/⌘-scroll</b> zoom
+    </div>
+  </div>
+  <aside id="side">
+    <div class="tabs">
+      <button data-tab="pack" class="on">🐾 Pack</button>
+      <button data-tab="ask">💬 Ask</button>
+    </div>
+    <section id="pack"></section>
+    <section id="ask" hidden>
+      <form id="askform">
+        <textarea id="askq" rows="3" placeholder="Ask your pack… e.g. what did we decide about the postgres upgrade?"></textarea>
+        <button type="submit">Ask</button>
+      </form>
+      <div id="askstage"></div>
+      <div id="answer"></div>
+      <div id="sources"></div>
+    </section>
+  </aside>
+</main>
+
+<div id="transcript" hidden>
+  <div class="sheet">
+    <div class="bar"><b id="tr-title"></b><input id="tr-find" type="search" placeholder="find in transcript"><button id="tr-close">✕</button></div>
+    <div id="tr-body"></div>
+  </div>
+</div>
+<div id="toast" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>
