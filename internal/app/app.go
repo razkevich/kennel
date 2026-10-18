@@ -345,15 +345,16 @@ func ProjectRoot(cwd string) string {
 
 // ---- mutations ----
 
-func (a *App) updateMeta(id string, f func(*store.PupMeta)) error {
+// updateMeta changes one metadata field: only that column is written, so a
+// concurrent edit to another field (here or in another kennel process) survives.
+func (a *App) updateMeta(id, column string, f func(*store.PupMeta) any) error {
 	p := a.Pup(id)
 	if p == nil {
 		return fmt.Errorf("unknown session %s", id)
 	}
 	m := p.Meta
 	m.SessionID = id
-	f(&m)
-	if err := a.Store.SaveMeta(m); err != nil {
+	if err := a.Store.SetMetaField(id, column, f(&m)); err != nil {
 		return err
 	}
 	a.mu.Lock()
@@ -372,23 +373,34 @@ func (a *App) updateMeta(id string, f func(*store.PupMeta)) error {
 }
 
 func (a *App) ToggleStar(id string) error {
-	return a.updateMeta(id, func(m *store.PupMeta) { m.Starred = !m.Starred })
+	return a.updateMeta(id, "starred", func(m *store.PupMeta) any { m.Starred = !m.Starred; return m.Starred })
 }
 
 func (a *App) ToggleArchive(id string) error {
-	return a.updateMeta(id, func(m *store.PupMeta) { m.Archived = !m.Archived })
+	return a.updateMeta(id, "archived", func(m *store.PupMeta) any { m.Archived = !m.Archived; return m.Archived })
+}
+
+// SetArchived is the idempotent form used by automation (chutes).
+func (a *App) SetArchived(id string, v bool) error {
+	return a.updateMeta(id, "archived", func(m *store.PupMeta) any { m.Archived = v; return v })
 }
 
 func (a *App) MarkSeen(id string) error {
-	return a.updateMeta(id, func(m *store.PupMeta) { m.SeenAt = a.Now() })
+	return a.updateMeta(id, "seen_at", func(m *store.PupMeta) any { m.SeenAt = a.Now(); return m.SeenAt.UnixMilli() })
 }
 
 func (a *App) SetNote(id, note string) error {
-	return a.updateMeta(id, func(m *store.PupMeta) { m.Note = note })
+	return a.updateMeta(id, "note", func(m *store.PupMeta) any { m.Note = note; return note })
 }
 
 func (a *App) MoveTo(id string, kennelID int64) error {
-	if err := a.updateMeta(id, func(m *store.PupMeta) { m.KennelID = kennelID }); err != nil {
+	if err := a.updateMeta(id, "kennel_id", func(m *store.PupMeta) any {
+		m.KennelID = kennelID
+		if kennelID == 0 {
+			return nil
+		}
+		return kennelID
+	}); err != nil {
 		return err
 	}
 	return a.Reload()
@@ -401,17 +413,26 @@ func (a *App) Rename(id, title string) error {
 	if p == nil {
 		return fmt.Errorf("unknown session %s", id)
 	}
-	if err := a.updateMeta(id, func(m *store.PupMeta) { m.Alias = title }); err != nil {
+	if err := a.updateMeta(id, "alias", func(m *store.PupMeta) any { m.Alias = title; return title }); err != nil {
 		return err
 	}
-	if p.Status.Live() || title == "" {
+	// Only Claude transcripts take a custom-title record; other agents keep the kennel alias.
+	if p.Status.Live() || title == "" || p.AgentKind() != "claude" {
 		return nil
 	}
-	f, err := os.OpenFile(p.Path, os.O_APPEND|os.O_WRONLY, 0)
+	f, err := os.OpenFile(p.Path, os.O_APPEND|os.O_RDWR, 0)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
+	if st, err := f.Stat(); err == nil && st.Size() > 0 {
+		last := make([]byte, 1)
+		if _, err := f.ReadAt(last, st.Size()-1); err == nil && last[0] != '\n' {
+			if _, err := f.Write([]byte{'\n'}); err != nil {
+				return err
+			}
+		}
+	}
 	for _, rec := range []map[string]string{
 		{"type": "custom-title", "customTitle": title, "sessionId": id},
 		{"type": "agent-name", "agentName": title, "sessionId": id},
@@ -429,6 +450,9 @@ func (a *App) Trash(id string) (string, error) {
 	p := a.Pup(id)
 	if p == nil {
 		return "", fmt.Errorf("unknown session %s", id)
+	}
+	if p.AgentKind() != "claude" {
+		return "", fmt.Errorf("trash only handles Claude Code transcripts; archive %s instead (x)", p.Title())
 	}
 	if p.Status.Live() {
 		return "", fmt.Errorf("%s is running; stop it first", p.Title())

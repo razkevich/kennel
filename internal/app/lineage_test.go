@@ -78,3 +78,31 @@ func TestMergeTargetBrief(t *testing.T) {
 		t.Fatalf("distill: %+v", one)
 	}
 }
+
+func TestRenameAddsNewlineAndSkipsOtherAgents(t *testing.T) {
+	a := demoApp(t)
+	p := a.Find("RATE-LIMITS")
+	f, _ := os.OpenFile(p.Path, os.O_APPEND|os.O_WRONLY, 0)
+	f.WriteString(`{"type":"user","partial`) // a line still being written
+	f.Close()
+	if err := a.Rename(p.ID, "THROTTLE"); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(p.Path)
+	if !strings.Contains(string(b), "\"partial\n{") {
+		t.Fatalf("title record must start on its own line:\n%s", b[len(b)-200:])
+	}
+
+	codex := a.Find("0199c1a2")
+	before, _ := os.ReadFile(codex.Path)
+	if err := a.Rename(codex.ID, "CSV"); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := os.ReadFile(codex.Path)
+	if string(before) != string(after) || a.Pup(codex.ID).Title() != "CSV" {
+		t.Fatal("codex rename should be a kennel alias only")
+	}
+	if _, err := a.Trash(codex.ID); err == nil {
+		t.Fatal("trash must refuse non-Claude sessions")
+	}
+}

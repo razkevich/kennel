@@ -127,3 +127,59 @@ func mustParse(t *testing.T, path string) (string, int, error) {
 	id := string(b[i+13 : i+13+36])
 	return strings.TrimRight(id, `"`), 0, nil
 }
+
+// Two kennel processes (say the TUI and `kennel map`) syncing the same append
+// must not index the new lines twice.
+func TestTwoProcessesDoNotDuplicateChunks(t *testing.T) {
+	ix, cdir := setup(t)
+	if _, err := ix.Sync(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	other, err := store.Open(filepath.Join(filepath.Dir(cdir), "kennel.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	ix2 := &Indexer{Store: other, ClaudeDir: cdir}
+
+	files, _ := filepath.Glob(filepath.Join(cdir, "projects", "*", "*.jsonl"))
+	f, _ := os.OpenFile(files[0], os.O_APPEND|os.O_WRONLY, 0)
+	f.WriteString(`{"type":"user","sessionId":"x","timestamp":"2026-10-18T12:30:00Z","message":{"role":"user","content":"walrus migration"}}` + "\n")
+	f.Close()
+
+	done := make(chan error, 2)
+	go func() { _, err := ix.Sync(context.Background(), nil); done <- err }()
+	go func() { _, err := ix2.Sync(context.Background(), nil); done <- err }()
+	<-done
+	<-done
+	hits, err := ix.Store.Search(`"walrus"*`, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("appended line indexed %d times", len(hits))
+	}
+}
+
+func TestSessionIDComesFromFileName(t *testing.T) {
+	ix, cdir := setup(t)
+	files, _ := filepath.Glob(filepath.Join(cdir, "projects", "*", "*.jsonl"))
+	b, _ := os.ReadFile(files[0])
+	twin := filepath.Join(filepath.Dir(files[0]), "11111111-2222-4333-8444-555555555555.jsonl")
+	os.WriteFile(twin, b, 0o644) // a fork whose lines still carry the parent's sessionId
+	if _, err := ix.Sync(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	all, _ := ix.Store.Sessions()
+	ids := map[string]string{}
+	for _, s := range all {
+		ids[s.ID] = s.Path
+	}
+	if ids["11111111-2222-4333-8444-555555555555"] != twin || ids[strings.TrimSuffix(filepath.Base(files[0]), ".jsonl")] != files[0] {
+		t.Fatalf("both files should be indexed under their own ids: %v", ids)
+	}
+	again, _ := ix.Sync(context.Background(), nil)
+	if again.Total != 0 {
+		t.Fatalf("twins must not keep re-indexing each other: %+v", again)
+	}
+}

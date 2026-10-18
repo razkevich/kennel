@@ -178,3 +178,21 @@ func TestTemplate(t *testing.T) {
 }
 
 func itoa(n int64) string { return strconv.FormatInt(n, 10) }
+
+func TestTwoChutesDontUndoEachOther(t *testing.T) {
+	a, _ := setup(t)
+	chute := store.Block{Kind: blocks.Chute, Config: map[string]string{"days": "2"}}
+	a.SaveStyle("lobby", store.Style{Blocks: []store.Block{chute, chute}})
+	Sweep(a)
+	Sweep(a)
+	r, _ := FindRoom(a, "dumpster")
+	archived := 0
+	for _, p := range r.Pups {
+		if p.Meta.Archived {
+			archived++
+		}
+	}
+	if archived == 0 {
+		t.Fatal("old lobby pups should end up archived")
+	}
+}

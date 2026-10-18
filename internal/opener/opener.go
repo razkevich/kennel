@@ -71,8 +71,29 @@ func (t Target) ClaudeArgs() []string {
 	return args
 }
 
+// SafeArg strips control characters (which a terminal would act on when the
+// command is typed into a shell) and keeps free text from being read as a flag.
+func SafeArg(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\t' || r == '\r' {
+			return ' '
+		}
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) {
+			return -1
+		}
+		return r
+	}, s)
+	if strings.HasPrefix(s, "-") {
+		s = " " + s
+	}
+	return s
+}
+
 // Command is the program and arguments that open this target.
 func (t Target) Command() (string, []string) {
+	t.Prompt = SafeArg(t.Prompt)
+	t.Title = SafeArg(t.Title)
+	t.Model = strings.TrimSpace(SafeArg(t.Model))
 	switch t.Agent {
 	case "codex":
 		var args []string
@@ -175,7 +196,7 @@ func (o Opener) herdr(t Target) (string, error) {
 	}
 	args := []string{"tab", "create", "--cwd", t.Cwd, "--focus"}
 	if t.Title != "" {
-		args = append(args, "--label", t.Title)
+		args = append(args, "--label", SafeArg(t.Title))
 	}
 	if t.Workspace != "" {
 		ws, err := o.workspace(t.Workspace, t.Cwd)
@@ -257,6 +278,7 @@ end tell`, asQuote(t.Cwd), asQuote(cmd+"\n"))
 }
 
 func ghosttyFocusScript(title string) string {
+	title = SafeArg(title)
 	return fmt.Sprintf(`tell application "Ghostty"
 	repeat with w in windows
 		repeat with tb in tabs of w
@@ -281,7 +303,7 @@ func InlineCmd(t Target) *exec.Cmd {
 
 // Prompt sends text to a live herdr agent without switching to it.
 func Prompt(r Runner, pane, text string) error {
-	_, err := r.Run("herdr", "agent", "prompt", pane, text)
+	_, err := r.Run("herdr", "agent", "prompt", pane, SafeArg(text))
 	return err
 }
 
@@ -298,6 +320,7 @@ func asQuote(s string) string {
 
 // RunCommand opens a terminal running an arbitrary command (a "thing").
 func (o Opener) RunCommand(cwd, title, command string) (string, error) {
+	title, command = SafeArg(title), SafeArg(command)
 	switch Resolve(o.Kind) {
 	case Herdr:
 		out, err := o.Runner.Run("herdr", "tab", "create", "--cwd", cwd, "--focus", "--label", title)

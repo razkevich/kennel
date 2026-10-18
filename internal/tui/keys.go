@@ -277,7 +277,7 @@ func (m Model) pupActions(key string, p *pack.Pup) (tea.Model, tea.Cmd, bool) {
 		}
 		return m, m.openURL(p.Artifacts[len(p.Artifacts)-1].URL), true
 	case "v", " ":
-		m.transcript = newTranscript(p, m.contentQ)
+		m.transcript = newTranscript(p, m.contentQ, m.app.Store.Chunks)
 		return m, nil, true
 	case "D":
 		m.modal = trashModal(p)

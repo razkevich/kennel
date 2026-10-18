@@ -415,7 +415,7 @@ func (s *Server) handleTranscript(w http.ResponseWriter, r *http.Request) {
 		fail(w, errors.New("no such session"), http.StatusNotFound)
 		return
 	}
-	_, chunks, err := claude.ParseFile(p.Path)
+	chunks, err := s.App.Store.Chunks(p.ID)
 	if err != nil {
 		fail(w, err, http.StatusInternalServerError)
 		return
@@ -513,12 +513,21 @@ func (s *Server) handlePupAction(w http.ResponseWriter, r *http.Request) {
 		err = s.App.Prompt(p, body.Text)
 		msg = "sent"
 	case "clone":
+		if p.AgentKind() != "claude" {
+			err = errors.New("clone works on Claude sessions; use Convert for other agents")
+			break
+		}
 		var id string
 		if id, err = s.App.Clone(p.ID, app.ExpandHome(strings.TrimSpace(body.Cwd)), strings.TrimSpace(body.Title)); err == nil {
-			msg = "⧉ cloned as " + s.App.Pup(id).Title()
+			c := s.App.Pup(id)
+			if c == nil {
+				err = errors.New("cloned, but the copy didn't show up in the index")
+				break
+			}
+			msg = "⧉ cloned as " + c.Title()
 			if opener.Resolve(s.App.Cfg.Opener) != opener.Inline {
 				var opened string
-				if opened, err = s.App.Opener().Open(s.App.Target(s.App.Pup(id), false, false)); err == nil {
+				if opened, err = s.App.Opener().Open(s.App.Target(c, false, false)); err == nil {
 					msg += " · " + opened
 				}
 			}

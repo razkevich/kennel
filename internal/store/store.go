@@ -15,7 +15,7 @@ import (
 
 // indexVersion bumps whenever parsing changes; index tables are then rebuilt
 // while user metadata (kennels, pup_meta) is kept.
-const indexVersion = "6"
+const indexVersion = "7"
 
 type Store struct {
 	DB *sql.DB
@@ -33,7 +33,7 @@ func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(ON)")
+	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(ON)&_txlock=immediate")
 	if err != nil {
 		return nil, err
 	}
@@ -210,11 +210,14 @@ type SaveItem struct {
 	Chunks  []claude.Chunk
 	// Reset drops previously indexed chunks first (file rewritten or first seen).
 	Reset bool
+	// PrevOffset is the offset this update continues from; if another process
+	// already moved past it, the item is skipped instead of duplicating chunks.
+	PrevOffset int64
 }
 
 // Save upserts one session and appends its new chunks.
 func (s *Store) Save(sess *claude.Session, fs FileState, chunks []claude.Chunk, reset bool) error {
-	return s.SaveBatch([]SaveItem{{Session: sess, File: fs, Chunks: chunks, Reset: reset}})
+	return s.SaveBatch([]SaveItem{{Session: sess, File: fs, Chunks: chunks, Reset: reset, PrevOffset: -1}})
 }
 
 // SaveBatch writes many sessions in one transaction; per-file commits dominate
@@ -232,6 +235,12 @@ func (s *Store) SaveBatch(items []SaveItem) error {
 	defer ins.Close()
 	for _, it := range items {
 		sess, fs := it.Session, it.File
+		if !it.Reset && it.PrevOffset >= 0 {
+			var cur int64
+			if err := tx.QueryRow(`SELECT file_offset FROM sessions WHERE path=?`, sess.Path).Scan(&cur); err == nil && cur != it.PrevOffset {
+				continue
+			}
+		}
 		if it.Reset {
 			if _, err := tx.Exec(`DELETE FROM chunks WHERE session_id=?`, sess.ID); err != nil {
 				return err

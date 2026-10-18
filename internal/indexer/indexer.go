@@ -24,6 +24,8 @@ type Progress struct {
 }
 
 type Indexer struct {
+	// mu serializes syncs in this process; SaveBatch guards across processes.
+	mu        sync.Mutex
 	Store     *store.Store
 	ClaudeDir string
 	// CodexDir, when set, also indexes Codex CLI rollouts.
@@ -40,6 +42,7 @@ type job struct {
 }
 
 type result struct {
+	prev   int64
 	sess   *claude.Session
 	fs     store.FileState
 	chunks []claude.Chunk
@@ -50,6 +53,8 @@ type result struct {
 // Sync indexes new and changed files. progress, if non-nil, is called from the
 // calling goroutine after each file is written.
 func (ix *Indexer) Sync(ctx context.Context, progress func(Progress)) (Progress, error) {
+	ix.mu.Lock()
+	defer ix.mu.Unlock()
 	files, err := claude.SessionFiles(ix.ClaudeDir)
 	if err != nil {
 		return Progress{}, err
@@ -139,7 +144,7 @@ func (ix *Indexer) Sync(ctx context.Context, progress func(Progress)) (Progress,
 		if r.sess.ID == "" {
 			continue
 		}
-		batch = append(batch, store.SaveItem{Session: r.sess, File: r.fs, Chunks: r.chunks, Reset: r.reset})
+		batch = append(batch, store.SaveItem{Session: r.sess, File: r.fs, Chunks: r.chunks, Reset: r.reset, PrevOffset: r.prev})
 		chunks += len(r.chunks)
 		if len(batch) >= 64 || chunks >= 20000 {
 			flush()
@@ -186,13 +191,22 @@ func parse(j job) result {
 	if err != nil {
 		return result{err: err}
 	}
-	if sess.ID == "" {
+	// Claude resumes by the file's UUID, and copied lines in forks can carry a
+	// parent's sessionId, so the file name is the identity.
+	if !p.Codex {
 		sess.ID = strings.TrimSuffix(filepath.Base(j.path), ".jsonl")
-		if p.Codex && len(sess.ID) > 36 {
+	} else if sess.ID == "" {
+		sess.ID = strings.TrimSuffix(filepath.Base(j.path), ".jsonl")
+		if len(sess.ID) > 36 {
 			sess.ID = sess.ID[len(sess.ID)-36:]
 		}
 	}
+	prev := int64(-1)
+	if resume {
+		prev = j.prev.Offset
+	}
 	return result{
+		prev:   prev,
 		sess:   sess,
 		fs:     store.FileState{Size: j.info.Size(), Mtime: j.info.ModTime().UnixNano(), Offset: offset + n, Seq: p.Seq},
 		chunks: p.Chunks,
@@ -216,6 +230,9 @@ func (ix *Indexer) syncCursor(states map[string]store.FileState) int {
 		return 0
 	}
 	mt := fmt.Sprint(info.ModTime().UnixNano())
+	if wal, err := os.Stat(db + "-wal"); err == nil {
+		mt += "/" + fmt.Sprint(wal.ModTime().UnixNano(), wal.Size())
+	}
 	if ix.Store.Get("cursor_mtime") == mt {
 		return 0
 	}

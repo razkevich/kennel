@@ -328,6 +328,10 @@ func toggleListEntry(path, key, name string) error {
 }
 
 func writeAtomic(path string, b []byte) error {
+	// Settings often live in a dotfiles repo behind a symlink; write through it.
+	if real, err := filepath.EvalSymlinks(path); err == nil {
+		path = real
+	}
 	mode := os.FileMode(0o644)
 	if st, err := os.Stat(path); err == nil {
 		mode = st.Mode().Perm()

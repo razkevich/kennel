@@ -24,8 +24,8 @@ type transcriptView struct {
 	width   int
 }
 
-func newTranscript(p *pack.Pup, query string) *transcriptView {
-	_, chunks, err := claude.ParseFile(p.Path)
+func newTranscript(p *pack.Pup, query string, load func(id string) ([]claude.Chunk, error)) *transcriptView {
+	chunks, err := load(p.ID)
 	ti := textinput.New()
 	ti.Prompt = "/"
 	ti.PromptStyle = sAccent

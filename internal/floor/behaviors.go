@@ -80,7 +80,7 @@ func Sweep(a *app.App) int {
 					if p.Meta.Archived || p.Meta.Starred || p.Status.Live() || now.Sub(p.Updated) < limit {
 						continue
 					}
-					if a.ToggleArchive(p.ID) == nil {
+					if a.SetArchived(p.ID, true) == nil {
 						n++
 					}
 				}

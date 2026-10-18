@@ -70,30 +70,68 @@ func Read(dir string, since map[string]int64) ([]Conversation, map[string]bool, 
 	defer db.Close()
 	folders := workspaceFolders(dir)
 
-	rows, err := db.Query(`SELECT key, value FROM cursorDiskKV WHERE key LIKE 'composerData:%'`)
-	if err != nil {
-		return nil, nil, err
+	// Look at timestamps first; full JSON is loaded only for composers that changed.
+	all := map[string]bool{}
+	var changed []string
+	stamps, err := db.Query(`SELECT key, json_extract(value, '$.lastUpdatedAt') FROM cursorDiskKV WHERE key LIKE 'composerData:%'`)
+	if err == nil {
+		for stamps.Next() {
+			var key string
+			var updated sql.NullInt64
+			if stamps.Scan(&key, &updated) != nil {
+				continue
+			}
+			id := strings.TrimPrefix(key, "composerData:")
+			all[id] = true
+			if prev, ok := since[id]; ok && updated.Valid && prev >= updated.Int64 {
+				continue
+			}
+			changed = append(changed, key)
+		}
+		err = stamps.Err()
+		stamps.Close()
 	}
 	var comps []composer
-	for rows.Next() {
-		var key string
-		var val []byte
-		if err := rows.Scan(&key, &val); err != nil {
-			rows.Close()
+	load := func(query string, args ...any) error {
+		rows, err := db.Query(query, args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var key string
+			var val []byte
+			if err := rows.Scan(&key, &val); err != nil {
+				return err
+			}
+			var c composer
+			if json.Unmarshal(val, &c) != nil {
+				continue
+			}
+			if c.ID == "" {
+				c.ID = strings.TrimPrefix(key, "composerData:")
+			}
+			comps = append(comps, c)
+		}
+		return rows.Err()
+	}
+	if err != nil {
+		// Older or binary-encoded values: fall back to reading everything.
+		all = map[string]bool{}
+		if err := load(`SELECT key, value FROM cursorDiskKV WHERE key LIKE 'composerData:%'`); err != nil {
 			return nil, nil, err
 		}
-		var c composer
-		if json.Unmarshal(val, &c) != nil {
-			continue
+		for _, c := range comps {
+			all[c.ID] = true
 		}
-		if c.ID == "" {
-			c.ID = strings.TrimPrefix(key, "composerData:")
+	} else {
+		for _, key := range changed {
+			if err := load(`SELECT key, value FROM cursorDiskKV WHERE key = ?`, key); err != nil {
+				return nil, nil, err
+			}
 		}
-		comps = append(comps, c)
 	}
-	rows.Close()
 
-	all := map[string]bool{}
 	var out []Conversation
 	for _, c := range comps {
 		all[c.ID] = true

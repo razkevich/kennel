@@ -386,11 +386,17 @@ func runClone(cfg app.Config, args []string) error {
 	if p == nil {
 		return fmt.Errorf("no session matches %q", strings.Join(pos, " "))
 	}
+	if p.AgentKind() != "claude" {
+		return errors.New("clone works on Claude sessions; use kennel convert for other agents")
+	}
 	id, err := a.Clone(p.ID, app.ExpandHome(*to), *name)
 	if err != nil {
 		return err
 	}
 	c := a.Pup(id)
+	if c == nil {
+		return fmt.Errorf("cloned to %s, but the copy didn't show up in the index", id)
+	}
 	fmt.Printf("⧉ cloned %s → %s (%s)\n  %s\n", p.Title(), c.Title(), id, a.Target(c, false, false).ShellCommand())
 	return nil
 }

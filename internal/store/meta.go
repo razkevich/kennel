@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"fmt"
 
 	"encoding/json"
 	"github.com/razkevich/kennel/internal/things"
@@ -182,6 +183,18 @@ func (s *Store) SaveThing(t *things.Thing) error {
 
 func (s *Store) DeleteThing(id int64) error {
 	_, err := s.DB.Exec(`DELETE FROM things WHERE id=?`, id)
+	return err
+}
+
+var metaColumns = map[string]bool{"kennel_id": true, "alias": true, "starred": true, "archived": true, "seen_at": true, "note": true}
+
+// SetMetaField upserts a single pup_meta column.
+func (s *Store) SetMetaField(sessionID, column string, value any) error {
+	if !metaColumns[column] {
+		return fmt.Errorf("unknown meta field %q", column)
+	}
+	_, err := s.DB.Exec(`INSERT INTO pup_meta(session_id, `+column+`) VALUES(?, ?)
+		ON CONFLICT(session_id) DO UPDATE SET `+column+`=excluded.`+column, sessionID, value)
 	return err
 }
 
