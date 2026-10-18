@@ -46,6 +46,24 @@ test("web screenshots", async ({ page }) => {
   await page.screenshot({ path: out("web-ask") });
 });
 
+test("editing screenshot", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 860 });
+  await page.goto("/?t=e2e");
+  await page.waitForFunction(() => window.kennel && window.kennel.app.ents.size > 0);
+  await page.waitForTimeout(800);
+  const wall = await page.evaluate(() => window.kennel.wallPos("lobby"));
+  await page.mouse.click(wall.x, wall.y);
+  const r = await page.evaluate(() => window.kennel.app.rooms.find((x) => x.key === "lobby"));
+  const se = await page.evaluate(([x, y]) => window.kennel.worldPos(x, y), [r.x + r.w, r.y + r.h]);
+  await page.mouse.move(se.x, se.y);
+  await page.mouse.down();
+  for (let i = 1; i <= 6; i++) await page.mouse.move(se.x + i * 14, se.y + i * 9);
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: out("web-edit") });
+  await page.mouse.up();
+  await page.keyboard.press("Meta+z");
+});
+
 test("build screenshot", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 860 });
   await page.goto("/?t=e2e");

@@ -204,3 +204,29 @@ test("the Kennel tab keeps the full web UI: library, panels and search work in t
   await js(`document.querySelector("#side .tabs button[data-tab=pack]").click()`);
   
 });
+
+test("in the app, pups drag to a new spot and rooms resize from their handles", async () => {
+  await backToKennel();
+  await js(`document.querySelector("#floors button").click()`);
+  await waitFor(() => js(`window.kennel.app.state.floor === 0`), "campus");
+  const id = await pupId("RATE-LIMITS");
+  const roomKey = await js(`window.kennel.app.ents.get(${JSON.stringify(id)}).room.key`);
+  await js(`(() => { const a = window.kennel.app, st = document.querySelector("#stage"), r = a.rooms.find(r => r.key === ${JSON.stringify(roomKey)}); a.flyTo = null; a.cam.follow = false; a.cam.x = (r.x + r.w/2)*32 - st.clientWidth/a.cam.z/2; a.cam.y = (r.y + r.h/2)*32 - st.clientHeight/a.cam.z/2; })()`);
+  await sleep(200);
+  const from = await js(`window.kennel.screenPos(${JSON.stringify(id)})`);
+  const to = await js(`window.kennel.roomPos(${JSON.stringify(roomKey)}, 0.9, 0.85)`);
+  await call("POST", "/drag", { x: from.x, y: from.y, toX: to.x, toY: to.y });
+  await waitFor(() => js(`!!((window.kennel.app.rooms.find(r => r.key === ${JSON.stringify(roomKey)}).style || {}).spots || {})[${JSON.stringify(id)}]`), "spot saved");
+
+  const wall = await js(`window.kennel.wallPos(${JSON.stringify(roomKey)})`);
+  await call("POST", "/click", { x: wall.x, y: wall.y });
+  await waitFor(() => js(`window.kennel.app.sel === "room:" + ${JSON.stringify(roomKey)}`), "room selected");
+  const r = await js(`window.kennel.app.rooms.find(r => r.key === ${JSON.stringify(roomKey)})`);
+  const z = await js(`window.kennel.app.cam.z`);
+  const se = await js(`window.kennel.worldPos(${r.x + r.w}, ${r.y + r.h})`);
+  await call("POST", "/drag", { x: se.x, y: se.y, toX: se.x + 3 * 32 * z, toY: se.y + 2 * 32 * z });
+  await waitFor(() => js(`(window.kennel.app.rooms.find(r => r.key === ${JSON.stringify(roomKey)}).style.pos || {})["0"]?.w === ${r.w + 3}`), "room resized");
+  await call("POST", "/snapshot", { index: 0, path: path.join(shots, "app-edit.png") });
+  await key("z");
+  await key("z");
+});

@@ -107,8 +107,8 @@ public final class AppController: NSObject, NSApplicationDelegate, NSWindowDeleg
         web.navigationDelegate = self
         web.uiDelegate = self
         w.contentView!.addSubview(web)
-        w.backgroundColor = NSColor(srgbRed: 0.114, green: 0.129, blue: 0.251, alpha: 1)
-        w.appearance = NSAppearance(named: .darkAqua)
+        w.backgroundColor = NSColor(srgbRed: 0.961, green: 0.957, blue: 0.945, alpha: 1)
+        w.appearance = NSAppearance(named: .aqua)
         kennelWindow = w
     }
 

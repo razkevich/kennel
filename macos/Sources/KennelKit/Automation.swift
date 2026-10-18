@@ -12,6 +12,7 @@ import WebKit
 ///   GET  /text?index=N               a terminal tab's text
 ///   POST /js        {code}           evaluate JavaScript in the kennel page
 ///   POST /click     {x, y}           click inside the kennel page (page coordinates)
+///   POST /drag      {x, y, toX, toY} drag inside the kennel page with real mouse events
 ///   POST /snapshot  {index, path}    save a PNG of a tab
 ///   POST /dialogs   {answers}        queue answers for the page's confirm/prompt dialogs
 @MainActor
@@ -172,6 +173,27 @@ public final class Automation {
             // A person's double-click has a short gap; WebKit drops back-to-back synthetic pairs.
             if double { DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { click(2) } }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { reply(200, ["ok": true]) }
+        case ("POST", "/drag"):
+            c.select(c.kennelWindow)
+            let w = c.kennelWindow!
+            let from = NSPoint(x: r.json["x"] as? Double ?? 0, y: r.json["y"] as? Double ?? 0)
+            let to = NSPoint(x: r.json["toX"] as? Double ?? 0, y: r.json["toY"] as? Double ?? 0)
+            let steps = 10
+            func send(_ type: NSEvent.EventType, _ p: NSPoint) {
+                if let e = NSEvent.mouseEvent(with: type, location: c.web.convert(p, to: nil), modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                              windowNumber: w.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) {
+                    w.sendEvent(e)
+                }
+            }
+            send(.leftMouseDown, from)
+            for i in 1...steps {
+                let t = Double(i) / Double(steps)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.03 * Double(i)) {
+                    send(.leftMouseDragged, NSPoint(x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t))
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.03 * Double(steps + 1)) { send(.leftMouseUp, to) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.03 * Double(steps + 1) + 0.5) { reply(200, ["ok": true]) }
         case ("POST", "/dialogs"):
             answers = (r.json["answers"] as? [Any] ?? []).map { $0 as? String }
             reply(200, ["ok": true])

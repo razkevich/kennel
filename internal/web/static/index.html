@@ -10,9 +10,7 @@
 <body>
 <header id="top">
   <div class="logo"><span class="face">▼•ᴥ•▼</span> kennel</div>
-  <nav id="floors" aria-label="floors"></nav>
-  <button id="libbtn" class="topbtn" title="all sessions (L)">📚 Library</button>
-  <button id="digestbtn" class="topbtn" title="what happened (D)">📰</button>
+
   <div id="counts"></div>
   <div class="search">
     <input id="q" type="search" placeholder="Search names, prompts, transcripts…  ( / )" autocomplete="off" spellcheck="false">
@@ -41,8 +39,22 @@
       <div id="libbody"></div>
     </div>
     <div id="hint" hidden></div>
-    <div id="help">
-      <b>arrows/WASD</b> walk · <b>X</b> interact · <b>click</b> select · <b>double-click</b> open · <b>drag/scroll</b> pan · <b>pinch/⌘-scroll</b> zoom
+    <div id="tools" role="toolbar" aria-label="tools">
+      <button data-tool="select" title="Select: drag pups, move and resize rooms (V)">↖<i>1</i></button>
+      <button data-tool="hand" title="Hand: pan the map (H, or hold Space)">✋<i>2</i></button>
+      <button data-tool="room" title="Kennel: draw a new kennel (R)">▭<i>3</i></button>
+    </div>
+    <div id="zoom"><button id="zoomout" title="zoom out (-)">−</button><button id="zoomval" title="reset zoom">100%</button><button id="zoomin" title="zoom in (+)">+</button><button id="zoomfit" title="fit everything (Shift+1)">⤢</button></div>
+    <div id="ctxmenu" hidden></div>
+    <div id="dock">
+      <div class="you"><span class="avatar">🧑</span><span class="yname">You</span></div>
+      <span class="sep"></span>
+      <nav id="floors" aria-label="floors"></nav>
+      <span class="sep"></span>
+      <button id="libbtn" class="dockbtn" title="all sessions (L)"><span>📚</span>Library</button>
+      <button id="buildbtn" class="dockbtn" title="build mode (B)"><span>🔨</span>Build</button>
+      <button id="digestbtn" class="dockbtn" title="what happened (D)"><span>📰</span>Digest</button>
+      <button id="helpbtn" class="dockbtn icon" title="help">?</button>
     </div>
   </div>
   <aside id="side">

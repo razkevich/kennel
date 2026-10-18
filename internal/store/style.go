@@ -16,11 +16,17 @@ type Style struct {
 	Pos    map[string]Pos `json:"pos,omitempty"`
 	Decor  []Placed       `json:"decor,omitempty"`
 	Blocks []Block        `json:"blocks,omitempty"`
+	// Spots are where the user dragged pups inside the room, keyed by pup id,
+	// in the same 0..1 interior coordinates as decor.
+	Spots map[string]Placed `json:"spots,omitempty"`
 }
 
+// Pos is a room's spot on one floor, in tiles; W and H are a user-set size (0 = automatic).
 type Pos struct {
 	X int `json:"x"`
 	Y int `json:"y"`
+	W int `json:"w,omitempty"`
+	H int `json:"h,omitempty"`
 }
 
 type Placed struct {

@@ -5,6 +5,7 @@
 const TOKEN = new URLSearchParams(location.search).get("t") || "";
 const TILE = 32;
 const SLOT = 3.6; // tiles per pup slot, wide enough for name tags
+const MIN_W = 6, MIN_H = 6;
 
 const api = async (path, opts = {}) => {
   const res = await fetch(path, { ...opts, headers: { "X-Kennel-Token": TOKEN, "Content-Type": "application/json", ...(opts.headers || {}) } });
@@ -156,7 +157,16 @@ function layout(state) {
     const maxCols = r.look.Wide ? 6 : 4;
     const cols = Math.max(2, r.minCols || 0, Math.min(maxCols, Math.ceil(Math.sqrt(n * 1.6)) || 2));
     const rows = Math.max(1, r.minRows || 0, Math.ceil(n / cols));
-    return { ...r, cols, rows, w: Math.ceil(cols * SLOT) + 2, h: rows * 3 + 4 };
+    const out = { ...r, cols, rows, w: Math.ceil(cols * SLOT) + 2, h: rows * 3 + 4 };
+    const size = r.style && r.style.pos && r.style.pos[String(state.floor)];
+    if (size && size.w) {
+      out.w = Math.max(MIN_W, size.w);
+      out.cols = Math.max(1, Math.floor((out.w - 2) / SLOT));
+      out.rows = Math.max(1, Math.ceil(n / out.cols));
+      out.h = Math.max(MIN_H, size.h || 0, out.rows * 3 + 4);
+      out.sized = true;
+    }
+    return out;
   });
   // Rooms the user placed keep their spot; the rest flow into the free space around them.
   const placed = [];
@@ -188,8 +198,10 @@ function layout(state) {
   for (const r of rooms) {
     const items = r.pups.map((id) => ({ kind: "pup", id })).concat(r.things.map((id) => ({ kind: "thing", id })));
     items.forEach((it, i) => {
-      const cx = r.x + 1 + (i % r.cols) * SLOT + SLOT / 2;
-      const cy = r.y + 3 + Math.floor(i / r.cols) * 3 + 1.4;
+      let cx = r.x + 1 + (i % r.cols) * SLOT + SLOT / 2;
+      let cy = r.y + 3 + Math.floor(i / r.cols) * 3 + 1.4;
+      const spot = r.style && r.style.spots && r.style.spots[it.id];
+      if (spot) { const box = interior(r); cx = box.x + spot.x * box.w; cy = box.y + spot.y * box.h; }
       seen.add(it.id);
       let e = app.ents.get(it.id);
       if (!e) {
@@ -199,6 +211,7 @@ function layout(state) {
       e.kind = it.kind;
       e.home = { x: cx, y: cy };
       e.room = r;
+      if (e.dragging) return;
       if (Math.hypot(e.x - cx, e.y - cy) > 2.5) { e.tx = cx; e.ty = cy; }
       // Far moves (a room was rebuilt or moved) teleport instead of a long walk.
       if (it.kind === "thing" || Math.hypot(e.x - cx, e.y - cy) > 6) { e.x = e.tx = cx; e.y = e.ty = cy; }
@@ -339,8 +352,9 @@ function frameWorld() {
   const st = $("#stage");
   const vw = st.clientWidth, vh = st.clientHeight;
   const W = app.world.w * TILE, H = app.world.h * TILE;
-  app.cam.z = Math.max(0.75, Math.min(1.25, vw / W));
-  app.cam.x = W * app.cam.z < vw ? -(vw / app.cam.z - W) / 2 : 0;
+  const gutter = 56; // keeps the tool palette off the leftmost rooms
+  app.cam.z = Math.max(0.75, Math.min(1.25, (vw - gutter) / W));
+  app.cam.x = W * app.cam.z < vw - gutter ? -(vw / app.cam.z - W) / 2 : -gutter / app.cam.z;
   app.cam.y = H * app.cam.z < vh ? -(vh / app.cam.z - H) / 2 : 0;
   app.cam.follow = false;
   app.flyTo = null;
@@ -702,71 +716,160 @@ function entityAt(px, py) {
   return best;
 }
 
+// Pointer model, after Excalidraw: a select tool that drags pups and moves/resizes rooms,
+// a hand tool (or held space / middle button) that pans, and a room tool that draws kennels.
+app.tool = "select";
+app.multi = new Set();
 let drag = null;
+let spaceHeld = false;
+
+const HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
+function handlePoints(r) {
+  const x0 = r.x, y0 = r.y, x1 = r.x + r.w, y1 = r.y + r.h, mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
+  return { nw: [x0, y0], n: [mx, y0], ne: [x1, y0], e: [x1, my], se: [x1, y1], s: [mx, y1], sw: [x0, y1], w: [x0, my] };
+}
+function handleAt(r, w) {
+  const pts = handlePoints(r), tol = 0.45 / Math.max(0.6, app.cam.z);
+  return HANDLES.find((h) => Math.abs(pts[h][0] - w.x) < tol && Math.abs(pts[h][1] - w.y) < tol) || null;
+}
+const selectedRoom = () => (app.sel && app.sel.startsWith("room:") ? roomByKey(app.sel.slice(5)) : null);
+const onWall = (r, w) => w.y < r.y + WALL + 0.2;
+const canvasPoint = (e) => { const rc = canvas.getBoundingClientRect(); return { sx: e.clientX - rc.left, sy: e.clientY - rc.top }; };
+
+function setTool(t) {
+  app.tool = t;
+  document.querySelectorAll("#tools [data-tool]").forEach((b) => b.classList.toggle("on", b.dataset.tool === t));
+  canvas.dataset.tool = t;
+}
+
 canvas.addEventListener("mousedown", (e) => {
-  if (e.button !== 0) return;
-  const rc = canvas.getBoundingClientRect();
-  const w = screenToWorld(e.clientX - rc.left, e.clientY - rc.top);
-  if (build.on && !build.carry) {
+  hideMenu();
+  if (e.button !== 0 && e.button !== 1) return;
+  const { sx, sy } = canvasPoint(e);
+  const w = screenToWorld(sx, sy);
+  const pan = e.button === 1 || spaceHeld || app.tool === "hand";
+  if (!pan && build.on && !build.carry) {
     const f = fixtureAt(w.x, w.y);
     if (f) { build.drag = { fixture: f, moved: false }; return; }
-    const r = roomAt(w.x, w.y);
-    if (r && w.y < r.y + 2) { build.drag = { room: r, dx: w.x - r.x, dy: w.y - r.y, moved: false }; return; }
   }
-  drag = { x: e.clientX, y: e.clientY, cx: app.cam.x, cy: app.cam.y, moved: false };
-});
-canvas.addEventListener("contextmenu", (e) => {
-  if (!build.on) return;
-  e.preventDefault();
-  const rc = canvas.getBoundingClientRect();
-  const w = screenToWorld(e.clientX - rc.left, e.clientY - rc.top);
-  const f = fixtureAt(w.x, w.y);
-  if (!f) return;
-  const st = styleOf(f.room);
-  (f.type === "decor" ? st.decor : st.blocks).splice(f.idx, 1);
-  saveStyle(f.room).then(renderBuilder);
-});
-window.addEventListener("mousemove", (e) => {
-  if (build.drag) {
-    const rc = canvas.getBoundingClientRect();
-    const w = screenToWorld(e.clientX - rc.left, e.clientY - rc.top);
-    const d = build.drag;
-    d.moved = true;
-    if (d.fixture) {
-      const box = interior(d.fixture.room);
-      d.fixture.item.x = Math.max(0, Math.min(1, (w.x - box.x) / box.w));
-      d.fixture.item.y = Math.max(0, Math.min(1, (w.y + 0.4 - box.y) / box.h));
-    } else if (d.room) {
-      d.room.x = Math.max(1, Math.round(w.x - d.dx));
-      d.room.y = Math.max(2, Math.round(w.y - d.dy));
-    }
+  if (!pan && app.tool === "room") {
+    drag = { kind: "create", x0: Math.round(w.x), y0: Math.round(w.y), x1: Math.round(w.x), y1: Math.round(w.y), sx: e.clientX, sy: e.clientY, moved: false };
     return;
   }
-  if (!drag) return;
-  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
-  if (Math.abs(dx) + Math.abs(dy) > 4) { drag.moved = true; canvas.classList.add("dragging"); app.cam.follow = false; app.flyTo = null; }
-  if (drag.moved) { app.cam.x = drag.cx - dx / app.cam.z; app.cam.y = drag.cy - dy / app.cam.z; }
+  if (!pan && !build.carry) {
+    const sr = selectedRoom();
+    const h = sr && handleAt(sr, w);
+    if (h) { drag = { kind: "resize", room: sr, handle: h, orig: { x: sr.x, y: sr.y, w: sr.w, h: sr.h }, sx: e.clientX, sy: e.clientY, moved: false }; return; }
+    const hit = entityAt(sx, sy);
+    if (hit) {
+      const group = app.multi.has(hit.id) ? [...app.multi].map((id) => app.ents.get(id)).filter(Boolean) : [hit];
+      drag = { kind: "pup", ent: hit, group: group.map((g) => ({ ent: g, ox: g.x - w.x, oy: g.y - w.y })), sx: e.clientX, sy: e.clientY, moved: false };
+      return;
+    }
+    const r = roomAt(w.x, w.y);
+    if (r && (onWall(r, w) || (sr === r && !e.shiftKey))) {
+      drag = { kind: "room", room: r, dx: w.x - r.x, dy: w.y - r.y, sx: e.clientX, sy: e.clientY, moved: false };
+      return;
+    }
+    if (r || e.shiftKey) {
+      drag = { kind: "marquee", x0: w.x, y0: w.y, x1: w.x, y1: w.y, room: r, sx: e.clientX, sy: e.clientY, moved: false, add: e.shiftKey };
+      return;
+    }
+  }
+  drag = { kind: "pan", sx: e.clientX, sy: e.clientY, cx: app.cam.x, cy: app.cam.y, moved: false };
 });
-window.addEventListener("mouseup", (e) => {
+
+window.addEventListener("mousemove", (e) => {
+  const { sx, sy } = canvasPoint(e);
+  const w = screenToWorld(sx, sy);
+  if (build.drag) {
+    const d = build.drag;
+    d.moved = true;
+    const box = interior(d.fixture.room);
+    d.fixture.item.x = Math.max(0, Math.min(1, (w.x - box.x) / box.w));
+    d.fixture.item.y = Math.max(0, Math.min(1, (w.y + 0.4 - box.y) / box.h));
+    return;
+  }
+  if (!drag) { if (e.target === canvas) hover(w, sx, sy); return; }
+  if (!drag.moved && Math.abs(e.clientX - drag.sx) + Math.abs(e.clientY - drag.sy) > 4) {
+    drag.moved = true;
+    app.cam.follow = false; app.flyTo = null;
+    canvas.classList.add("dragging");
+  }
+  if (!drag.moved) return;
+  switch (drag.kind) {
+    case "pan":
+      app.cam.x = drag.cx - (e.clientX - drag.sx) / app.cam.z;
+      app.cam.y = drag.cy - (e.clientY - drag.sy) / app.cam.z;
+      break;
+    case "pup":
+      for (const g of drag.group) { g.ent.dragging = true; g.ent.x = g.ent.tx = w.x + g.ox; g.ent.y = g.ent.ty = w.y + g.oy; }
+      { const r = roomAt(w.x, w.y); app.dropRoom = r && r !== drag.ent.room ? r.key : null; }
+      break;
+    case "room": {
+      const r = drag.room;
+      r.x = Math.max(1, Math.round(w.x - drag.dx));
+      r.y = Math.max(2, Math.round(w.y - drag.dy));
+      snapGuides(r);
+      break;
+    }
+    case "resize": {
+      const r = drag.room, o = drag.orig, h = drag.handle;
+      const gx = Math.round(w.x), gy = Math.round(w.y);
+      if (h.includes("e")) r.w = Math.max(MIN_W, gx - o.x);
+      if (h.includes("s")) r.h = Math.max(MIN_H, gy - o.y);
+      if (h.includes("w")) { const nx = Math.min(gx, o.x + o.w - MIN_W); r.x = Math.max(1, nx); r.w = o.x + o.w - r.x; }
+      if (h.includes("n")) { const ny = Math.min(gy, o.y + o.h - MIN_H); r.y = Math.max(2, ny); r.h = o.y + o.h - r.y; }
+      snapGuides(r);
+      break;
+    }
+    case "marquee":
+      drag.x1 = w.x; drag.y1 = w.y;
+      app.multi = new Set(drag.add ? app.multi : []);
+      for (const ent of app.ents.values()) if (ent.kind === "pup" && inRect(ent, drag)) app.multi.add(ent.id);
+      break;
+    case "create":
+      drag.x1 = Math.round(w.x); drag.y1 = Math.round(w.y);
+      break;
+  }
+});
+
+window.addEventListener("mouseup", async (e) => {
   if (build.drag) {
     const d = build.drag;
     build.drag = null;
-    if (d.room && d.moved) {
-      const st = styleOf(d.room);
-      st.pos = st.pos || {};
-      st.pos[String(app.state.floor)] = { x: d.room.x, y: d.room.y };
-      build.room = d.room.key;
-      saveStyle(d.room).then(renderBuilder);
-    } else if (d.fixture && d.moved) saveStyle(d.fixture.room);
-    else { build.room = (d.room || d.fixture.room).key; renderBuilder(); }
+    if (d.moved) saveStyle(d.fixture.room);
+    else { build.room = d.fixture.room.key; renderBuilder(); }
     return;
   }
-  if (build.on && drag && !drag.moved && e.target === canvas) {
-    const rc = canvas.getBoundingClientRect();
-    const w = screenToWorld(e.clientX - rc.left, e.clientY - rc.top);
-    const hit = !build.carry && entityAt(e.clientX - rc.left, e.clientY - rc.top);
-    if (hit) { select(hit.id, false); drag = null; return; }
+  const d = drag;
+  drag = null;
+  app.guides = null;
+  canvas.classList.remove("dragging");
+  if (!d) return;
+  const { sx, sy } = canvasPoint(e);
+  const w = screenToWorld(sx, sy);
+  if (!d.moved) {
+    if (e.target === canvas && d.kind !== "create") click(sx, sy, w, e);
+    return;
+  }
+  switch (d.kind) {
+    case "pup": await dropPups(d, w); break;
+    case "room": await saveRoomBox(d.room, false); break;
+    case "resize": await saveRoomBox(d.room, true); break;
+    case "marquee":
+      if (app.multi.size === 1) { select([...app.multi][0], false); app.multi.clear(); }
+      else if (app.multi.size) { app.sel = null; renderCard(); }
+      break;
+    case "create": await createKennel(d); break;
+  }
+});
+
+function click(sx, sy, w, e) {
+  if (build.on) {
     const r = roomAt(w.x, w.y);
+    const hit = !build.carry && entityAt(sx, sy);
+    if (hit) { select(hit.id, false); return; }
     if (r && build.carry && build.room === r.key) {
       const box = interior(r);
       const item = { kind: build.carry.kind, x: Math.max(0, Math.min(1, (w.x - box.x) / box.w)), y: Math.max(0, Math.min(1, (w.y + 0.4 - box.y) / box.h)) };
@@ -774,35 +877,210 @@ window.addEventListener("mouseup", (e) => {
       if (build.carry.type === "decor") (st.decor = st.decor || []).push(item);
       else { item.config = {}; (st.blocks = st.blocks || []).push(item); build.carry = null; }
       saveStyle(r).then(renderBuilder);
-    } else if (r) { build.room = r.key; renderBuilder(); }
-    drag = null;
+    } else if (r) { build.room = r.key; app.sel = "room:" + r.key; renderBuilder(); renderCard(); }
     return;
   }
-  if (drag && !drag.moved && e.target === canvas) {
-    const rcf = canvas.getBoundingClientRect();
-    const wf = screenToWorld(e.clientX - rcf.left, e.clientY - rcf.top);
-    const fx = !entityAt(e.clientX - rcf.left, e.clientY - rcf.top) && fixtureAt(wf.x, wf.y);
-    if (fx) { useFixture(fx); drag = null; return; }
-    const r = canvas.getBoundingClientRect();
-    const hit = entityAt(e.clientX - r.left, e.clientY - r.top);
-    if (hit) {
-      const now = performance.now();
-      const dbl = app.lastClick.id === hit.id && now - app.lastClick.at < 450;
-      app.lastClick = { id: hit.id, at: now };
-      select(hit.id, false);
-      if (dbl) interact(hit);
-    } else {
-      const w = screenToWorld(e.clientX - r.left, e.clientY - r.top);
-      const room = roomAt(w.x, w.y);
-      app.sel = room ? "room:" + room.key : null;
-      renderCard();
+  const hit = entityAt(sx, sy);
+  const fx = !hit && fixtureAt(w.x, w.y);
+  if (fx) { useFixture(fx); return; }
+  if (hit) {
+    if (e.shiftKey && hit.kind === "pup") {
+      if (app.sel && app.ents.has(app.sel)) app.multi.add(app.sel);
+      app.multi.has(hit.id) ? app.multi.delete(hit.id) : app.multi.add(hit.id);
+      app.sel = null; renderCard();
+      return;
+    }
+    app.multi.clear();
+    const now = performance.now();
+    const dbl = app.lastClick.id === hit.id && now - app.lastClick.at < 450;
+    app.lastClick = { id: hit.id, at: now };
+    select(hit.id, false);
+    if (dbl) interact(hit);
+    return;
+  }
+  app.multi.clear();
+  const room = roomAt(w.x, w.y);
+  app.sel = room ? "room:" + room.key : null;
+  renderCard();
+}
+
+const inRect = (p, d) => p.x >= Math.min(d.x0, d.x1) && p.x <= Math.max(d.x0, d.x1) && p.y - 0.4 >= Math.min(d.y0, d.y1) && p.y - 0.4 <= Math.max(d.y0, d.y1);
+
+// Snap a moving room's edges to other rooms' edges, and remember the guides to draw.
+function snapGuides(r) {
+  const guides = [];
+  for (const o of app.rooms) {
+    if (o === r) continue;
+    for (const [a, b] of [[r.x, o.x], [r.x + r.w, o.x + o.w], [r.x, o.x + o.w], [r.x + r.w, o.x]]) if (a === b) guides.push({ x: a, y0: Math.min(r.y, o.y), y1: Math.max(r.y + r.h, o.y + o.h) });
+    for (const [a, b] of [[r.y, o.y], [r.y + r.h, o.y + o.h]]) if (a === b) guides.push({ y: a, x0: Math.min(r.x, o.x), x1: Math.max(r.x + r.w, o.x + o.w) });
+  }
+  app.guides = guides;
+}
+
+async function saveRoomBox(r, sized) {
+  const st = styleOf(r);
+  st.pos = st.pos || {};
+  const prev = st.pos[String(app.state.floor)] || {};
+  const pos = { x: r.x, y: r.y };
+  if (sized) { pos.w = r.w; pos.h = r.h; } else if (prev.w) { pos.w = prev.w; pos.h = prev.h; }
+  st.pos[String(app.state.floor)] = pos;
+  await saveStyle(r);
+  if (build.on) { build.room = r.key; renderBuilder(); }
+}
+
+function spotIn(r, ent) {
+  const box = interior(r);
+  return { x: Math.max(0.03, Math.min(0.97, (ent.x - box.x) / box.w)), y: Math.max(0.05, Math.min(1, (ent.y - box.y) / box.h)) };
+}
+
+// Dropping pups: inside their own room they stay where you put them; on another kennel
+// they're filed there; anywhere else they walk back.
+async function dropPups(d, w) {
+  app.dropRoom = null;
+  const target = roomAt(w.x, w.y);
+  const from = d.ent.room;
+  const back = () => { for (const g of d.group) { g.ent.dragging = false; if (g.ent.home) { g.ent.tx = g.ent.home.x; g.ent.ty = g.ent.home.y; } } };
+  if (!target) { back(); toast("drop pups inside a room", true); return; }
+  if (target === from) {
+    const st = styleOf(target);
+    st.spots = st.spots || {};
+    for (const g of d.group) if (g.ent.room === target) st.spots[g.ent.id] = spotIn(target, g.ent);
+    for (const g of d.group) g.ent.dragging = false;
+    await saveStyle(target, true);
+    return;
+  }
+  if (!target.key.startsWith("kennel:")) {
+    back();
+    toast(app.state.floor === 2 ? "drop it inside one of your kennels" : "rooms on this floor fill themselves — file pups on 🏠 Kennels", true);
+    return;
+  }
+  const st = styleOf(target);
+  st.spots = st.spots || {};
+  for (const g of d.group) st.spots[g.ent.id] = spotIn(target, g.ent);
+  try {
+    await api("/api/room/style", { method: "POST", body: JSON.stringify({ key: target.key, style: st }) });
+    for (const g of d.group) await act("move", g.ent.id, { kennel: Number(target.key.slice(7)) });
+  } catch (err) { toast(err.message, true); }
+  for (const g of d.group) g.ent.dragging = false;
+  toast(`🏠 ${d.group.length > 1 ? d.group.length + " pups" : "filed"} into ${target.icon} ${target.title}`, false, true);
+  app.multi.clear();
+  loadInbox();
+}
+
+async function createKennel(d) {
+  setTool("select");
+  const x = Math.min(d.x0, d.x1), y = Math.max(2, Math.min(d.y0, d.y1));
+  const w = Math.max(MIN_W, Math.abs(d.x1 - d.x0)), h = Math.max(MIN_H, Math.abs(d.y1 - d.y0));
+  const name = prompt("Name the new kennel", "New kennel");
+  if (!name || !name.trim()) return;
+  try {
+    const k = await (await api("/api/kennels", { method: "POST", body: JSON.stringify({ Name: name.trim(), Icon: "🏠" }) })).json();
+    const pos = {};
+    pos[String(app.state.floor)] = { x, y, w, h };
+    await api("/api/room/style", { method: "POST", body: JSON.stringify({ key: "kennel:" + k.ID, style: { pos } }) });
+    await loadState();
+    app.sel = "room:kennel:" + k.ID;
+    renderCard();
+    toast(`🏠 built ${name.trim()}`, false, true);
+  } catch (err) { toast(err.message, true); }
+}
+
+const CURSORS = { nw: "nwse-resize", se: "nwse-resize", ne: "nesw-resize", sw: "nesw-resize", n: "ns-resize", s: "ns-resize", e: "ew-resize", w: "ew-resize" };
+function hover(w, sx, sy) {
+  let cur = "";
+  if (spaceHeld || app.tool === "hand") cur = "grab";
+  else if (app.tool === "room") cur = "crosshair";
+  else {
+    const sr = selectedRoom();
+    const h = sr && handleAt(sr, w);
+    const r = roomAt(w.x, w.y);
+    if (h) cur = CURSORS[h];
+    else if (entityAt(sx, sy)) cur = "grab";
+    else if (r && (onWall(r, w) || sr === r)) cur = "move";
+    app.hoverRoom = r ? r.key : null;
+  }
+  canvas.style.cursor = cur;
+}
+
+canvas.addEventListener("contextmenu", (e) => {
+  e.preventDefault();
+  const { sx, sy } = canvasPoint(e);
+  const w = screenToWorld(sx, sy);
+  if (build.on) {
+    const f = fixtureAt(w.x, w.y);
+    if (f) {
+      const st = styleOf(f.room);
+      (f.type === "decor" ? st.decor : st.blocks).splice(f.idx, 1);
+      saveStyle(f.room).then(renderBuilder);
+      return;
     }
   }
-  drag = null;
-  canvas.classList.remove("dragging");
+  const hit = entityAt(sx, sy);
+  const r = roomAt(w.x, w.y);
+  if (hit && hit.kind === "pup") { select(hit.id, false); showMenu(e, pupMenu(hit)); }
+  else if (hit) { select(hit.id, false); showMenu(e, [["▶ Start", () => thingAct("start", hit.id)], ["■ Stop", () => thingAct("stop", hit.id)]]); }
+  else if (r) { app.sel = "room:" + r.key; renderCard(); showMenu(e, roomMenu(r)); }
+  else showMenu(e, [
+    ["🏠 New kennel here", () => createKennel({ x0: Math.round(w.x), y0: Math.round(w.y), x1: Math.round(w.x) + 12, y1: Math.round(w.y) + 8 })],
+    ["⤢ Zoom to fit", () => zoomFit()],
+    [build.on ? "✓ Done building" : "🔨 Build mode", () => setBuild(!build.on)],
+  ]);
 });
+
+function pupMenu(ent) {
+  const p = pupOf(ent.id);
+  const ids = app.multi.size > 1 && app.multi.has(ent.id) ? [...app.multi] : [ent.id];
+  const items = [];
+  if (ids.length === 1) {
+    items.push(["↗ Open", () => act("open", ent.id)], ["⑂ Fork", () => act("fork", ent.id)],
+      [p && p.starred ? "☆ Unstar" : "★ Star", () => act("star", ent.id)],
+      ["✎ Rename…", () => { const t = prompt("Rename", p ? p.title : ""); if (t) act("rename", ent.id, { title: t }); }]);
+  }
+  const kennels = app.state.kennels || [];
+  if (kennels.length) items.push(["—"], ...kennels.slice(0, 12).map((k) => [`→ ${k.icon || "🏠"} ${k.name}`, async () => { for (const id of ids) await act("move", id, { kennel: k.id }); toast(`🏠 filed ${ids.length > 1 ? ids.length + " pups " : ""}into ${k.name}`, false, true); app.multi.clear(); loadInbox(); }]));
+  const r = ent.room;
+  if (r && r.style && r.style.spots && ids.some((id) => r.style.spots[id])) items.push(["—"], ["↺ Back to its slot", () => { for (const id of ids) delete r.style.spots[id]; saveStyle(r, true); }]);
+  items.push(["—"], [`🧹 Archive${ids.length > 1 ? " " + ids.length : ""}`, async () => { for (const id of ids) await act("archive", id); app.multi.clear(); }]);
+  return items;
+}
+
+function roomMenu(r) {
+  const st = r.style || {};
+  const pos = st.pos && st.pos[String(app.state.floor)];
+  const items = [["🐣 New pup here", () => newPupIn(r)], ["🔨 Customize", () => { setBuild(true); build.room = r.key; renderBuilder(); }]];
+  if (pos && pos.w) items.push(["⤡ Fit to pups", () => { delete pos.w; delete pos.h; saveStyle(r); }]);
+  if (st.spots && Object.keys(st.spots).length) items.push(["↺ Tidy pups", () => { delete st.spots; saveStyle(r); }]);
+  if (pos) items.push(["⌂ Back to auto layout", () => { delete st.pos[String(app.state.floor)]; saveStyle(r); }]);
+  return items;
+}
+
+async function newPupIn(r) {
+  const title = prompt(`New pup in ${r.title} — what should it do?`, "");
+  if (title === null) return;
+  try { toast((await (await api("/api/room/new", { method: "POST", body: JSON.stringify({ key: r.key, title, prompt: title }) })).json()).message || "🐣 started"); }
+  catch (err) { toast(err.message, true); }
+}
+
+function showMenu(e, items) {
+  const m = $("#ctxmenu");
+  m.innerHTML = "";
+  for (const [label, fn] of items) {
+    if (label === "—") { m.appendChild(el("div", "sep")); continue; }
+    const b = el("button", "", label);
+    b.onclick = () => { hideMenu(); fn(); };
+    m.appendChild(b);
+  }
+  m.hidden = false;
+  const st = $("#stage").getBoundingClientRect();
+  const x = Math.min(e.clientX - st.left, st.width - m.offsetWidth - 8), y = Math.min(e.clientY - st.top, st.height - m.offsetHeight - 8);
+  m.style.left = Math.max(8, x) + "px"; m.style.top = Math.max(8, y) + "px";
+}
+function hideMenu() { const m = $("#ctxmenu"); if (m) m.hidden = true; }
+window.addEventListener("blur", hideMenu);
+
 canvas.addEventListener("wheel", (e) => {
   e.preventDefault();
+  hideMenu();
   app.cam.follow = false;
   app.flyTo = null;
   if (!e.ctrlKey && !e.metaKey) {
@@ -810,14 +1088,37 @@ canvas.addEventListener("wheel", (e) => {
     app.cam.y += e.deltaY / app.cam.z;
     return;
   }
-  const r = canvas.getBoundingClientRect();
-  const before = screenToWorld(e.clientX - r.left, e.clientY - r.top);
-  app.cam.z = Math.max(0.5, Math.min(2.2, app.cam.z * Math.exp(-e.deltaY * 0.01)));
-  const after = screenToWorld(e.clientX - r.left, e.clientY - r.top);
+  const { sx, sy } = canvasPoint(e);
+  zoomAt(app.cam.z * Math.exp(-e.deltaY * 0.01), sx, sy);
+}, { passive: false });
+
+function zoomAt(z, sx, sy) {
+  if (sx === undefined) { sx = canvas.width / devicePixelRatio / 2; sy = canvas.height / devicePixelRatio / 2; }
+  const before = screenToWorld(sx, sy);
+  app.cam.z = Math.max(0.4, Math.min(2.5, z));
+  const after = screenToWorld(sx, sy);
   app.cam.x += (before.x - after.x) * TILE;
   app.cam.y += (before.y - after.y) * TILE;
-  app.cam.follow = false;
-}, { passive: false });
+  app.cam.follow = false; app.flyTo = null;
+  $("#zoomval").textContent = Math.round(app.cam.z * 100) + "%";
+}
+
+function zoomFit() {
+  const vw = canvas.width / devicePixelRatio, vh = canvas.height / devicePixelRatio;
+  const z = Math.max(0.4, Math.min(1.4, Math.min(vw / (app.world.w * TILE), vh / (app.world.h * TILE))));
+  app.cam.z = z;
+  app.cam.x = (app.world.w * TILE - vw / z) / 2;
+  app.cam.y = (app.world.h * TILE - vh / z) / 2 - 30 / z;
+  app.cam.follow = false; app.flyTo = null;
+  $("#zoomval").textContent = Math.round(z * 100) + "%";
+}
+
+document.querySelectorAll("#tools [data-tool]").forEach((b) => (b.onclick = () => setTool(b.dataset.tool)));
+$("#zoomin").onclick = () => zoomAt(app.cam.z * 1.2);
+$("#zoomout").onclick = () => zoomAt(app.cam.z / 1.2);
+$("#zoomval").onclick = () => zoomAt(1);
+$("#zoomfit").onclick = () => zoomFit();
+setTool("select");
 
 function interact(e) {
   if (e.kind === "pup") act("open", e.id);
@@ -829,7 +1130,19 @@ window.addEventListener("keydown", (e) => {
   if (e.key === "/" && !typing) { e.preventDefault(); $("#q").focus(); return; }
   if (typing) return;
   if (e.key === "Escape" && lib.open) { closeLibrary(); return; }
-  if (e.key === "Escape") { $("#digest").hidden = true; $("#transcript").hidden = true; app.sel = null; $("#card").hidden = true; if (build.carry) { build.carry = null; renderBuilder(); } return; }
+  if (e.key === "Escape") { hideMenu(); app.multi.clear(); setTool("select"); $("#digest").hidden = true; $("#transcript").hidden = true; app.sel = null; $("#card").hidden = true; if (build.carry) { build.carry = null; renderBuilder(); } return; }
+  if (e.key === " " && !e.repeat) { e.preventDefault(); spaceHeld = true; canvas.style.cursor = "grab"; return; }
+  if (e.key === "v" || e.key === "1") { setTool("select"); return; }
+  if (e.key === "h" || e.key === "2") { setTool("hand"); return; }
+  if (e.key === "r" || e.key === "3") { setTool("room"); return; }
+  if (e.key === "!" || (e.shiftKey && e.code === "Digit1")) { zoomFit(); return; }
+  if ((e.key === "=" || e.key === "+") && !e.metaKey) { zoomAt(app.cam.z * 1.2); return; }
+  if (e.key === "-" && !e.metaKey) { zoomAt(app.cam.z / 1.2); return; }
+  if ((e.key === "Delete" || e.key === "Backspace") && (app.multi.size || (app.sel && pupOf(app.sel)))) {
+    const ids = app.multi.size ? [...app.multi] : [app.sel];
+    (async () => { for (const id of ids) await act("archive", id); app.multi.clear(); })();
+    return;
+  }
   if (e.key === "b") { setBuild(!build.on); return; }
   if (e.key === "l" || e.key === "L") { lib.open ? closeLibrary() : openLibrary(); return; }
   if (e.key === "D") { openDigest(); return; }
@@ -847,7 +1160,7 @@ window.addEventListener("keydown", (e) => {
     else if (app.sel && app.ents.has(app.sel)) interact(app.ents.get(app.sel));
   }
 });
-window.addEventListener("keyup", (e) => app.keys.delete(e.key.toLowerCase()));
+window.addEventListener("keyup", (e) => { app.keys.delete(e.key.toLowerCase()); if (e.key === " ") { spaceHeld = false; canvas.style.cursor = ""; } });
 
 function nearest() {
   let best = null, bd = 1.7;
@@ -878,7 +1191,7 @@ function step(dt) {
   for (const e of app.ents.values()) {
     if (e.kind !== "pup") continue;
     const p = pupOf(e.id);
-    if (!p) continue;
+    if (!p || e.dragging) continue;
     const wanders = p.status === "idle" || p.status === "done";
     if (wanders && Math.hypot(e.tx - e.x, e.ty - e.y) < 0.05 && Math.random() < dt * 0.5) {
       e.tx = e.home.x + (Math.random() - 0.5) * 1.8;
@@ -913,135 +1226,219 @@ function resize() {
 }
 window.addEventListener("resize", () => { resize(); if (app.state) { layout(app.state); frameWorld(); } });
 
+// ---------- the office, drawn in Gather's style ----------
+// Light walls, carpets, small pixel furniture, translucent room names, dark name tags.
+
+const STATUS_DOT = { working: "#2fb36b", waiting: "#f2b01e", done: "#4f8de0", idle: "#2fb3a4", offline: "#9a9db3" };
+
+function px(x, y, w, h, c) { ctx.fillStyle = c; ctx.fillRect(Math.round(x), Math.round(y), Math.round(w), Math.round(h)); }
+
 function drawHallway() {
   const { w, h } = app.world;
+  // Warm checker tiles like Gather's office floor.
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-    ctx.fillStyle = (x + y) % 2 ? "#e9dfc9" : "#e3d7bd";
-    ctx.fillRect(x * TILE, y * TILE, TILE, TILE);
+    px(x * TILE, y * TILE, TILE, TILE, (x + y) % 2 ? "#efe6d8" : "#eadfcf");
   }
-  // Outer wall of the office.
-  ctx.fillStyle = "#3a3566";
-  ctx.fillRect(0, 0, w * TILE, TILE);
-  ctx.fillStyle = "#4b4580";
-  ctx.fillRect(0, TILE - 6, w * TILE, 6);
-  // A few plants in the hallway, Gather style.
-  ctx.font = "22px system-ui";
-  for (let x = 3; x < w; x += 11) ctx.fillText("🪴", x * TILE + 4, (h - 1) * TILE + 24);
+  ctx.strokeStyle = "#dfd2bf"; ctx.lineWidth = 1;
+  for (let x = 0; x <= w; x++) { ctx.beginPath(); ctx.moveTo(x * TILE + .5, 0); ctx.lineTo(x * TILE + .5, h * TILE); ctx.stroke(); }
+  for (let y = 0; y <= h; y++) { ctx.beginPath(); ctx.moveTo(0, y * TILE + .5); ctx.lineTo(w * TILE, y * TILE + .5); ctx.stroke(); }
+  // The building's back wall, with windows.
+  px(0, 0, w * TILE, TILE * 1.2, "#e4e2ec");
+  px(0, 0, w * TILE, 6, "#8f8ca6");
+  for (let x = 2; x < w - 2; x += 6) {
+    px(x * TILE, 10, TILE * 2, TILE * 0.8, "#b9dcf2");
+    px(x * TILE, 10, TILE * 2, 3, "#ffffff");
+    px(x * TILE + TILE - 1, 10, 2, TILE * 0.8, "#e4e2ec");
+  }
+  // Plants along the hallway.
+  for (let x = 4; x < w - 1; x += 9) plant(x * TILE + 16, (h - 0.6) * TILE, 0.9);
 }
 
+// Carpets are soft and light; the room's color only tints them.
 function floorPattern(r, x0, y0) {
-  const base = mixHex(r.color, "#fffaf0", 0.55);
-  const alt = mixHex(r.color, "#fffaf0", 0.42);
-  const line = mixHex(r.color, "#3a2a1a", 0.25);
-  const W = r.w * TILE, H = (r.h - 2) * TILE;
-  ctx.fillStyle = base;
-  ctx.fillRect(x0, y0, W, H);
+  const W = r.w * TILE, H = (r.h - WALL) * TILE;
   const f = r.look.Floor || " ";
+  const tint = (t) => mixHex(r.color, "#ffffff", t);
   ctx.save();
   ctx.beginPath(); ctx.rect(x0, y0, W, H); ctx.clip();
   switch (f) {
-    case " ": // wooden planks
-      ctx.strokeStyle = alt; ctx.lineWidth = 2;
-      for (let y = y0; y < y0 + H; y += 12) { ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x0 + W, y); ctx.stroke(); }
-      for (let y = y0, i = 0; y < y0 + H; y += 12, i++) for (let x = x0 + (i % 2) * 24; x < x0 + W; x += 48) { ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y + 12); ctx.stroke(); }
+    case "⠂": { // grass, with paths and flowers
+      px(x0, y0, W, H, "#bfe6a6");
+      for (let i = 0; i < W * H / 700; i++) {
+        const gx = x0 + ((i * 137) % W), gy = y0 + ((i * 251 + i * i * 7) % H);
+        px(gx, gy, 2, 4, "#9fd486"); px(gx + 3, gy + 1, 2, 3, "#a9da90");
+      }
+      for (let i = 0; i < W * H / 9000; i++) { const fx = x0 + ((i * 331) % W), fy = y0 + ((i * 173) % H); px(fx, fy, 3, 3, ["#ffffff", "#ffd36b", "#f5a3c7"][i % 3]); }
       break;
-    case "░": case "⁘": case "▚": // tiles
-      for (let y = 0; y < H / 16; y++) for (let x = 0; x < W / 16; x++) if ((x + y) % 2) { ctx.fillStyle = alt; ctx.fillRect(x0 + x * 16, y0 + y * 16, 16, 16); }
-      if (f === "▚") { ctx.fillStyle = mixHex(r.color, "#5a4a3a", 0.5); for (let i = 0; i < 8; i++) { ctx.globalAlpha = 0.25; ctx.beginPath(); ctx.ellipse(x0 + ((i * 97) % W), y0 + ((i * 53) % H), 10, 6, 0, 0, 7); ctx.fill(); } ctx.globalAlpha = 1; }
+    }
+    case " ": { // light wood planks
+      px(x0, y0, W, H, "#ead4b4");
+      for (let y = y0, i = 0; y < y0 + H; y += 16, i++) {
+        px(x0, y, W, 1, "#dcc19c");
+        for (let x = x0 + (i % 3) * 22; x < x0 + W; x += 64) px(x, y, 1, 16, "#dcc19c");
+      }
       break;
-    case "⠂": // grass
-      ctx.fillStyle = mixHex("#7fd8a0", "#fffaf0", 0.35); ctx.fillRect(x0, y0, W, H);
-      ctx.fillStyle = "#5fbf7f";
-      for (let i = 0; i < W * H / 900; i++) { const gx = x0 + ((i * 137) % W), gy = y0 + ((i * 251 + i * i * 7) % H); ctx.fillRect(gx, gy, 2, 5); ctx.fillRect(gx + 3, gy + 1, 2, 4); }
+    }
+    case "░": case "⁘": case "▚": { // tiles
+      px(x0, y0, W, H, tint(0.78));
+      for (let y = 0; y < H / 16; y++) for (let x = 0; x < W / 16; x++) if ((x + y) % 2) px(x0 + x * 16, y0 + y * 16, 16, 16, tint(0.7));
+      if (f === "▚") for (let i = 0; i < 7; i++) { ctx.globalAlpha = 0.18; ctx.fillStyle = "#7a6650"; ctx.beginPath(); ctx.ellipse(x0 + ((i * 97) % W), y0 + ((i * 53) % H), 10, 6, 0, 0, 7); ctx.fill(); ctx.globalAlpha = 1; }
       break;
-    case "~": // water-ish blue carpet
-      ctx.strokeStyle = alt; ctx.lineWidth = 2;
+    }
+    case "~": { // pool-blue carpet
+      px(x0, y0, W, H, "#cfe7f6");
+      ctx.strokeStyle = "#b5d9ef"; ctx.lineWidth = 2;
       for (let y = y0 + 8; y < y0 + H; y += 14) { ctx.beginPath(); for (let x = x0; x <= x0 + W; x += 8) ctx.lineTo(x, y + Math.sin((x + app.t * 30) / 10) * 2); ctx.stroke(); }
       break;
-    case "▒": // a big rug in the middle (things swept under it)
-      ctx.fillStyle = mixHex("#b5838d", "#fffaf0", 0.2);
-      ctx.fillRect(x0 + 18, y0 + 14, W - 36, H - 28);
-      ctx.strokeStyle = "#8e5b66"; ctx.lineWidth = 3; ctx.strokeRect(x0 + 24, y0 + 20, W - 48, H - 40);
+    }
+    case "▒": { // a rug in the middle — things get swept under it
+      px(x0, y0, W, H, tint(0.8));
+      px(x0 + 20, y0 + 14, W - 40, H - 28, "#d8b8c0");
+      ctx.strokeStyle = "#c39aa5"; ctx.lineWidth = 3; ctx.strokeRect(x0 + 26, y0 + 20, W - 52, H - 40);
       break;
-    case "∴": case "▪": // stone / metal plates
-      ctx.strokeStyle = line; ctx.globalAlpha = 0.25; ctx.lineWidth = 1;
-      for (let y = y0; y < y0 + H; y += 32) for (let x = x0; x < x0 + W; x += 32) { ctx.strokeRect(x + 1, y + 1, 30, 30); if (f === "▪") { ctx.fillStyle = line; ctx.fillRect(x + 4, y + 4, 2, 2); ctx.fillRect(x + 26, y + 26, 2, 2); } }
-      ctx.globalAlpha = 1;
+    }
+    case "∴": case "▪": { // stone / metal
+      px(x0, y0, W, H, f === "▪" ? "#d7dae2" : "#ddd8cf");
+      ctx.strokeStyle = f === "▪" ? "#c3c7d2" : "#cbc4b8"; ctx.lineWidth = 1;
+      for (let y = y0; y < y0 + H; y += 32) for (let x = x0; x < x0 + W; x += 32) ctx.strokeRect(x + .5, y + .5, 31, 31);
       break;
-    default: // dotted carpet
-      ctx.fillStyle = alt;
-      for (let y = y0 + 6; y < y0 + H; y += 12) for (let x = x0 + 6 + ((y / 12) % 2) * 6; x < x0 + W; x += 12) ctx.fillRect(x, y, 2, 2);
+    }
+    default: { // soft dotted carpet in the room's tint
+      px(x0, y0, W, H, tint(0.74));
+      for (let y = y0 + 6; y < y0 + H; y += 12) for (let x = x0 + 6 + ((y / 12) % 2) * 6; x < x0 + W; x += 12) px(x, y, 2, 2, tint(0.6));
+    }
   }
   ctx.restore();
 }
 
+const WALL = 1.6; // tiles of back wall above each room's floor
+
+const WALLS = {
+  rounded: { face: "#efe7da", cap: "#a08a70", trim: "#d9c9b0" },   // wood
+  thick: { face: "#efd9d0", cap: "#a8655a", trim: "#d9b0a5" },     // brick
+  double: { face: "#f4efe0", cap: "#b39443", trim: "#e6cd7d" },    // gold trim
+  normal: { face: "#e8e7ef", cap: "#8f8ca6", trim: "#cfcddc" },    // plain
+};
+
 function drawRoom(r) {
-  const x0 = r.x * TILE, y0 = r.y * TILE, W = r.w * TILE;
-  const wallH = 2 * TILE;
-  const selected = r.pups.includes(app.sel) || r.things.includes(app.sel);
+  const x0 = r.x * TILE, y0 = r.y * TILE, W = r.w * TILE, H = r.h * TILE;
+  const wallH = WALL * TILE;
   const style = r.look.Border;
-  // Floor below the wall.
   floorPattern(r, x0, y0 + wallH);
-  const H = r.h * TILE;
-  // Back wall.
-  const wall = mixHex(r.color, "#2a2840", 0.45);
+  const wl = WALLS[style] || WALLS.normal;
   if (style !== "hidden") {
-    ctx.fillStyle = wall;
-    ctx.fillRect(x0, y0, W, wallH);
-    ctx.fillStyle = mixHex(r.color, "#2a2840", 0.25);
-    ctx.fillRect(x0, y0, W, 8);
-    if (style === "thick") { // bricks
-      ctx.fillStyle = mixHex(r.color, "#2a2840", 0.6);
-      for (let y = 12; y < wallH; y += 10) for (let x = (y / 10) % 2 ? 0 : 12; x < W; x += 24) ctx.fillRect(x0 + x, y0 + y, Math.min(20, W - x), 2);
-    } else if (style === "double") { // wainscot with a gold stripe
-      ctx.fillStyle = "#e6c35c"; ctx.fillRect(x0, y0 + wallH - 18, W, 4);
-    } else if (style === "rounded") { // wood panels
-      ctx.fillStyle = mixHex(r.color, "#2a2840", 0.55);
-      for (let x = 16; x < W; x += 28) ctx.fillRect(x0 + x, y0 + 12, 3, wallH - 14);
-    }
-    ctx.fillStyle = "#0002";
-    ctx.fillRect(x0, y0 + wallH, W, 6);
+    // Back wall: a pale face with a dark cap, like Gather's top-down walls.
+    px(x0 - 6, y0, W + 12, wallH, wl.face);
+    px(x0 - 6, y0, W + 12, 7, wl.cap);
+    px(x0 - 6, y0 + wallH - 6, W + 12, 6, wl.trim);
+    if (style === "thick") for (let y = 12; y < wallH - 8; y += 9) for (let x = (Math.floor(y / 9) % 2) ? 0 : 10; x < W; x += 20) px(x0 + x, y0 + y, Math.min(18, W - x), 1, "#e2c2b8");
+    if (style === "double") px(x0 - 6, y0 + wallH - 14, W + 12, 3, "#e6cd7d");
+    // A framed picture or window on the wall.
+    const fx = x0 + W - 70;
+    px(fx, y0 + 14, 40, 22, wl.cap);
+    px(fx + 3, y0 + 17, 34, 16, style === "thick" ? "#f6d38b" : "#b9dcf2");
+    // Thin side and front walls with a door gap in front.
+    px(x0 - 6, y0, 6, H, wl.cap);
+    px(x0 + W, y0, 6, H, wl.cap);
+    px(x0 - 6, y0 + H, W / 2 - TILE + 6, 6, wl.cap);
+    px(x0 + W / 2 + TILE, y0 + H, W / 2 - TILE + 6, 6, wl.cap);
   } else {
-    // A low picket fence instead of a wall.
-    ctx.fillStyle = "#fffaf0";
-    for (let x = 4; x < W; x += 14) ctx.fillRect(x0 + x, y0 + wallH - 22, 6, 22);
-    ctx.fillRect(x0, y0 + wallH - 14, W, 4);
+    // A white picket fence for gardens.
+    for (let x = 2; x < W; x += 12) { px(x0 + x, y0 + wallH - 22, 6, 22, "#ffffff"); px(x0 + x, y0 + wallH - 22, 6, 2, "#d9d4c8"); }
+    px(x0, y0 + wallH - 14, W, 3, "#ffffff");
+    for (const [x, y] of [[x0 - 4, y0], [x0 + W, y0]]) px(x, y + wallH - 24, 4, H - wallH + 24, "#ffffff");
   }
-  // Side walls.
-  ctx.fillStyle = selected ? "#ff8fb8" : mixHex(r.color, "#2a2840", 0.55);
-  const lw = selected ? 5 : 4;
-  ctx.fillRect(x0 - lw, y0, lw, H);
-  ctx.fillRect(x0 + W, y0, lw, H);
-  ctx.fillRect(x0 - lw, y0 + H, W / 2 - TILE + lw, lw);
-  ctx.fillRect(x0 + W / 2 + TILE, y0 + H, W / 2 - TILE + lw, lw);
-  // Sign.
-  const label = `${r.icon} ${r.title}`;
-  ctx.font = "bold 14px ui-rounded, system-ui, sans-serif";
-  const tw = ctx.measureText(label).width + 18;
-  const sx = x0 + 10, sy = y0 + 14;
-  ctx.fillStyle = "#fffdf7"; roundRect(sx, sy, tw, 26, 7); ctx.fill();
-  ctx.strokeStyle = "#2a2840"; ctx.lineWidth = 2; ctx.stroke();
-  ctx.fillStyle = "#2a2840"; ctx.fillText(label, sx + 9, sy + 18);
-  const n = r.pups.length + r.things.length;
+  autoDecor(r, x0, y0 + wallH, W, H - wallH);
+  // Room name: a translucent pill on the back wall, clear of the pups' name tags.
+  const label = (r.icon ? r.icon + " " : "") + r.title;
+  ctx.font = "600 14px Inter, system-ui, sans-serif";
+  const tw = Math.min(W - 90, ctx.measureText(label).width + 24);
+  const lx = x0 + 14, ly = y0 + (wallH - 24) / 2 + 2;
+  ctx.fillStyle = "#ffffffd9"; roundRect(lx, ly, tw, 24, 12); ctx.fill();
+  ctx.strokeStyle = "#282d4f14"; ctx.lineWidth = 1; ctx.stroke();
+  ctx.save(); ctx.beginPath(); ctx.rect(lx, ly, tw - 8, 24); ctx.clip();
+  ctx.fillStyle = "#5f6480"; ctx.fillText(label, lx + 12, ly + 17); ctx.restore();
   const unread = r.pups.filter((id) => pupOf(id) && pupOf(id).unread).length;
   if (unread) {
-    ctx.fillStyle = "#ffd66b"; roundRect(sx + tw + 6, sy + 3, 28, 20, 10); ctx.fill();
-    ctx.fillStyle = "#2b2205"; ctx.fillText(`${unread}!`, sx + tw + 12, sy + 18);
+    ctx.font = "700 12px Inter, system-ui";
+    ctx.fillStyle = "#f2b01e"; roundRect(lx + tw + 6, ly + 2, 24, 20, 10); ctx.fill();
+    ctx.fillStyle = "#fff"; ctx.textAlign = "center"; ctx.fillText(`${unread}`, lx + tw + 18, ly + 16); ctx.textAlign = "left";
   }
-  if (r.look.Decor) { ctx.font = "26px system-ui"; ctx.fillText(r.look.Decor, x0 + W - 36, y0 + 44); }
-  if (!n && !((r.style || {}).decor || []).length) {
-    ctx.fillStyle = "#6b6890"; ctx.font = "italic 13px ui-rounded, system-ui";
-    ctx.fillText(r.blurb || "empty", x0 + 14, y0 + wallH + 34);
+  const n = r.pups.length + r.things.length;
+  if (!n) {
+    ctx.fillStyle = "#9a9db3"; ctx.font = "italic 13px Inter, system-ui";
+    ctx.textAlign = "center"; ctx.fillText(r.blurb && !r.blurb.startsWith("/") ? r.blurb : "empty", x0 + W / 2, y0 + wallH + 62); ctx.textAlign = "left";
   }
   if (app.dropRoom === r.key) {
-    ctx.fillStyle = "#ffd66b33"; ctx.fillRect(x0, y0, W, H);
-    ctx.strokeStyle = "#ffd66b"; ctx.lineWidth = 5; ctx.strokeRect(x0 - 6, y0 - 4, W + 12, H + 10);
+    ctx.fillStyle = "#3d47db1f"; ctx.fillRect(x0, y0, W, H);
+    ctx.strokeStyle = "#3d47db"; ctx.lineWidth = 4; ctx.strokeRect(x0 - 8, y0 - 6, W + 16, H + 14);
+  }
+  if (r.pups.includes(app.sel) || r.things.includes(app.sel)) {
+    ctx.strokeStyle = "#3d47db66"; ctx.lineWidth = 3; ctx.setLineDash([8, 6]);
+    ctx.strokeRect(x0 - 10, y0 - 4, W + 20, H + 12); ctx.setLineDash([]);
   }
   if (build.on && build.room === r.key) {
-    ctx.strokeStyle = "#ffd66b"; ctx.lineWidth = 4; ctx.setLineDash([10, 6]);
-    ctx.strokeRect(x0 - 8, y0 - 6, W + 16, H + 14); ctx.setLineDash([]);
+    ctx.strokeStyle = "#f2b01e"; ctx.lineWidth = 4; ctx.setLineDash([10, 6]);
+    ctx.strokeRect(x0 - 10, y0 - 6, W + 20, H + 16); ctx.setLineDash([]);
   }
   drawFixtures(r);
+}
+
+// Every room gets a little furniture so the office feels lived in; user decor comes on top.
+function autoDecor(r, x0, y0, W, H) {
+  if ((r.style && (r.style.decor || []).length) || build.on && build.room === r.key && false) return;
+  const f = r.look.Floor || " ";
+  if (f === "⠂") {
+    tree(x0 + 28, y0 + 40); tree(x0 + W - 28, y0 + 46);
+    if (H > 150) bench(x0 + W - 70, y0 + H - 18);
+    return;
+  }
+  plant(x0 + 16, y0 + 30, 1); plant(x0 + W - 16, y0 + 30, 1);
+  if (W >= 260) bookshelf(x0 + 40, y0 + 4, Math.min(84, W / 4));
+  if (f === "▒") return;
+  if (r.key === "lobby" || f === "~") { sofa(x0 + W / 2 - 40, y0 + H - 26); rug(x0 + W / 2, y0 + H - 46, 110, 36, "#e7e2f7"); }
+  if (H > 160 && W >= 220) plant(x0 + W - 18, y0 + H - 14, 0.8);
+}
+
+function plant(x, y, s = 1) {
+  px(x - 7 * s, y - 2 * s, 14 * s, 11 * s, "#d1834f");
+  px(x - 7 * s, y - 2 * s, 14 * s, 3 * s, "#b56b3b");
+  ctx.fillStyle = "#4caf6a";
+  for (const [dx, dy, rr] of [[-6, -10, 7], [6, -11, 7], [0, -17, 8], [-2, -7, 6], [4, -6, 6]]) { ctx.beginPath(); ctx.arc(x + dx * s, y + dy * s, rr * s, 0, 7); ctx.fill(); }
+  ctx.fillStyle = "#6cc785";
+  for (const [dx, dy, rr] of [[-4, -13, 3], [5, -15, 3], [1, -19, 3]]) { ctx.beginPath(); ctx.arc(x + dx * s, y + dy * s, rr * s, 0, 7); ctx.fill(); }
+}
+
+function tree(x, y) {
+  px(x - 4, y - 6, 8, 16, "#8a5a36");
+  ctx.fillStyle = "#4f9f5b";
+  for (const [dx, dy, rr] of [[-12, -18, 13], [12, -18, 13], [0, -30, 15], [0, -14, 14]]) { ctx.beginPath(); ctx.arc(x + dx, y + dy, rr, 0, 7); ctx.fill(); }
+  ctx.fillStyle = "#6dbb6f";
+  for (const [dx, dy, rr] of [[-8, -26, 5], [8, -32, 5], [2, -20, 4]]) { ctx.beginPath(); ctx.arc(x + dx, y + dy, rr, 0, 7); ctx.fill(); }
+}
+
+function bookshelf(x, y, w) {
+  px(x, y, w, 30, "#8b5e3c");
+  px(x + 3, y + 3, w - 6, 11, "#6e4a2f"); px(x + 3, y + 16, w - 6, 11, "#6e4a2f");
+  const colors = ["#e76f51", "#2a9d8f", "#e9c46a", "#457b9d", "#f4a261", "#8e7dbe"];
+  for (let row = 0; row < 2; row++) for (let i = 0, bx = x + 5; bx < x + w - 8; i++, bx += 5 + (i % 3)) px(bx, y + 4 + row * 13, 4, 10 - (i % 2) * 2, colors[(i + row) % colors.length]);
+}
+
+function sofa(x, y) {
+  px(x, y - 14, 80, 12, "#f0a35e"); px(x - 4, y - 10, 8, 18, "#e08e48"); px(x + 76, y - 10, 8, 18, "#e08e48");
+  px(x + 2, y - 4, 76, 10, "#f4b57a"); px(x + 39, y - 4, 2, 10, "#e08e48");
+}
+
+function rug(cx, cy, w, h, c) { ctx.fillStyle = c; ctx.beginPath(); ctx.ellipse(cx, cy, w / 2, h / 2, 0, 0, 7); ctx.fill(); }
+
+function bench(x, y) { px(x, y - 8, 48, 6, "#a87a52"); px(x + 2, y - 2, 4, 8, "#7a5134"); px(x + 42, y - 2, 4, 8, "#7a5134"); }
+
+// A Gather-style desk pod: white desk, monitor, chair (drawn under working pups).
+function desk(x, y, phase) {
+  px(x - 28, y - 4, 56, 14, "#f3f2f6"); px(x - 28, y + 10, 56, 3, "#c9c7d4");
+  px(x - 11, y - 18, 22, 14, "#2d3142"); px(x - 9, y - 16, 18, 10, Math.floor(app.t * 4 + phase) % 2 ? "#8fd3ff" : "#a9e5c0");
+  px(x - 2, y - 4, 4, 2, "#2d3142");
+  px(x + 14, y - 1, 8, 4, "#9a9db3");
 }
 
 function roundRect(x, y, w, h, r) {
@@ -1050,129 +1447,174 @@ function roundRect(x, y, w, h, r) {
   ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
 }
 
-function bubble(x, y, text, bg, fg) {
-  ctx.font = "bold 13px ui-rounded, system-ui";
-  const w = Math.max(22, ctx.measureText(text).width + 12);
-  ctx.fillStyle = bg; roundRect(x - w / 2, y - 22, w, 20, 9); ctx.fill();
-  ctx.beginPath(); ctx.moveTo(x - 4, y - 2); ctx.lineTo(x + 4, y - 2); ctx.lineTo(x, y + 4); ctx.fill();
-  ctx.fillStyle = fg; ctx.textAlign = "center"; ctx.fillText(text, x, y - 7); ctx.textAlign = "left";
+// Speech bubble: white with a dark outline, next to the head.
+function bubble(x, y, text, bg = "#ffffff", fg = "#282d4f") {
+  ctx.font = "700 12px Inter, system-ui";
+  const w = Math.max(24, ctx.measureText(text).width + 14);
+  ctx.fillStyle = bg; roundRect(x - w / 2, y - 22, w, 20, 10); ctx.fill();
+  ctx.strokeStyle = "#282d4f"; ctx.lineWidth = 1.5; ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x - 5, y - 2.5); ctx.lineTo(x + 3, y - 2.5); ctx.lineTo(x - 3, y + 4); ctx.closePath(); ctx.fillStyle = bg; ctx.fill(); ctx.stroke();
+  ctx.fillStyle = bg; ctx.fillRect(x - 4, y - 4, 7, 3);
+  ctx.fillStyle = fg; ctx.textAlign = "center"; ctx.fillText(text, x, y - 8); ctx.textAlign = "left";
 }
 
-function nameTag(x, y, text, selected) {
-  ctx.font = "bold 11px ui-rounded, system-ui";
+// Name tag: dark pill with a status dot, above the avatar — Gather's signature look.
+function nameTag(x, y, text, selected, dot) {
+  ctx.font = "600 11.5px Inter, system-ui";
   const t = text.length > 14 ? text.slice(0, 13) + "…" : text;
-  const w = ctx.measureText(t).width + 10;
-  ctx.fillStyle = selected ? "#f5a3c7" : "#2a2840cc"; roundRect(x - w / 2, y, w, 16, 6); ctx.fill();
-  ctx.fillStyle = selected ? "#2a1730" : "#fff"; ctx.textAlign = "center"; ctx.fillText(t, x, y + 12); ctx.textAlign = "left";
+  const tw = ctx.measureText(t).width;
+  const w = tw + (dot ? 22 : 14);
+  ctx.fillStyle = selected ? "#3d47db" : "#1f2233e6"; roundRect(x - w / 2, y, w, 18, 9); ctx.fill();
+  let tx = x - w / 2 + 7;
+  if (dot) { ctx.fillStyle = dot; ctx.beginPath(); ctx.arc(tx + 3, y + 9, 3.5, 0, 7); ctx.fill(); tx += 10; }
+  ctx.fillStyle = "#fff"; ctx.fillText(t, tx, y + 13);
 }
 
 function drawPup(e) {
   const p = pupOf(e.id);
   if (!p) return;
   const s = 3;
-  const px = e.x * TILE, py = e.y * TILE;
+  const x = e.x * TILE, y = e.y * TILE;
   const selected = app.sel === e.id;
-  // Desk for working pups.
-  if (p.status === "working") {
-    ctx.fillStyle = "#9c6b45"; ctx.fillRect(px - 26, py + 4, 52, 10);
-    ctx.fillStyle = "#7a5134"; ctx.fillRect(px - 22, py + 14, 4, 10); ctx.fillRect(px + 18, py + 14, 4, 10);
-    ctx.fillStyle = "#2a2840"; ctx.fillRect(px - 10, py - 8, 20, 12);
-    ctx.fillStyle = Math.floor(app.t * 6 + e.phase) % 2 ? "#a6e3a1" : "#89dceb"; ctx.fillRect(px - 8, py - 6, 16, 8);
-  }
-  // Shadow.
-  ctx.fillStyle = "#0002"; ctx.beginPath(); ctx.ellipse(px, py + 2, 18, 5, 0, 0, 7); ctx.fill();
+  if (p.status === "working") desk(x, y + 6, e.phase);
+  ctx.fillStyle = "#2b2f4a24"; ctx.beginPath(); ctx.ellipse(x, y + 2, 17, 5, 0, 0, 7); ctx.fill();
   const breed = BREEDS[p.agent] || DOG;
   let grid = breed, dy = 0;
   const frame = Math.floor(app.t * 6 + e.phase);
   if (p.status === "offline") grid = DOG_SLEEP;
   else if (e.moving) grid = frame % 2 ? walkOf(breed) : breed;
   else if (p.status === "working" || p.status === "done") grid = frame % 2 ? wagOf(breed) : breed;
-  if (p.status === "waiting") dy = -Math.abs(Math.sin(app.t * 7 + e.phase)) * 8;
+  if (p.status === "waiting") dy = -Math.abs(Math.sin(app.t * 7 + e.phase)) * 7;
   const w = grid[0].length * s, h = grid.length * s;
   ctx.save();
-  if (e.dir < 0) { ctx.translate(px * 2, 0); ctx.scale(-1, 1); }
-  drawPixels(ctx, grid, dogPalette(p.fur, p.status === "offline", p.agent), px - w / 2, py - h + dy, s);
+  if (e.dir < 0) { ctx.translate(x * 2, 0); ctx.scale(-1, 1); }
+  drawPixels(ctx, grid, dogPalette(p.fur, p.status === "offline", p.agent), x - w / 2, y - h + dy, s);
   ctx.restore();
-  if (selected) { ctx.strokeStyle = "#f5a3c7"; ctx.lineWidth = 3; ctx.beginPath(); ctx.ellipse(px, py + 2, 24, 8, 0, 0, 7); ctx.stroke(); }
-  // Status bubble.
-  const top = py - h + dy - 6;
-  if (app.fed && app.fed[e.id] && app.t - app.fed[e.id] < 3) bubble(px, top, "🦴 nom", "#ffe9b8", "#3a2a10");
-  else if (p.status === "waiting") bubble(px, top, Math.floor(app.t * 3) % 2 ? "!" : "!!", "#ffd66b", "#2b2205");
-  else if (p.status === "working") bubble(px, top, ["·", "··", "···"][frame % 3], "#a6e3a1", "#14381f");
-  else if (p.status === "done") bubble(px, top, "✓", "#89b4fa", "#0d2347");
-  else if (p.status === "offline") { ctx.fillStyle = "#6b6890"; ctx.font = "bold 12px system-ui"; ctx.fillText("z", px + 14, top + 4 - (app.t * 6 % 6)); ctx.fillText("Z", px + 20, top - 6 - (app.t * 4 % 6)); }
-  if (p.starred) { ctx.font = "13px system-ui"; ctx.fillText("⭐", px + 16, py - h + 10); }
-  if (p.remote) { ctx.font = "12px system-ui"; ctx.fillText("📡", px - 30, py - h + 12); }
-  nameTag(px, py + 8, p.title, selected);
+  if (selected) { ctx.strokeStyle = "#3d47db"; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.ellipse(x, y + 2, 23, 7, 0, 0, 7); ctx.stroke(); }
+  const top = y - h + dy;
+  nameTag(x, top - 24, (p.starred ? "★ " : "") + p.title, selected, STATUS_DOT[p.status]);
+  const bx = x + 30, by = top + 12;
+  if (app.fed && app.fed[e.id] && app.t - app.fed[e.id] < 3) bubble(bx, by, "🦴 nom");
+  else if (p.status === "waiting") bubble(bx, by, Math.floor(app.t * 3) % 2 ? "!" : "!!", "#fff4cf");
+  else if (p.status === "working") bubble(bx, by, ["•  ", "•• ", "•••"][frame % 3]);
+  else if (p.status === "done") bubble(bx, by, "✓", "#e6f0ff");
+  else if (p.status === "offline") { ctx.fillStyle = "#9a9db3"; ctx.font = "700 11px Inter, system-ui"; ctx.fillText("z", x + 14, top + 10 - (app.t * 6 % 6)); ctx.fillText("Z", x + 20, top + 2 - (app.t * 4 % 6)); }
+  if (p.remote) { ctx.font = "12px system-ui"; ctx.fillStyle = "#000"; ctx.fillText("📡", x - 32, top + 14); }
 }
 
 function drawThing(e) {
   const t = thingOf(e.id);
   if (!t) return;
-  const px = e.x * TILE, py = e.y * TILE;
+  const x = e.x * TILE, y = e.y * TILE;
   const on = t.running;
   const selected = app.sel === e.id;
-  ctx.fillStyle = "#0002"; ctx.beginPath(); ctx.ellipse(px, py + 2, 22, 5, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = "#2b2f4a24"; ctx.beginPath(); ctx.ellipse(x, y + 2, 22, 5, 0, 0, 7); ctx.fill();
   switch (t.kind) {
-    case "monitor": { // a TV on a stand with live bars
-      ctx.fillStyle = "#2a2840"; ctx.fillRect(px - 24, py - 40, 48, 34); ctx.fillRect(px - 4, py - 6, 8, 6); ctx.fillRect(px - 14, py - 1, 28, 3);
-      ctx.fillStyle = on ? "#14381f" : "#45475a"; ctx.fillRect(px - 20, py - 36, 40, 26);
-      if (on) { ctx.fillStyle = "#a6e3a1"; for (let i = 0; i < 6; i++) { const bh = 4 + ((Math.sin(app.t * 4 + i * 1.7 + e.phase) + 1) * 9); ctx.fillRect(px - 18 + i * 6.5, py - 11 - bh, 5, bh); } }
+    case "monitor": { // a wall screen on a stand with live bars
+      px(x - 24, y - 40, 48, 32, "#2d3142"); px(x - 3, y - 8, 6, 6, "#2d3142"); px(x - 12, y - 2, 24, 3, "#9a9db3");
+      px(x - 20, y - 36, 40, 24, on ? "#183a2a" : "#4a4d5e");
+      if (on) for (let i = 0; i < 6; i++) { const bh = 3 + ((Math.sin(app.t * 4 + i * 1.7 + e.phase) + 1) * 8); px(x - 18 + i * 6.5, y - 13 - bh, 5, bh, "#7ee2a8"); }
       break;
     }
     case "server": { // campfire
-      ctx.fillStyle = "#7a5134"; ctx.fillRect(px - 18, py - 6, 36, 6); ctx.fillRect(px - 14, py - 10, 28, 5);
+      px(x - 18, y - 6, 36, 6, "#8a5a36"); px(x - 14, y - 10, 28, 5, "#a06b42");
       if (on) for (let i = 0; i < 3; i++) {
         const fh = 16 + Math.sin(app.t * 9 + i * 2 + e.phase) * 5;
-        ctx.fillStyle = ["#f38ba8", "#fab387", "#f9e2af"][i];
-        ctx.beginPath(); ctx.moveTo(px - 12 + i * 4, py - 10); ctx.quadraticCurveTo(px - 6 + i * 6, py - 10 - fh * 1.4, px + 2 + i * 4, py - 10); ctx.fill();
-      } else { ctx.fillStyle = "#6c7086"; ctx.fillRect(px - 6, py - 16, 3, 6); ctx.fillRect(px + 2, py - 20, 3, 8); }
+        ctx.fillStyle = ["#ef6f5e", "#f6a14d", "#ffd36b"][i];
+        ctx.beginPath(); ctx.moveTo(x - 12 + i * 4, y - 10); ctx.quadraticCurveTo(x - 6 + i * 6, y - 10 - fh * 1.4, x + 2 + i * 4, y - 10); ctx.fill();
+      } else { px(x - 6, y - 16, 3, 6, "#b3b5c4"); px(x + 2, y - 20, 3, 8, "#b3b5c4"); }
       break;
     }
     case "logs": { // a scroll of paper with scrolling lines
-      ctx.fillStyle = "#fff4e0"; ctx.fillRect(px - 18, py - 40, 36, 38);
-      ctx.fillStyle = "#c9a27e"; ctx.fillRect(px - 20, py - 42, 40, 5); ctx.fillRect(px - 20, py - 4, 40, 5);
-      ctx.fillStyle = on ? "#585b70" : "#bac2de";
+      px(x - 18, y - 40, 36, 38, "#fffaf0"); px(x - 20, y - 42, 40, 5, "#c9a27e"); px(x - 20, y - 4, 40, 5, "#c9a27e");
       const off = on ? (app.t * 12) % 6 : 0;
-      for (let y = 0; y < 5; y++) ctx.fillRect(px - 14, py - 34 + y * 6 + off, 8 + ((y * 7 + 3) % 20), 2);
+      for (let k = 0; k < 5; k++) px(x - 14, y - 34 + k * 6 + off, 8 + ((k * 7 + 3) % 20), 2, on ? "#5f6480" : "#c4c6d3");
       break;
     }
     case "job": { // hourglass
-      ctx.fillStyle = "#9c6b45"; ctx.fillRect(px - 14, py - 42, 28, 4); ctx.fillRect(px - 14, py - 4, 28, 4);
-      ctx.fillStyle = "#cdd6f4"; ctx.beginPath(); ctx.moveTo(px - 10, py - 38); ctx.lineTo(px + 10, py - 38); ctx.lineTo(px, py - 21); ctx.lineTo(px + 10, py - 4); ctx.lineTo(px - 10, py - 4); ctx.lineTo(px, py - 21); ctx.fill();
-      ctx.fillStyle = "#f9e2af"; const sand = on ? (app.t * 0.3 + e.phase) % 1 : 1;
-      ctx.beginPath(); ctx.moveTo(px - 8 * (1 - sand), py - 36 + 14 * sand); ctx.lineTo(px + 8 * (1 - sand), py - 36 + 14 * sand); ctx.lineTo(px, py - 22); ctx.fill();
-      ctx.fillRect(px - 8 * sand, py - 6 - 10 * sand, 16 * sand, 10 * sand);
-      if (on) ctx.fillRect(px - 1, py - 21, 2, 15);
+      px(x - 14, y - 42, 28, 4, "#a06b42"); px(x - 14, y - 4, 28, 4, "#a06b42");
+      ctx.fillStyle = "#e8eef8"; ctx.beginPath(); ctx.moveTo(x - 10, y - 38); ctx.lineTo(x + 10, y - 38); ctx.lineTo(x, y - 21); ctx.lineTo(x + 10, y - 4); ctx.lineTo(x - 10, y - 4); ctx.lineTo(x, y - 21); ctx.fill();
+      const sand = on ? (app.t * 0.3 + e.phase) % 1 : 1;
+      ctx.fillStyle = "#f2c86b"; ctx.beginPath(); ctx.moveTo(x - 8 * (1 - sand), y - 36 + 14 * sand); ctx.lineTo(x + 8 * (1 - sand), y - 36 + 14 * sand); ctx.lineTo(x, y - 22); ctx.fill();
+      ctx.fillRect(x - 8 * sand, y - 6 - 10 * sand, 16 * sand, 10 * sand);
+      if (on) ctx.fillRect(x - 1, y - 21, 2, 15);
       break;
     }
     default: { // toolbox
-      ctx.fillStyle = "#f38ba8"; ctx.fillRect(px - 18, py - 22, 36, 20);
-      ctx.fillStyle = "#2a2840"; ctx.fillRect(px - 8, py - 28, 16, 4);
+      px(x - 18, y - 22, 36, 20, "#e76f6f"); px(x - 8, y - 28, 16, 4, "#2d3142");
     }
   }
-  if (!on) { ctx.font = "11px system-ui"; ctx.fillStyle = "#6b6890"; ctx.fillText("off", px + 16, py - 30); }
-  if (selected) { ctx.strokeStyle = "#f5a3c7"; ctx.lineWidth = 3; ctx.beginPath(); ctx.ellipse(px, py + 2, 28, 8, 0, 0, 7); ctx.stroke(); }
-  nameTag(px, py + 8, `${t.icon} ${t.name}`, selected);
+  nameTag(x, y - 64, `${t.icon} ${t.name}`, selected, on ? "#2fb36b" : "#9a9db3");
+  if (selected) { ctx.strokeStyle = "#3d47db"; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.ellipse(x, y + 2, 28, 8, 0, 0, 7); ctx.stroke(); }
 }
 
 function drawYou() {
   const you = app.you;
-  const px = you.x * TILE, py = you.y * TILE, s = 3;
+  const x = you.x * TILE, y = you.y * TILE, s = 3;
   const grid = you.moving && Math.floor(app.t * 8) % 2 ? HUMAN_WALK : HUMAN;
-  ctx.fillStyle = "#0002"; ctx.beginPath(); ctx.ellipse(px, py + 2, 16, 5, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = "#2b2f4a24"; ctx.beginPath(); ctx.ellipse(x, y + 2, 15, 5, 0, 0, 7); ctx.fill();
   const w = grid[0].length * s, h = grid.length * s;
   ctx.save();
-  if (you.dir < 0) { ctx.translate(px * 2, 0); ctx.scale(-1, 1); }
-  drawPixels(ctx, grid, HUMAN_PAL, px - w / 2, py - h, s);
+  if (you.dir < 0) { ctx.translate(x * 2, 0); ctx.scale(-1, 1); }
+  drawPixels(ctx, grid, HUMAN_PAL, x - w / 2, y - h, s);
   ctx.restore();
-  nameTag(px, py + 8, "you", false);
+  nameTag(x, y - h - 24, "You", false, "#2fb36b");
+}
+
+// Selection boxes, handles, marquee and snap guides, drawn above everything else.
+function drawOverlays() {
+  const z = app.cam.z, lw = 1.5 / z;
+  for (const id of app.multi) {
+    const e = app.ents.get(id);
+    if (!e) continue;
+    ctx.strokeStyle = "#3d47db"; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.ellipse(e.x * TILE, e.y * TILE + 2, 23, 7, 0, 0, 7); ctx.stroke();
+  }
+  const sr = selectedRoom();
+  if (sr && !build.on) {
+    const x0 = sr.x * TILE, y0 = sr.y * TILE, W = sr.w * TILE, H = sr.h * TILE;
+    ctx.strokeStyle = "#6965db"; ctx.lineWidth = lw; ctx.strokeRect(x0, y0, W, H);
+    const hs = 9 / z, pts = handlePoints(sr);
+    for (const h of HANDLES) {
+      const [hx, hy] = pts[h];
+      ctx.fillStyle = "#fff"; roundRect(hx * TILE - hs / 2, hy * TILE - hs / 2, hs, hs, 2 / z);
+      ctx.fill(); ctx.stroke();
+    }
+    if (drag && drag.moved && (drag.kind === "resize" || drag.kind === "room")) {
+      const label = drag.kind === "resize" ? `${sr.w} × ${sr.h}` : `${sr.x}, ${sr.y}`;
+      ctx.font = `600 ${12 / z}px Inter, system-ui`;
+      const tw = ctx.measureText(label).width + 12 / z;
+      ctx.fillStyle = "#6965db"; roundRect(x0 + W - tw, y0 + H + 6 / z, tw, 20 / z, 5 / z); ctx.fill();
+      ctx.fillStyle = "#fff"; ctx.fillText(label, x0 + W - tw + 6 / z, y0 + H + 20 / z);
+    }
+  } else if (app.hoverRoom && !drag && app.tool === "select") {
+    const r = roomByKey(app.hoverRoom);
+    if (r) { ctx.strokeStyle = "#6965db55"; ctx.lineWidth = lw; ctx.strokeRect(r.x * TILE, r.y * TILE, r.w * TILE, r.h * TILE); }
+  }
+  for (const g of app.guides || []) {
+    ctx.strokeStyle = "#ec6ea7"; ctx.lineWidth = lw; ctx.beginPath();
+    if (g.x !== undefined) { ctx.moveTo(g.x * TILE, g.y0 * TILE - 20); ctx.lineTo(g.x * TILE, g.y1 * TILE + 20); }
+    else { ctx.moveTo(g.x0 * TILE - 20, g.y * TILE); ctx.lineTo(g.x1 * TILE + 20, g.y * TILE); }
+    ctx.stroke();
+  }
+  if (drag && drag.moved && (drag.kind === "marquee" || drag.kind === "create")) {
+    const x = Math.min(drag.x0, drag.x1) * TILE, y = Math.min(drag.y0, drag.y1) * TILE;
+    const w = Math.abs(drag.x1 - drag.x0) * TILE, h = Math.abs(drag.y1 - drag.y0) * TILE;
+    const create = drag.kind === "create";
+    ctx.fillStyle = create ? "#f2b01e22" : "#6965db14"; ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = create ? "#f2b01e" : "#6965db"; ctx.lineWidth = lw;
+    if (create) ctx.setLineDash([8 / z, 5 / z]);
+    ctx.strokeRect(x, y, w, h); ctx.setLineDash([]);
+    if (create) {
+      ctx.font = `600 ${13 / z}px Inter, system-ui`; ctx.fillStyle = "#b07d0a";
+      ctx.fillText(`🏠 new kennel ${Math.abs(drag.x1 - drag.x0)} × ${Math.abs(drag.y1 - drag.y0)}`, x + 8 / z, y + 20 / z);
+    }
+  }
 }
 
 function render() {
   const dpr = devicePixelRatio;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.fillStyle = "#2b2f55";
+  ctx.fillStyle = "#e9e1d4";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   if (!app.state) return;
   ctx.setTransform(dpr * app.cam.z, 0, 0, dpr * app.cam.z, -app.cam.x * dpr * app.cam.z, -app.cam.y * dpr * app.cam.z);
@@ -1186,6 +1628,8 @@ function render() {
   }
   if (!youDrawn) drawYou();
   drawDropHover();
+  drawOverlays();
+  if (app.shownZoom !== app.cam.z) { app.shownZoom = app.cam.z; $("#zoomval").textContent = Math.round(app.cam.z * 100) + "%"; }
 
   const near = nearest();
   const hint = $("#hint");
@@ -1908,6 +2352,10 @@ window.kennel = {
     app.cam.y = e.y * TILE - st.clientHeight / app.cam.z / 2;
     return true;
   },
+  worldPos(wx, wy) {
+    const r = canvas.getBoundingClientRect();
+    return { x: r.left + (wx * TILE - app.cam.x) * app.cam.z, y: r.top + (wy * TILE - app.cam.y) * app.cam.z };
+  },
   screenPos(id) {
     const e = app.ents.get(id);
     if (!e) return null;
@@ -1916,6 +2364,7 @@ window.kennel = {
   },
 };
 
-setTimeout(() => $("#help").classList.add("faded"), 9000);
+$("#buildbtn").onclick = () => setBuild(!build.on);
+$("#helpbtn").onclick = () => toast("drag pups to place or file them · drag a room’s wall to move it · select a room, drag handles to resize · right-click for actions · V/H/R tools · Space-drag pans · ⌘-scroll zooms · ⌘Z undo");
 resize();
 Promise.all([loadCatalog(), loadState(), loadTreats()]).then(() => { listen(); requestAnimationFrame(frame); }).catch((e) => toast(e.message, true));

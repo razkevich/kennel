@@ -24,6 +24,7 @@ Sessions are **pups**: Claude Code corgis ▼•ᴥ•▼, Codex huskies ▲•�
 | | |
 |---|---|
 | 🗺 **The office** | Floors: a campus of smart rooms, one room per project, and **your kennels**, which show only what you've filed. Pups wander, sit at desks while working, and bounce with `!` when they need you. Walk with WASD, interact with X, click to inspect, double-click to open. |
+| ✋ **Arrange it by hand** | Drag pups anywhere in their room, or onto another kennel to file them. Marquee-select several and move them together. Select a room to get handles: drag its wall to move it and its handles to resize it, with snap guides as you go. Draw a new kennel with the ▭ tool. Right-click anything for its actions. Tools: `V` select, `H` hand (or hold Space), `R` kennel. |
 | 📥 **Inbox** | The newest sessions that aren't filed yet, in a strip above the map. Drag one onto a kennel. |
 | 📚 **Library** | Every past session: filter by date, agent, kennel or theme, group by day, week, theme, kennel, repo or agent, sort, and move many at once. |
 | ✨ **Themes** | Automatic categories from an LLM, Cloudflare Workers AI or your `claude` haiku. Only titles, first asks and recaps are sent. |
@@ -41,8 +42,10 @@ Sessions are **pups**: Claude Code corgis ▼•ᴥ•▼, Codex huskies ▲•�
 <table>
 <tr><td><img src="docs/img/web-map.png" alt="the office"></td><td><img src="docs/img/web-library.png" alt="library grouped by theme"></td></tr>
 <tr><td align="center">the office, with the inbox strip</td><td align="center">📚 library, grouped by ✨ theme</td></tr>
-<tr><td><img src="docs/img/web-card.png" alt="pup card"></td><td><img src="docs/img/web-build.png" alt="build mode"></td></tr>
-<tr><td align="center">a pup's card: state and every action</td><td align="center">🔨 build mode</td></tr>
+<tr><td><img src="docs/img/web-edit.png" alt="resizing a room"></td><td><img src="docs/img/web-card.png" alt="pup card"></td></tr>
+<tr><td align="center">✋ select a room, drag handles to resize</td><td align="center">a pup's card: state and every action</td></tr>
+<tr><td><img src="docs/img/web-build.png" alt="build mode"></td><td><img src="docs/img/web-search.png" alt="search"></td></tr>
+<tr><td align="center">🔨 build mode</td><td align="center">🔎 search with snippets</td></tr>
 <tr><td><img src="docs/img/web-ask.png" alt="ask"></td><td><img src="docs/img/web-projects.png" alt="projects floor"></td></tr>
 <tr><td align="center">💬 Ask, with citations</td><td align="center">one room per project</td></tr>
 <tr><td><img src="docs/img/web-gear.png" alt="gear"></td><td><img src="docs/img/web-jobs.png" alt="jobs and things"></td></tr>
@@ -76,7 +79,7 @@ kennel digest -since 168h
 kennel -demo                        # try it on synthetic sessions
 ```
 
-**Keys in the office:** `/` search · `l` library · `b` build · `D` digest · `X` interact · `⌘Z` undo · `Esc` close.
+**Keys in the office:** `/` search · `V` `H` `R` tools · Space-drag pan · `+` `-` `Shift+1` zoom · `Delete` archive selected · `l` library · `b` build · `D` digest · `X` interact · `⌘Z` undo · `Esc` close.
 **Keys in the Mac app:** `⌘T` new shell tab · `⌘W` close tab (the Kennel tab is pinned) · `⌘0` Kennel · `⌘1–9` tabs · `⌘⇧[ ]` previous and next.
 
 **Themes with Cloudflare:** put `CLOUDFLARE_AI_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` in the environment or in `~/cloudflare_ai_token.env`. Optionally set `KENNEL_CF_MODEL` (default `@cf/meta/llama-3.1-8b-instruct-fast`). Without them, kennel uses `claude` haiku.
