@@ -444,20 +444,20 @@ body.resizing { cursor: col-resize; user-select: none; }
 #floornav .fhead { display: flex; align-items: center; justify-content: space-between; padding: 0 4px; font-size: 12.5px; }
 #floornav .fhead button { border: 1px solid var(--line); background: var(--card2); border-radius: 8px; width: 26px; height: 24px; color: var(--sub); }
 #floors { display: flex; flex-direction: column; gap: 3px; overflow: auto; }
-#floors .floor { display: flex; align-items: center; gap: 4px; border: 1px solid transparent; border-radius: 10px; padding: 5px 4px 5px 9px; color: var(--sub); cursor: pointer; }
-#floors .floor:hover { background: var(--card2); color: var(--ink); }
-#floors .floor.on { background: var(--accent2); border-color: var(--accent); color: var(--ink); }
+#floornav .floor { display: flex; align-items: center; gap: 4px; border: 1px solid transparent; border-radius: 10px; padding: 5px 4px 5px 9px; color: var(--sub); cursor: pointer; }
+#floornav .floor:hover { background: var(--card2); color: var(--ink); }
+#floornav .floor.on { background: var(--accent2); border-color: var(--accent); color: var(--ink); }
 #floors .floor.dropbefore { box-shadow: inset 0 3px 0 var(--accent); }
 #floors .floor.dropafter { box-shadow: inset 0 -3px 0 var(--accent); }
 #floors .floor.droptarget { background: var(--accent2); color: var(--accent); box-shadow: inset 0 0 0 2px var(--accent); }
-#floors .ftext { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
-#floors .floor button.dots { opacity: 0; }
-#floors .floor:hover button.dots, #floors .floor.on button.dots { opacity: 1; }
-#floors .fedit { flex: 1; min-width: 0; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--accent); background: var(--card); font-weight: 700; }
-#floors .fedit:focus { outline: none; box-shadow: 0 0 0 3px var(--accent2); }
-#floors .fname { font-weight: 700; font-size: 13px; display: flex; gap: 6px; align-items: center; width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#floors .fwait { margin-left: auto; font-size: 11px; color: var(--warm-ink); }
-#floors .fcount { font-size: 11px; color: var(--dim); }
+#floornav .ftext { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+#floornav .floor button.dots { opacity: 0; }
+#floornav .floor:hover button.dots, #floornav .floor.on button.dots { opacity: 1; }
+#floornav .fedit { flex: 1; min-width: 0; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--accent); background: var(--card); font-weight: 700; }
+#floornav .fedit:focus { outline: none; box-shadow: 0 0 0 3px var(--accent2); }
+#floornav .fname { font-weight: 700; font-size: 13px; display: flex; gap: 6px; align-items: center; width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#floornav .fwait { margin-left: auto; font-size: 11px; color: var(--warm-ink); }
+#floornav .fcount { font-size: 11px; color: var(--dim); }
 #organizefloors { border: 1px dashed var(--accent); background: var(--accent2); color: var(--accent); border-radius: 10px; padding: 6px 8px; font-weight: 700; font-size: 11.5px; }
 #floorsheet { position: fixed; inset: 0; background: var(--scrim); display: flex; align-items: center; justify-content: center; z-index: 22; }
 #floorsheet[hidden] { display: none; }
@@ -486,3 +486,22 @@ body.resizing { cursor: col-resize; user-select: none; }
 #spaces { display: flex; flex-direction: column; gap: 3px; }
 #floornav .fsep { height: 1px; background: var(--line); margin: 2px 4px; }
 #spaces .floor.on { background: var(--green-bg); border-color: var(--green-line); }
+
+#build .swatch.color { width: 30px; height: 30px; border-radius: 50%; }
+#floornav .fcount { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#floornav .fcount.nofolder { color: var(--accent); cursor: pointer; }
+
+/* ---------- chats in the navigator ---------- */
+#chats { display: flex; flex-direction: column; gap: 1px; overflow: auto; min-height: 60px; }
+#chats .chat { display: flex; align-items: center; gap: 7px; padding: 4px 6px 4px 8px; border-radius: 8px; cursor: pointer; font-size: 12.5px; color: var(--sub); }
+#chats .chat:hover { background: var(--card2); color: var(--ink); }
+#chats .chat.on { background: var(--accent2); color: var(--ink); }
+#chats .chat .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+#chats .chat .t { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#chats .chat .star { border: 0; background: none; color: var(--dim); font-size: 14px; padding: 0 2px; opacity: 0; }
+#chats .chat:hover .star, #chats .chat .star.on { opacity: 1; }
+#chats .chat .star.on { color: #f2b01e; }
+#chats .empty { color: var(--dim); font-size: 12px; padding: 6px 8px; }
+#floornav { max-height: calc(100% - 96px); }
+#floors { max-height: 30vh; }
+#spaces { max-height: 22vh; overflow: auto; }

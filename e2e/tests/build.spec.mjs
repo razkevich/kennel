@@ -19,18 +19,18 @@ test("build mode: template, floor, furniture, blocks, moving rooms", async ({ pa
   await expect.poll(async () => (await room(page, L)).style.shape).toBe("office");
   let st = (await room(page, L)).style;
   expect(st.blocks.map((b) => b.kind)).toEqual(expect.arrayContaining(["door", "bell"]));
-  expect(st.decor.length).toBe(3);
+  // The template's furniture becomes room objects once the room is being shaped.
+  await expect.poll(async () => ((await room(page, L)).style.props || []).length).toBe(3);
 
   await panel.getByRole("button", { name: "Water" }).click();
   await expect.poll(async () => (await room(page, L)).style.floor).toBe("water");
 
   // Carry a plant and drop it in the room.
-  await panel.locator("button.decor[title='Plant']").click();
+  await panel.locator("button.decor[title^='Plant']").click();
   await reveal(page, L);
   p = await page.evaluate((k) => window.kennel.roomPos(k, 0.1, 0.2), L);
   await page.mouse.click(p.x, p.y);
-  await expect.poll(async () => (await room(page, L)).style.decor.length).toBe(4);
-  await page.keyboard.press("Escape");
+  await expect.poll(async () => ((await room(page, L)).style.props || []).length).toBe(4);
 
   // Configure the door.
   const doorName = panel.locator(".blockcard", { hasText: "Spawn door" }).locator("input[data-field='name']");
@@ -58,11 +58,11 @@ test("build mode: template, floor, furniture, blocks, moving rooms", async ({ pa
   await reveal(page, L);
   const plant = await page.evaluate((k) => {
     const r = window.kennel.app.rooms.find((x) => x.key === k);
-    const d = r.style.decor[r.style.decor.length - 1];
-    return window.kennel.roomPos(k, d.x, d.y - 0.05);
+    const pr = r.style.props[r.style.props.length - 1];
+    return window.kennel.roomPos(k, pr.x + pr.w / 2, pr.y + pr.h / 2);
   }, L);
   await page.mouse.click(plant.x, plant.y, { button: "right" });
-  await expect.poll(async () => (await room(page, L)).style.decor.length).toBe(3);
+  await expect.poll(async () => ((await room(page, L)).style.props || []).length).toBe(3);
 
   // Leave build mode and use the door: it spawns a pup with the preset name.
   await page.keyboard.press("b");

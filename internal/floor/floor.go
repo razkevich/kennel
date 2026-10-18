@@ -86,6 +86,9 @@ func styled(a *app.App, rooms []Room) []Room {
 			continue
 		}
 		rooms[i].Style = st
+		if st.Color != "" {
+			rooms[i].Color = st.Color
+		}
 		if g, ok := blocks.FloorGlyph(st.Floor); ok {
 			rooms[i].Look.Floor = g
 		}

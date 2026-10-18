@@ -19,6 +19,19 @@ type Style struct {
 	// Spots are where the user dragged pups inside the room, keyed by pup id,
 	// in the same 0..1 interior coordinates as decor.
 	Spots map[string]Placed `json:"spots,omitempty"`
+	// Color overrides the room's color.
+	Color string `json:"color,omitempty"`
+	// Props are resizable objects pups can be put under, inside or on (rug, doghouse, couch, divider).
+	Props []Prop `json:"props,omitempty"`
+}
+
+// Prop is a room object with a position and size in 0..1 interior coordinates.
+type Prop struct {
+	Kind string  `json:"kind"`
+	X    float64 `json:"x"`
+	Y    float64 `json:"y"`
+	W    float64 `json:"w"`
+	H    float64 `json:"h"`
 }
 
 // Pos is a room's spot on one floor, in tiles; W and H are a user-set size (0 = automatic).

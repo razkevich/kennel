@@ -46,19 +46,15 @@ test("tray: filter, collapse groups, drag a session onto a kennel to file it", a
 test("projects: start one, link a folder, its own floors and sessions, remembered, removable", async ({ page }) => {
   await open(page);
   await expect(page.locator("#spaces .space.on .fname")).toContainText("My work");
+  // A project is a folder: start one from a folder your sessions used.
+  const all = await page.locator("#pack .member").count();
   await page.locator("#addspacebtn").click();
-  await page.locator("#spaces .fedit").fill("Infra");
-  await page.locator("#spaces .fedit").press("Enter");
-  await expect(page.locator("#spaces .space.on .fname")).toContainText("Infra");
-  // A fresh project starts with one floor and no rooms; with no folder it sees every session.
+  await page.locator("#ctxmenu button", { hasText: "📁 infra" }).click();
+  await expect(page.locator("#spaces .space.on .fname")).toContainText("infra");
+  await expect(page.locator("#spaces .space.on .fcount")).toContainText("/code/infra");
+  // A fresh project starts with one floor and no rooms, and only that folder's sessions.
   await expect(page.locator("#floors .floor.on .fname")).toHaveText("🏢 Main");
   await expect.poll(() => page.evaluate(() => window.kennel.app.rooms.length)).toBe(0);
-  const all = await page.locator("#pack .member").count();
-  // Link it to the infra folder: its sessions narrow to that folder.
-  await page.locator("#spaces .space.on button.dots").click();
-  await page.locator("#ctxmenu button", { hasText: "Folder" }).click();
-  await page.locator("#ctxmenu button", { hasText: "📁 infra" }).click();
-  await expect(page.locator("#spaces .space.on .fcount")).toContainText("infra/");
   await expect.poll(() => page.locator("#pack .member").count()).toBeLessThan(all);
   const projects = await page.evaluate(() => [...document.querySelectorAll("#pack .member")].map((m) => window.kennel.app.state.pups[m.dataset.id].project));
   expect(new Set(projects)).toEqual(new Set(["/Users/demo/code/infra"]));
@@ -72,19 +68,19 @@ test("projects: start one, link a folder, its own floors and sessions, remembere
   // Reload: still in Infra.
   await page.goto("/?t=e2e");
   await page.waitForFunction(() => window.kennel && window.kennel.app.state && window.kennel.app.state.spaces.length);
-  await expect(page.locator("#spaces .space.on .fname")).toContainText("Infra");
+  await expect(page.locator("#spaces .space.on .fname")).toContainText("infra");
   // Remove it (it has a kennel, so it asks): we land in My work; undo brings it back.
   page.once("dialog", (d) => { expect(d.message()).toContain("move to My work"); d.accept(); });
   await page.locator("#spaces .space.on button.dots").click();
   await page.locator("#ctxmenu button", { hasText: "Remove project" }).click();
   await expect(page.locator("#spaces .space.on .fname")).toContainText("My work");
-  await expect(page.locator("#spaces .space", { hasText: "Infra" })).toHaveCount(0);
+  await expect(page.locator("#spaces .space", { hasText: "infra" })).toHaveCount(0);
   await page.keyboard.press("Meta+z");
-  await expect(page.locator("#spaces .space", { hasText: "Infra" })).toHaveCount(1);
+  await expect(page.locator("#spaces .space", { hasText: "infra" })).toHaveCount(1);
   // Leave things as they were for the other tests: no Infra, no extra floor or kennel.
-  const id = await page.evaluate(() => window.kennel.app.state.spaces.find((x) => x.name === "Infra").id);
-  await page.locator("#spaces .space", { hasText: "Infra" }).click();
-  await page.waitForFunction(() => window.kennel.app.state.spaces.find((x) => x.key === window.kennel.app.state.space)?.name === "Infra");
+  const id = await page.evaluate(() => window.kennel.app.state.spaces.find((x) => x.name === "infra").id);
+  await page.locator("#spaces .space", { hasText: "infra" }).click();
+  await page.waitForFunction(() => window.kennel.app.state.spaces.find((x) => x.key === window.kennel.app.state.space)?.name === "infra");
   const lobbyId = await page.evaluate(() => window.kennel.app.rooms.find((r) => r.smart === "lobby").kennel);
   const floorId = await page.evaluate(() => window.kennel.app.state.floor);
   await post(page, `/api/kennels/${lobbyId}/delete`, {});
@@ -537,4 +533,76 @@ test("renaming a pup renames the Claude session too", async ({ page }) => {
   page.once("dialog", (d) => d.accept("RATE-LIMITS"));
   await page.mouse.click(pos2.x, pos2.y, { button: "right" });
   await page.locator("#ctxmenu button", { hasText: "Rename" }).click();
+});
+
+test("chats in the navigator: pick one to go to it (switching floors), star it in sync", async ({ page }) => {
+  await open(page);
+  const chats = page.locator("#chats .chat");
+  await expect(chats.first()).toBeVisible();
+  // Active ones come first.
+  const first = await chats.first().getAttribute("data-id");
+  expect(await page.evaluate((i) => window.kennel.app.state.pups[i].status, first)).toMatch(/waiting|working/);
+  // From another floor, picking a chat hops to the floor it stands on and selects it.
+  const f = await post(page, "/api/floors", { Name: "Upstairs", Icon: "🏢", Space: await page.evaluate(() => window.kennel.app.state.space) });
+  await page.reload();
+  await page.waitForFunction(() => window.kennel && window.kennel.app.state);
+  await page.locator("#floors .floor", { hasText: "Upstairs" }).click();
+  await expect(page.locator("#floors .floor.on .fname")).toHaveText("🏢 Upstairs");
+  const id = await pupId(page, "CHECKOUT-V2");
+  await page.locator(`#chats .chat[data-id="${id}"]`).click();
+  await expect(page.locator("#floors .floor.on .fname")).toContainText("Main");
+  await expect.poll(() => page.evaluate(() => window.kennel.app.sel)).toBe(id);
+  await expect.poll(() => page.evaluate((i) => window.kennel.app.ents.has(i), id)).toBe(true);
+  await expect(page.locator("#card")).toContainText("CHECKOUT-V2");
+  // Star from the list; the card and the map agree.
+  const was = await page.evaluate((i) => window.kennel.app.state.pups[i].starred, id);
+  await page.locator(`#chats .chat[data-id="${id}"] .star`).click();
+  await expect.poll(() => page.evaluate((i) => window.kennel.app.state.pups[i].starred, id)).toBe(!was);
+  await expect(page.locator(`#chats .chat[data-id="${id}"] .star`)).toHaveText(was ? "☆" : "★");
+  await expect(page.locator("#card")).toContainText(was ? "☆ Star" : "★ Unstar");
+  await page.locator(`#chats .chat[data-id="${id}"] .star`).click();
+  await expect.poll(() => page.evaluate((i) => window.kennel.app.state.pups[i].starred, id)).toBe(was);
+  await post(page, `/api/floors/${f.ID}/delete`, {});
+});
+
+test("room objects: placed and resized in build mode; a pup dropped on a rug goes under it", async ({ page }) => {
+  await open(page);
+  const key = await page.evaluate(() => window.kennel.app.rooms.find((r) => r.title === "Payments").key);
+  await page.evaluate((k) => {
+    const app = window.kennel.app, st = document.querySelector("#stage"), r = app.rooms.find((x) => x.key === k);
+    app.cam.x = (r.x + r.w / 2) * 32 - st.clientWidth / app.cam.z / 2;
+    app.cam.y = (r.y + r.h / 2) * 32 - st.clientHeight / app.cam.z / 2;
+  }, key);
+  await page.keyboard.press("b");
+  const wall = await page.evaluate((k) => window.kennel.wallPos(k), key);
+  await page.mouse.click(wall.x, wall.y);
+  const panel = page.locator("#build");
+  await panel.locator(".chips button", { hasText: "🧹 Rug" }).click();
+  let at = await page.evaluate((k) => window.kennel.roomPos(k, 0.3, 0.55), key);
+  await page.mouse.click(at.x, at.y);
+  await expect.poll(() => page.evaluate((k) => (window.kennel.app.rooms.find((r) => r.key === k).style.props || []).map((p) => p.kind), key)).toEqual(["rug"]);
+  // Resize it from its corner.
+  const rug = await page.evaluate((k) => window.kennel.app.rooms.find((r) => r.key === k).style.props[0], key);
+  const corner = await page.evaluate(([k, p]) => window.kennel.roomPos(k, p.x + p.w, p.y + p.h), [key, rug]);
+  await page.mouse.move(corner.x, corner.y);
+  await page.mouse.down();
+  await page.mouse.move(corner.x + 60, corner.y + 30, { steps: 6 });
+  await page.mouse.up();
+  await expect.poll(() => page.evaluate((k) => window.kennel.app.rooms.find((r) => r.key === k).style.props[0].w, key)).toBeGreaterThan(rug.w);
+  await page.keyboard.press("b");
+  // File a pup and drop it on the rug: it goes under.
+  const id = await pupId(page, "ONBOARDING");
+  await post(page, `/api/pup/${id}/move`, { kennel: Number(key.slice(7)) });
+  await page.waitForFunction(([k, i]) => window.kennel.app.rooms.find((r) => r.key === k).pups.includes(i) && window.kennel.app.ents.has(i), [key, id]);
+  const from = await page.evaluate((i) => window.kennel.screenPos(i), id);
+  const big = await page.evaluate((k) => window.kennel.app.rooms.find((r) => r.key === k).style.props[0], key);
+  at = await page.evaluate(([k, p]) => window.kennel.roomPos(k, p.x + p.w / 2, p.y + p.h / 2), [key, big]);
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(at.x, at.y, { steps: 8 });
+  await page.mouse.up();
+  await expect.poll(() => page.evaluate((i) => window.kennel.propModeOf(i), id)).toBe("under");
+  // Clean up: back to New, no objects.
+  await post(page, `/api/pup/${id}/move`, { kennel: 0 });
+  await post(page, "/api/room/style", { key, style: {} });
 });

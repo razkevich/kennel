@@ -255,6 +255,7 @@ async function loadState() {
   }
   renderFloors();
   renderProjects();
+  renderChats();
   renderCounts();
   renderPack();
   renderBuilder();
@@ -267,6 +268,12 @@ async function loadState() {
   if (!app.framed && app.rooms.length) {
     app.framed = true;
     frameWorld();
+  }
+  if (app.pendingSel && app.ents.has(app.pendingSel)) {
+    const id = app.pendingSel;
+    app.pendingSel = null;
+    select(id, true);
+    if (!build.on) showTab("term");
   }
 }
 
@@ -423,6 +430,45 @@ function floorTabAt(x, y) {
   return b && b.closest ? b.closest("#floors .floor[data-floor]") : null;
 }
 
+// The navigator's chats: active ones first, then the latest. Picking one is the
+// same as clicking the pup on the map, switching floors when its kennel is elsewhere.
+function renderChats() {
+  const nav = $("#chats");
+  const pups = app.state.tray.map(pupOf).filter(Boolean);
+  const active = pups.filter((p) => p.status === "waiting" || p.status === "working").sort((a, b) => (a.status === "waiting" ? -1 : 0) - (b.status === "waiting" ? -1 : 0) || b.updated - a.updated);
+  const recent = pups.filter((p) => !active.includes(p)).sort((a, b) => b.updated - a.updated).slice(0, Math.max(0, 14 - active.length));
+  const list = [...active, ...recent];
+  const sig = JSON.stringify([app.sel, list.map((p) => [p.id, p.title, p.status, p.starred, p.role])]);
+  if (sig === nav.dataset.sig) return;
+  nav.dataset.sig = sig;
+  nav.innerHTML = "";
+  for (const p of list) {
+    const row = el("div", "chat" + (app.sel === p.id ? " on" : ""));
+    row.dataset.id = p.id;
+    const dot = el("span", "dot");
+    dot.style.background = STATUS[p.status].color;
+    const star = el("button", "star" + (p.starred ? " on" : ""), p.starred ? "★" : "☆");
+    star.title = p.starred ? "unstar" : "star";
+    star.onclick = (e) => { e.stopPropagation(); act("star", p.id); };
+    row.append(dot, el("span", "t", `${ROLES[p.role] ? ROLES[p.role].icon + " " : ""}${p.title}`), star);
+    row.title = `${STATUS[p.status].label}${p.kennel ? " · " + p.kennel : ""} · ${relAge(p.updated)} ago`;
+    row.onclick = () => goToPup(p.id);
+    row.ondblclick = () => act("open", p.id);
+    draggablePup(row, p);
+    nav.appendChild(row);
+  }
+  if (!list.length) nav.appendChild(el("div", "empty", "No chats this week."));
+}
+
+// Select a pup as if clicked on the map, hopping to its kennel's floor when needed.
+function goToPup(id) {
+  if (app.ents.has(id)) { select(id, true); if (!build.on) showTab("term"); return; }
+  const where = (app.state.where || {})[id];
+  if (where && where !== app.state.floor) { app.pendingSel = id; goFloor(where); return; }
+  select(id, false);
+  if (!build.on) showTab("term");
+}
+
 function renderProjects() {
   const nav = $("#spaces");
   if (nav.querySelector("input")) return;
@@ -433,10 +479,11 @@ function renderProjects() {
   for (const sp of app.state.spaces) {
     const row = el("div", "floor space" + (sp.key === app.state.space ? " on" : ""));
     row.dataset.space = sp.key;
-    row.title = (sp.root ? `sessions from ${sp.root}` : "every session") + " · double-click to rename";
+    row.title = sp.root || "no folder yet: it shows every session";
     const text = el("div", "ftext");
-    text.append(el("span", "fname", `${sp.icon || "📁"} ${sp.name}`),
-      el("span", "fcount", `${sp.floors} floor${sp.floors === 1 ? "" : "s"} · ${sp.kennels} kennel${sp.kennels === 1 ? "" : "s"}${sp.root ? " · " + sp.root.split("/").pop() + "/" : ""}`));
+    const folder = el("span", "fcount" + (sp.root ? "" : " nofolder"), sp.root ? sp.root.replace(/^\/Users\/[^/]+/, "~") : "📂 choose its folder");
+    if (!sp.root) folder.onclick = (e) => { e.stopPropagation(); showMenu(e, folderMenu(sp)); };
+    text.append(el("span", "fname", `${sp.icon || "📁"} ${sp.name}`), folder);
     row.append(text, menuButton(() => spaceMenu(sp)));
     row.onclick = () => { if (sp.key !== app.state.space) goSpace(sp.key); };
     row.ondblclick = (e) => { e.preventDefault(); editInline(row, sp.name, "Project name", (name) => editSpace(sp, { name })); };
@@ -456,11 +503,7 @@ async function editSpace(sp, body, quiet) {
 function spaceMenu(sp) {
   const items = [["✎ Rename", () => { const row = document.querySelector(`#spaces .space[data-space="${sp.key}"]`); if (row) editInline(row, sp.name, "Project name", (name) => editSpace(sp, { name })); }]];
   items.push(["🎨 Icon", () => showMenu({ clientX: 220, clientY: 120 }, PROJECT_ICONS.map((ic) => [`${ic}  ${ic === sp.icon ? "✓" : ""}`, () => editSpace(sp, { icon: ic })]))]);
-  items.push(["📂 Folder…", () => showMenu({ clientX: 220, clientY: 120 }, [
-    [`${sp.root ? "" : "✓ "}No folder: every session`, () => editSpace(sp, { root: "" })],
-    ...app.state.projects.slice(0, 20).map((pr) => [`${sp.root === pr.root ? "✓ " : ""}📁 ${pr.name}  (${pr.count})`, () => editSpace(sp, { root: pr.root })]),
-    ["Other folder…", () => { const v = prompt("Folder for this project", sp.root || "~/code/"); if (v !== null) editSpace(sp, { root: v.trim() }); }],
-  ])]);
+  items.push(["📂 Folder…", () => showMenu({ clientX: 220, clientY: 120 }, folderMenu(sp))]);
   items.push(["—"], ["🗑 Remove project", async () => {
     if (app.state.spaces.length < 2) { toast("keep at least one project", true); return; }
     const to = app.state.spaces.find((x) => x.key !== sp.key);
@@ -474,18 +517,33 @@ function spaceMenu(sp) {
   return items;
 }
 
+// The folders a project can be: the ones your sessions ran in, or any other.
+function folderMenu(sp) {
+  return [
+    ...app.state.projects.slice(0, 20).map((pr) => [`${sp.root === pr.root ? "✓ " : ""}📁 ${pr.name}  (${pr.count})`, () => editSpace(sp, { root: pr.root, name: sp.root ? undefined : pr.name })]),
+    ["📂 Other folder…", () => { const v = prompt("Folder for this project", sp.root || "~/code/"); if (v && v.trim()) editSpace(sp, { root: v.trim() }); }],
+  ];
+}
+
 const PROJECT_ICONS = ["📁", "💼", "🧪", "🔥", "🛠", "🌱", "🎮", "📚", "🚀", "💳", "📈", "🎬", "🏠", "🤖"];
 
-function newProject() {
-  const row = el("div", "floor space new");
-  $("#spaces").appendChild(row);
-  editInline(row, "", "New project name", async (name) => {
+// A project is a folder: start one from a folder your sessions used, or any other
+// (kennel creates it if it doesn't exist yet).
+function newProject(e) {
+  const taken = new Set(app.state.spaces.map((x) => x.root).filter(Boolean));
+  const start = async (root, create) => {
     try {
-      const sp = await (await api("/api/spaces", { method: "POST", body: JSON.stringify({ Name: name, Icon: "📁" }) })).json();
+      const sp = await (await api("/api/spaces", { method: "POST", body: JSON.stringify({ Root: root, Icon: "📁", Create: !!create }) })).json();
       goSpace(sp.key);
       toast(`📁 started ${sp.name}`, false, true);
-    } catch (e) { toast(e.message, true); $("#spaces").dataset.sig = ""; renderProjects(); }
-  }, () => { $("#spaces").dataset.sig = ""; renderProjects(); });
+    } catch (err) { toast(err.message, true); }
+  };
+  const rc = $("#addspacebtn").getBoundingClientRect();
+  showMenu(e && e.clientX ? e : { clientX: rc.left, clientY: rc.bottom + 4 }, [
+    ...app.state.projects.filter((pr) => !taken.has(pr.root)).slice(0, 15).map((pr) => [`📁 ${pr.name}  · ${pr.count} session${pr.count === 1 ? "" : "s"}`, () => start(pr.root)]),
+    ["—"],
+    ["📂 Another folder…", () => { const v = prompt("Folder for the new project (created if it doesn't exist)", "~/code/"); if (v && v.trim()) start(v.trim(), true); }],
+  ]);
 }
 
 // Each project has its own space: floors, kennels and smart rooms of its own.
@@ -677,7 +735,7 @@ function select(id, fly) {
     app.flyTo = { x: e.x, y: e.y };
   }
   renderCard();
-  for (const m of document.querySelectorAll(".member")) m.classList.toggle("on", m.dataset.id === id);
+  for (const m of document.querySelectorAll(".member, #chats .chat")) m.classList.toggle("on", m.dataset.id === id);
 }
 
 function renderCard() {
@@ -1090,6 +1148,7 @@ async function openTranscript(id) {
     }
     $("#transcript").hidden = false;
     $("#tr-find").value = "";
+    body.scrollTop = body.scrollHeight;
   } catch (e) { toast(e.message, true); }
 }
 $("#tr-close").onclick = () => ($("#transcript").hidden = true);
@@ -1151,6 +1210,10 @@ function setTool(t) {
 
 canvas.addEventListener("mousedown", (e) => {
   hideMenu();
+  // The canvas can't take focus, so a filter box or the terminal would keep it and
+  // swallow Delete and the other map keys.
+  const ae = document.activeElement;
+  if (ae && ae !== document.body && ["INPUT", "TEXTAREA", "SELECT", "BUTTON"].includes(ae.tagName)) ae.blur();
   if (e.button !== 0 && e.button !== 1) return;
   const { sx, sy } = canvasPoint(e);
   const w = screenToWorld(sx, sy);
@@ -1158,6 +1221,13 @@ canvas.addEventListener("mousedown", (e) => {
   if (!pan && build.on && !build.carry) {
     const f = fixtureAt(w.x, w.y);
     if (f) { build.drag = { fixture: f, moved: false }; return; }
+    const pa = !entityAt(sx, sy) && propAt(w);
+    if (pa) {
+      const b = propBox(pa.room, pa.prop);
+      build.prop = pa.prop;
+      build.drag = { prop: pa.prop, room: pa.room, corner: pa.corner, dx: w.x - b.x, dy: w.y - b.y, moved: false };
+      return;
+    }
   }
   if (!pan && app.tool === "room") {
     drag = { kind: "create", x0: Math.round(w.x), y0: Math.round(w.y), x1: Math.round(w.x), y1: Math.round(w.y), sx: e.clientX, sy: e.clientY, moved: false };
@@ -1189,6 +1259,18 @@ canvas.addEventListener("mousedown", (e) => {
 window.addEventListener("mousemove", (e) => {
   const { sx, sy } = canvasPoint(e);
   const w = screenToWorld(sx, sy);
+  if (build.drag && build.drag.prop) {
+    const d = build.drag, pr = d.prop, box = interior(d.room);
+    d.moved = true;
+    if (d.corner) {
+      pr.w = Math.max(0.03, Math.min(1 - pr.x, (w.x - box.x) / box.w - pr.x));
+      pr.h = Math.max(0.05, Math.min(1 - pr.y, (w.y - box.y) / box.h - pr.y));
+    } else {
+      pr.x = Math.max(0, Math.min(1 - pr.w, (w.x - d.dx - box.x) / box.w));
+      pr.y = Math.max(0, Math.min(1 - pr.h, (w.y - d.dy - box.y) / box.h));
+    }
+    return;
+  }
   if (build.drag) {
     const d = build.drag;
     d.moved = true;
@@ -1243,6 +1325,13 @@ window.addEventListener("mousemove", (e) => {
 });
 
 window.addEventListener("mouseup", async (e) => {
+  if (build.drag && build.drag.prop) {
+    const d = build.drag;
+    build.drag = null;
+    build.room = d.room.key;
+    if (d.moved) saveStyle(d.room, true); else renderBuilder();
+    return;
+  }
   if (build.drag) {
     const d = build.drag;
     build.drag = null;
@@ -1287,6 +1376,7 @@ function click(sx, sy, w, e) {
     if (hit) { select(hit.id, false); return; }
     if (r && build.carry) placeIn(r, build.carry, w);
     else if (r) { build.room = r.key; app.sel = "room:" + r.key; renderBuilder(); renderCard(); }
+    else { build.room = null; app.sel = null; renderBuilder(); renderCard(); }
     return;
   }
   const hit = entityAt(sx, sy);
@@ -1334,6 +1424,16 @@ async function saveRoomBox(r, sized) {
   const pos = { x: r.x, y: r.y };
   if (sized) { pos.w = r.w; pos.h = r.h; } else if (prev.w) { pos.w = prev.w; pos.h = prev.h; }
   st.pos[String(app.state.floor)] = pos;
+  // Rooms may overlap: pin every other room where it stands, so moving or resizing
+  // one never makes the auto layout shuffle the rest.
+  const fl = String(app.state.floor);
+  for (const o of app.rooms) {
+    if (o === r || (o.style && o.style.pos && o.style.pos[fl])) continue;
+    const ost = styleOf(o);
+    ost.pos = ost.pos || {};
+    ost.pos[fl] = { x: o.x, y: o.y };
+    await api("/api/room/style", { method: "POST", body: JSON.stringify({ key: o.key, style: ost }) }).catch(() => {});
+  }
   await saveStyle(r);
   if (build.on) { build.room = r.key; renderBuilder(); }
 }
@@ -1478,6 +1578,14 @@ canvas.addEventListener("contextmenu", (e) => {
       saveStyle(f.room).then(renderBuilder);
       return;
     }
+    const pa = propAt(w);
+    if (pa) {
+      const st = styleOf(pa.room);
+      st.props = st.props.filter((x) => x !== pa.prop);
+      build.prop = null;
+      saveStyle(pa.room).then(renderBuilder);
+      return;
+    }
   }
   const hit = entityAt(sx, sy);
   const r = roomAt(w.x, w.y);
@@ -1533,6 +1641,7 @@ function roomMenu(r) {
 // re-attaches when it already runs here, and otherwise shows its latest messages.
 const convo = { id: null, msgs: [], sig: "" };
 let termUI = { id: null, xterm: null, fit: null, es: null, q: Promise.resolve(), ro: null };
+let focusTermNext = null; // the session whose terminal should take the keyboard when it attaches
 
 function showTerm() {
   const box = $("#term");
@@ -1660,6 +1769,7 @@ async function startTerm(p) {
   const cols = Math.max(40, Math.floor((box.clientWidth - 16) / 7.6)), rows = Math.max(12, Math.floor((box.clientHeight - 60) / 17));
   try {
     await api(`/api/term/${p.id}/start`, { method: "POST", body: JSON.stringify({ cols, rows }) });
+    focusTermNext = p.id;
     await loadState();
     showTerm();
   } catch (e) { toast(e.message, true); }
@@ -1680,12 +1790,15 @@ function attachTerm(p) {
   bar.append(el("b", "", `🖥 ${p.title}`), el("span", "st here", "running here"), tab, stop);
   const screen = el("div", "screen");
   box.append(bar, screen);
-  const { cols, rows } = mountXterm(p.id, screen);
+  const { cols, rows } = mountXterm(p.id, screen, focusTermNext === p.id);
+  focusTermNext = null;
   api(`/api/term/${p.id}/resize`, { method: "POST", body: JSON.stringify({ cols, rows }) }).catch(() => {});
   streamTerm(p.id);
 }
 
-function mountXterm(id, screen) {
+// focus is only for a terminal the user just started; one attached by selecting a pup
+// on the map must leave the keyboard to the map (Delete, arrows…).
+function mountXterm(id, screen, focus) {
   const x = new Terminal({ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 12.5, cursorBlink: true, scrollback: 5000,
     theme: { background: "#1e1e2e", foreground: "#cdd6f4", cursor: "#f5e0dc", selectionBackground: "#585b70" } });
   const fit = new FitAddon.FitAddon();
@@ -1698,7 +1811,7 @@ function mountXterm(id, screen) {
   x.onResize(({ cols, rows }) => api(`/api/term/${id}/resize`, { method: "POST", body: JSON.stringify({ cols, rows }) }).catch(() => {}));
   termUI.ro = new ResizeObserver(() => { try { fit.fit(); } catch (_) {} });
   termUI.ro.observe(screen);
-  x.focus();
+  if (focus) x.focus();
   return { cols: x.cols, rows: x.rows };
 }
 
@@ -1908,7 +2021,8 @@ window.addEventListener("keydown", (e) => {
   if ((e.key === "/" && !typing) || ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f")) { e.preventDefault(); $("#q").focus(); $("#q").select(); return; }
   if (typing) return;
   if (e.key === "Escape" && lib.open) { closeLibrary(); return; }
-  if (e.key === "Escape") { $("#sort").hidden = true; $("#floorsheet").hidden = true; hideMenu(); app.multi.clear(); setTool("select"); $("#transcript").hidden = true; app.sel = null; $("#card").hidden = true; if (build.carry) { build.carry = null; renderBuilder(); } return; }
+  if (e.key === "Escape" && build.carry) { build.carry = null; renderBuilder(); return; }
+  if (e.key === "Escape") { $("#sort").hidden = true; $("#floorsheet").hidden = true; hideMenu(); app.multi.clear(); setTool("select"); $("#transcript").hidden = true; app.sel = null; $("#card").hidden = true; build.carry = null; build.room = null; renderBuilder(); return; }
   if (e.key === " " && !e.repeat) { e.preventDefault(); spaceHeld = true; canvas.style.cursor = "grab"; return; }
   if (e.key === "v" || e.key === "1") { setTool("select"); return; }
   if (e.key === "h" || e.key === "2") { setTool("hand"); return; }
@@ -1945,7 +2059,7 @@ function step(dt) {
     if (e.kind !== "pup") continue;
     const p = pupOf(e.id);
     if (!p || e.dragging) continue;
-    const wanders = p.status === "idle" || p.status === "done";
+    const wanders = (p.status === "idle" || p.status === "done") && !propMode(e);
     if (wanders && Math.hypot(e.tx - e.x, e.ty - e.y) < 0.05 && Math.random() < dt * 0.5) {
       e.tx = e.home.x + (Math.random() - 0.5) * 1.8;
       e.ty = e.home.y + (Math.random() - 0.5) * 1.0;
@@ -2127,6 +2241,7 @@ function drawRoom(r) {
     for (const [x, y] of [[x0 - 4, y0], [x0 + W, y0]]) px(x, y + wallH - 24, 4, H - wallH + 24, PAL.picket);
   }
   autoDecor(r, x0, y0 + wallH, W, H - wallH);
+  drawProps(r);
   // Room name: a translucent pill on the back wall, clear of the pups' name tags.
   const label = (r.icon ? r.icon + " " : "") + r.title;
   ctx.font = "600 14px Inter, system-ui, sans-serif";
@@ -2168,6 +2283,109 @@ function drawRoom(r) {
 }
 
 // Every room gets a little furniture so the office feels lived in; user decor comes on top.
+// ---------- room objects: things pups go under, inside or on ----------
+const PROPS = {
+  rug: { icon: "🧹", name: "Rug", mode: "under", w: 0.34, h: 0.32, hint: "pups dropped on it go under the rug" },
+  doghouse: { icon: "🏠", name: "Doghouse", mode: "inside", w: 0.22, h: 0.4, hint: "pups dropped in it peek out of the door" },
+  couch: { icon: "🛋", name: "Couch", mode: "on", w: 0.36, h: 0.24, hint: "pups dropped on it sit together" },
+  divider: { icon: "🚧", name: "Divider", mode: "none", w: 0.03, h: 0.9, hint: "a fence to split the room" },
+};
+
+// Furniture is an object too: pups go in a basket, sit on chairs, desks, books and the
+// piano, and stand next to the rest.
+const FURNITURE_MODE = { basket: "inside", chair: "on", desk: "on", books: "on", piano: "on" };
+function propDef(kind) {
+  if (PROPS[kind]) return PROPS[kind];
+  const d = (catalog.decor || []).find((x) => x.key === kind);
+  return d ? { icon: d.icon, name: d.name, mode: FURNITURE_MODE[kind] || "none", w: 0.14, h: 0.22, emoji: true } : null;
+}
+
+// A prop's box in world tiles (its x, y are its top-left corner in 0..1 interior coordinates).
+function propBox(r, pr) {
+  const b = interior(r);
+  return { x: b.x + pr.x * b.w, y: b.y + pr.y * b.h, w: pr.w * b.w, h: pr.h * b.h };
+}
+
+// The prop a pup was put in, judged by where it was placed.
+function propOf(e) {
+  const r = e.room;
+  if (!r || !r.style || !r.style.props || !e.home) return null;
+  for (const pr of r.style.props) {
+    const b = propBox(r, pr);
+    if (e.home.x >= b.x && e.home.x <= b.x + b.w && e.home.y >= b.y && e.home.y <= b.y + b.h + 0.4) return pr;
+  }
+  return null;
+}
+const propMode = (e) => { const pr = propOf(e); const def = pr && propDef(pr.kind); return def && def.mode !== "none" ? def.mode : null; };
+
+function drawProps(r) {
+  for (const pr of (r.style && r.style.props) || []) {
+    const b = propBox(r, pr);
+    const x = b.x * TILE, y = b.y * TILE, w = b.w * TILE, h = b.h * TILE;
+    const inside = [...app.ents.values()].filter((e) => e.room === r && propOf(e) === pr).length;
+    switch (pr.kind) {
+      case "rug":
+        ctx.fillStyle = "#c86b6b"; roundRect(x, y, w, h, 10); ctx.fill();
+        ctx.strokeStyle = "#f2d0a0"; ctx.lineWidth = 3; roundRect(x + 6, y + 6, w - 12, h - 12, 7); ctx.stroke();
+        ctx.strokeStyle = "#9e4d4d"; ctx.lineWidth = 2; roundRect(x + 12, y + 12, w - 24, h - 24, 5); ctx.stroke();
+        for (let fx = x + 4; fx < x + w - 4; fx += 6) { px(fx, y - 4, 2, 4, "#f2d0a0"); px(fx, y + h, 2, 4, "#f2d0a0"); }
+        break;
+      case "doghouse": {
+        const roof = Math.min(h * 0.38, 40);
+        px(x, y + roof, w, h - roof, "#c98a52");
+        for (let ly = y + roof + 8; ly < y + h; ly += 9) px(x, ly, w, 1, "#a86e3c");
+        ctx.fillStyle = "#c0473e"; ctx.beginPath(); ctx.moveTo(x - 6, y + roof + 2); ctx.lineTo(x + w / 2, y); ctx.lineTo(x + w + 6, y + roof + 2); ctx.closePath(); ctx.fill();
+        const dw = Math.min(w * 0.55, 46), dh = (h - roof) * 0.7;
+        ctx.fillStyle = "#3a2a20"; ctx.beginPath(); ctx.moveTo(x + w / 2 - dw / 2, y + h); ctx.lineTo(x + w / 2 - dw / 2, y + h - dh + dw / 2);
+        ctx.arc(x + w / 2, y + h - dh + dw / 2, dw / 2, Math.PI, 0); ctx.lineTo(x + w / 2 + dw / 2, y + h); ctx.closePath(); ctx.fill();
+        break;
+      }
+      case "couch":
+        px(x, y, w, h * 0.45, "#5f7fd6"); px(x, y + h * 0.4, w, h * 0.45, "#7896e6");
+        px(x - 6, y + h * 0.15, 10, h * 0.75, "#4c6bc2"); px(x + w - 4, y + h * 0.15, 10, h * 0.75, "#4c6bc2");
+        px(x + 4, y + h * 0.85, 6, h * 0.15, "#3b4f8f"); px(x + w - 10, y + h * 0.85, 6, h * 0.15, "#3b4f8f");
+        break;
+      default: {
+        const def = propDef(pr.kind);
+        if (!def) break;
+        ctx.font = `${Math.max(14, Math.min(w, h) * 0.9)}px system-ui`;
+        ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillStyle = "#000";
+        ctx.fillText(def.icon, x + w / 2, y + h / 2);
+        ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+        break;
+      }
+      case "divider": {
+        const vertical = h >= w;
+        if (vertical) { for (let fy = y; fy < y + h; fy += 12) px(x + w / 2 - 3, fy, 6, 10, PAL.picket); px(x + w / 2 - 1, y, 2, h, PAL.picketShade); }
+        else { for (let fx = x; fx < x + w; fx += 12) px(fx, y + h / 2 - 9, 6, 18, PAL.picket); px(x, y + h / 2 - 1, w, 2, PAL.picketShade); }
+        break;
+      }
+    }
+    const def = propDef(pr.kind);
+    if (inside && def && (def.mode === "under" || def.mode === "inside")) {
+      ctx.font = "700 11px Inter, system-ui";
+      const label = `${def.icon} ${inside}`;
+      const tw = ctx.measureText(label).width + 12;
+      ctx.fillStyle = "#1f2233d9"; roundRect(x + w - tw - 2, y + 4, tw, 18, 9); ctx.fill();
+      ctx.fillStyle = "#fff"; ctx.fillText(label, x + w - tw + 4, y + 17);
+    }
+    if (build.on && build.prop === pr) {
+      ctx.strokeStyle = "#f2b01e"; ctx.lineWidth = 2; ctx.setLineDash([6, 4]); ctx.strokeRect(x - 3, y - 3, w + 6, h + 6); ctx.setLineDash([]);
+      ctx.fillStyle = "#fff"; ctx.fillRect(x + w - 2, y + h - 2, 10, 10); ctx.strokeRect(x + w - 2, y + h - 2, 10, 10);
+    }
+  }
+}
+
+// In build mode: the prop (and whether its resize corner) under a point.
+function propAt(w) {
+  for (const r of app.rooms) for (const pr of ((r.style && r.style.props) || []).slice().reverse()) {
+    const b = propBox(r, pr);
+    if (Math.abs(w.x - (b.x + b.w)) < 0.4 && Math.abs(w.y - (b.y + b.h)) < 0.4) return { room: r, prop: pr, corner: true };
+    if (w.x >= b.x && w.x <= b.x + b.w && w.y >= b.y && w.y <= b.y + b.h) return { room: r, prop: pr, corner: false };
+  }
+  return null;
+}
+
 function autoDecor(r, x0, y0, W, H) {
   if ((r.style && (r.style.decor || []).length) || build.on && build.room === r.key && false) return;
   const f = r.look.Floor || " ";
@@ -2242,12 +2460,12 @@ function bubble(x, y, text, bg = "#ffffff", fg = "#282d4f") {
 }
 
 // Name tag: dark pill with a status dot, above the avatar — Gather's signature look.
-function nameTag(x, y, text, selected, dot) {
+function nameTag(x, y, text, selected, dot, gold) {
   ctx.font = "600 11.5px Inter, system-ui";
   const t = text.length > 14 ? text.slice(0, 13) + "…" : text;
   const tw = ctx.measureText(t).width;
   const w = tw + (dot ? 22 : 14);
-  ctx.fillStyle = selected ? "#3d47db" : "#1f2233e6"; roundRect(x - w / 2, y, w, 18, 9); ctx.fill();
+  ctx.fillStyle = selected ? "#3d47db" : gold ? "#b07d0a" : "#1f2233e6"; roundRect(x - w / 2, y, w, 18, 9); ctx.fill();
   let tx = x - w / 2 + 7;
   if (dot) { ctx.fillStyle = dot; ctx.beginPath(); ctx.arc(tx + 3, y + 9, 3.5, 0, 7); ctx.fill(); tx += 10; }
   ctx.fillStyle = "#fff"; ctx.fillText(t, tx, y + 13);
@@ -2285,6 +2503,14 @@ const GEAR = {
 function drawPup(e) {
   const p = pupOf(e.id);
   if (!p) return;
+  const mode = propMode(e);
+  if (mode === "under") {
+    const x = e.x * TILE, y = e.y * TILE;
+    ctx.fillStyle = "#a95757"; ctx.beginPath(); ctx.ellipse(x, y - 6, 18, 9, 0, Math.PI, 0); ctx.fill();
+    ctx.fillStyle = "#b86262"; ctx.beginPath(); ctx.ellipse(x - 4, y - 9, 8, 4, 0, Math.PI, 0); ctx.fill();
+    if (app.sel === e.id) nameTag(x, y - 38, p.title, true, STATUS_DOT[p.status]);
+    return;
+  }
   const s = 3;
   const x = e.x * TILE, y = e.y * TILE;
   const selected = app.sel === e.id;
@@ -2300,13 +2526,23 @@ function drawPup(e) {
   const w = grid[0].length * s, h = grid.length * s;
   ctx.save();
   if (e.dir < 0) { ctx.translate(x * 2, 0); ctx.scale(-1, 1); }
+  // In a doghouse only the head shows, peeking out.
+  if (mode === "inside") { ctx.beginPath(); ctx.rect(x - w / 2 - 4, y - h + dy - 12, w + 8, 8 * s + 12); ctx.clip(); }
   drawPixels(ctx, grid, dogPalette(p.fur, p.status === "offline", p.agent), x - w / 2, y - h + dy, s);
   const gear = GEAR[p.role];
   if (gear) drawPixels(ctx, gear[0], gear[1], x - w / 2 + gear[2] * s, y - h + dy + gear[3] * s, s);
   ctx.restore();
   if (selected) { ctx.strokeStyle = "#3d47db"; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.ellipse(x, y + 2, 23, 7, 0, 0, 7); ctx.stroke(); }
   const top = y - h + dy;
-  nameTag(x, top - 24, (p.starred ? "★ " : "") + p.title, selected, STATUS_DOT[p.status]);
+  nameTag(x, top - 24, (p.starred ? "★ " : "") + p.title, selected, STATUS_DOT[p.status], p.starred);
+  if (p.starred) {
+    const sx = x - 26, sy = top + 2, spin = Math.sin(app.t * 2 + e.phase) * 0.15;
+    ctx.save(); ctx.translate(sx, sy); ctx.rotate(spin);
+    ctx.fillStyle = "#ffd54a"; ctx.strokeStyle = "#b07d0a"; ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (let i = 0; i < 10; i++) { const r = i % 2 ? 4 : 9, a = -Math.PI / 2 + (i * Math.PI) / 5; ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r); }
+    ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore();
+  }
   const bx = x + 30, by = top + 12;
   if (app.fed && app.fed[e.id] && app.t - app.fed[e.id] < 3) bubble(bx, by, "🦴 nom");
   else if (p.status === "waiting") bubble(bx, by, Math.floor(app.t * 3) % 2 ? "!" : "!!", "#fff4cf");
@@ -2653,6 +2889,15 @@ function carriable(node, item) {
 
 function placeIn(r, item, w) {
   const box = interior(r);
+  if (item.type === "prop") {
+    const def = propDef(item.kind);
+    const st = styleOf(r);
+    const pr = { kind: item.kind, w: def.w, h: def.h,
+      x: Math.max(0, Math.min(1 - def.w, (w.x - box.x) / box.w - def.w / 2)), y: Math.max(0, Math.min(1 - def.h, (w.y - box.y) / box.h - def.h / 2)) };
+    (st.props = st.props || []).push(pr);
+    build.room = r.key; build.prop = pr; build.carry = null;
+    return saveStyle(r).then(renderBuilder);
+  }
   const placed = { kind: item.kind, x: Math.max(0, Math.min(1, (w.x - box.x) / box.w)), y: Math.max(0, Math.min(1, (w.y + 0.4 - box.y) / box.h)) };
   const st = styleOf(r);
   if (item.type === "decor") (st.decor = st.decor || []).push(placed);
@@ -2702,6 +2947,12 @@ function renderBuilder() {
     return;
   }
   const st = styleOf(r);
+  if ((st.decor || []).length && catalog.decor) {
+    st.props = st.props || [];
+    for (const d of st.decor) st.props.push({ kind: d.kind, w: 0.14, h: 0.22, x: Math.max(0, Math.min(0.86, d.x - 0.07)), y: Math.max(0, Math.min(0.78, d.y - 0.22)) });
+    st.decor = [];
+    saveStyle(r, true);
+  }
   box.appendChild(el("div", "roomname", `${r.icon} ${r.title}`));
 
   box.appendChild(el("h3", "", "templates"));
@@ -2738,13 +2989,34 @@ function renderBuilder() {
   }
   box.appendChild(wl);
 
+  box.appendChild(el("h3", "", "color"));
+  const cl = el("div", "chips");
+  for (const c of ["", "#fab387", "#f9e2af", "#a6e3a1", "#94e2d5", "#89dceb", "#89b4fa", "#b4befe", "#cba6f7", "#f5c2e7", "#f38ba8", "#eba0ac", "#a6adc8"]) {
+    const b = el("button", "swatch color" + ((st.color || "") === c ? " on" : ""), c ? "" : "auto");
+    if (c) b.style.background = c;
+    b.title = c || "the room's own color";
+    b.onclick = () => { st.color = c; saveStyle(r).then(renderBuilder); };
+    cl.appendChild(b);
+  }
+  box.appendChild(cl);
+
+  box.appendChild(el("h3", "", "objects: click one, then click in the room · drag a pup onto it"));
+  const ob = el("div", "chips");
+  for (const [k, def] of Object.entries(PROPS)) {
+    const c = chip(`${def.icon} ${def.name}`, false, () => { build.carry = build.carry && build.carry.kind === k ? null : { type: "prop", kind: k }; renderBuilder(); }, build.carry && build.carry.kind === k ? "carry" : "");
+    c.title = def.hint + " · drag its corner to resize, right-click to remove";
+    carriable(c, { type: "prop", kind: k });
+    ob.appendChild(c);
+  }
+  box.appendChild(ob);
+
   box.appendChild(el("h3", "", "furniture — pick one, then click in the room"));
   const dc = el("div", "chips");
   for (const d of catalog.decor) {
     const b = el("button", "decor" + (build.carry && build.carry.kind === d.key ? " carry" : ""), d.icon);
-    b.title = d.name;
-    b.onclick = () => { build.carry = build.carry && build.carry.kind === d.key ? null : { type: "decor", kind: d.key }; renderBuilder(); };
-    carriable(b, { type: "decor", kind: d.key });
+    b.onclick = () => { build.carry = build.carry && build.carry.kind === d.key ? null : { type: "prop", kind: d.key }; renderBuilder(); };
+    b.title = `${d.name}${FURNITURE_MODE[d.key] ? (FURNITURE_MODE[d.key] === "inside" ? ": pups go inside" : ": pups sit on it") : ""} · drag its corner to resize`;
+    carriable(b, { type: "prop", kind: d.key });
     dc.appendChild(b);
   }
   box.appendChild(dc);
@@ -3261,6 +3533,7 @@ async function renderArt() {
 // Exposed for end-to-end tests: screen positions of entities.
 window.kennel = {
   app,
+  propModeOf: (id) => { const e = app.ents.get(id); return e ? propMode(e) : null; },
   // The panel terminal's text, from its buffer (painting can lag in a hidden window).
   termText: () => {
     const b = termUI.xterm && termUI.xterm.buffer.active;

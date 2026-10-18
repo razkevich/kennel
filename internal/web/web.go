@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"sort"
@@ -399,7 +400,9 @@ type StateJSON struct {
 	Rooms     []RoomJSON         `json:"rooms"`
 	Pups      map[string]PupJSON `json:"pups"`
 	// Tray lists recent and live pups from every floor, newest first, for the side panel.
-	Tray     []string             `json:"tray"`
+	Tray []string `json:"tray"`
+	// Where maps each pup to the floor it stands on in this project, for jumping to it.
+	Where    map[string]int64     `json:"where"`
 	Projects []ProjectJSON        `json:"projects"`
 	Things   map[string]ThingJSON `json:"things"`
 	Counts   map[string]int       `json:"counts"`
@@ -505,7 +508,7 @@ func furColor(id, c string) string {
 func (s *Server) State(space string, fl int64) StateJSON {
 	st := StateJSON{Version: s.Version(), Now: s.App.Now().UnixMilli(), Pups: map[string]PupJSON{}, Things: map[string]ThingJSON{},
 		Counts: map[string]int{}, Demo: s.App.Cfg.Demo, Floors: []FloorJSON{}, Tray: []string{}, Projects: []ProjectJSON{}, Rooms: []RoomJSON{},
-		Prefs: map[string]string{}, Spaces: []SpaceJSON{}}
+		Prefs: map[string]string{}, Spaces: []SpaceJSON{}, Where: map[string]int64{}}
 	space, floors, _ := s.App.OpenSpace(space)
 	st.Space = space
 	if sp, ok := s.App.Space(space); ok {
@@ -526,6 +529,9 @@ func (s *Server) State(space string, fl int64) StateJSON {
 			fj.Kennels++
 			fj.Pups += len(r.Pups)
 			for _, p := range r.Pups {
+				if _, seen := st.Where[p.ID]; !seen {
+					st.Where[p.ID] = f.ID
+				}
 				if p.Status == claude.Waiting {
 					fj.Waiting++
 				}
@@ -1627,17 +1633,36 @@ func (s *Server) handleFloorOrder(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAddSpace(w http.ResponseWriter, r *http.Request) {
-	var sp store.Space
+	var sp struct {
+		store.Space
+		// Create makes the folder when it doesn't exist (for a brand-new project).
+		Create bool
+	}
 	if err := json.NewDecoder(r.Body).Decode(&sp); err != nil {
 		fail(w, err, http.StatusBadRequest)
 		return
 	}
 	sp.ID = 0
+	// A project is a folder: named after it unless told otherwise, created if missing.
+	sp.Root = app.ExpandHome(strings.TrimSpace(sp.Root))
+	if sp.Root == "" {
+		fail(w, errors.New("a project needs a folder"), http.StatusBadRequest)
+		return
+	}
+	if sp.Create {
+		if err := os.MkdirAll(sp.Root, 0o755); err != nil {
+			fail(w, err, http.StatusBadRequest)
+			return
+		}
+	}
 	sp.Name = strings.TrimSpace(sp.Name)
+	if sp.Name == "" {
+		sp.Name = filepath.Base(sp.Root)
+	}
 	if sp.Icon == "" {
 		sp.Icon = "📁"
 	}
-	if err := s.App.SaveSpace(&sp); err != nil {
+	if err := s.App.SaveSpace(&sp.Space); err != nil {
 		fail(w, err, http.StatusBadRequest)
 		return
 	}
