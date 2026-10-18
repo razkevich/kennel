@@ -348,3 +348,44 @@ func TestThingsOnMapAndInJobs(t *testing.T) {
 		t.Fatal("new thing not saved")
 	}
 }
+
+func TestBuildRoomFromTheTUI(t *testing.T) {
+	h := newHarness(t, opener.Print)
+	if h.selectedTitle() != "COST-REPORT" {
+		t.Fatalf("start in the yard, got %q", h.selectedTitle())
+	}
+	h.key("B")
+	h.contains("build 🌳 The Yard", "template · 🚨 On-call room", "shape · 🏢 Office")
+	h.typeText("add")
+	h.contains("add 🚪 Spawn door", "add 🔔 Bell", "add 🌀 Portal")
+	for range 3 {
+		h.send(tea.KeyMsg{Type: tea.KeyBackspace})
+	}
+	h.typeText("on-call")
+	h.key("enter")
+	st := h.app.Style("yard")
+	if st.Shape != "office" || st.Floor != "tiles" || len(st.OfKind("door")) != 1 {
+		t.Fatalf("template not applied: %+v", st)
+	}
+	h.contains("The Yard 6", "🔔🚪", "🧯☕📋")
+
+	h.key("B")
+	h.typeText("add 📌")
+	h.key("enter")
+	h.contains("Pin board")
+	h.typeText("text=runbook lives in docs/oncall.md")
+	h.key("enter")
+	h.contains("📌 runbook lives in docs/oncall.md")
+
+	h.key("n")
+	if !strings.Contains(h.screen(), "claude -n ONCALL") {
+		t.Fatalf("door should spawn ONCALL:\n%s", h.screen())
+	}
+
+	h.key("B")
+	h.typeText("reset")
+	h.key("enter")
+	if len(h.app.Style("yard").Blocks) != 0 {
+		t.Fatal("reset should clear the room")
+	}
+}

@@ -14,6 +14,7 @@ import (
 	"github.com/razkevich/kennel/internal/app"
 	"github.com/razkevich/kennel/internal/ask"
 	"github.com/razkevich/kennel/internal/claude"
+	"github.com/razkevich/kennel/internal/floor"
 	"github.com/razkevich/kennel/internal/gear"
 	"github.com/razkevich/kennel/internal/indexer"
 	"github.com/razkevich/kennel/internal/opener"
@@ -187,13 +188,20 @@ func (m *Model) syncCmd() tea.Cmd {
 			done.Store(int64(p.Done))
 			total.Store(int64(p.Total))
 		})
+		if n := floor.Sweep(a); n > 0 {
+			p.Changed += n
+		}
 		return syncMsg{p: p, err: err}
 	}
 }
 
 func (m Model) refreshLiveCmd(withHerdr bool) tea.Cmd {
 	a := m.app
-	return func() tea.Msg { return liveMsg{transitions: a.RefreshLive(withHerdr)} }
+	return func() tea.Msg {
+		ts := a.RefreshLive(withHerdr)
+		floor.Ring(a, ts)
+		return liveMsg{transitions: ts}
+	}
 }
 
 func (m *Model) setToast(text string, isErr bool) {
@@ -454,7 +462,7 @@ func (m *Model) open(p *pack.Pup, fork, remote bool) tea.Cmd {
 		return nil
 	}
 	_ = m.app.MarkSeen(p.ID)
-	t := m.app.Target(p, fork, remote)
+	t := floor.TargetFor(m.app, p, fork, remote)
 	if err := m.app.CheckCwd(t.Cwd); err != nil {
 		return toast(p.Title()+": "+err.Error(), true)
 	}

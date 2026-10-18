@@ -17,16 +17,19 @@ import (
 	"net/http"
 	"os/exec"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/razkevich/kennel/internal/app"
 	"github.com/razkevich/kennel/internal/ask"
+	"github.com/razkevich/kennel/internal/blocks"
 	"github.com/razkevich/kennel/internal/claude"
 	"github.com/razkevich/kennel/internal/floor"
 	"github.com/razkevich/kennel/internal/opener"
 	"github.com/razkevich/kennel/internal/pack"
+	"github.com/razkevich/kennel/internal/store"
 	"github.com/razkevich/kennel/internal/things"
 )
 
@@ -100,9 +103,10 @@ func (s *Server) pump(ctx context.Context) {
 		case <-t.C:
 		}
 		n++
-		s.App.RefreshLive(s.Herdr && n%2 == 0)
+		floor.Ring(s.App, s.App.RefreshLive(s.Herdr && n%2 == 0))
 		if n%3 == 0 {
 			_, _ = s.App.Sync(ctx, nil)
+			floor.Sweep(s.App)
 		}
 		s.touch()
 	}
@@ -129,6 +133,16 @@ func (s *Server) fingerprint() uint64 {
 	for _, k := range s.App.Kennels() {
 		fmt.Fprintf(h, "k%d|%s;", k.ID, k.Name)
 	}
+	styles := s.App.Styles()
+	keys := make([]string, 0, len(styles))
+	for k := range styles {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		b, _ := json.Marshal(styles[k])
+		fmt.Fprintf(h, "s%s|%s;", k, b)
+	}
 	return h.Sum64()
 }
 
@@ -150,6 +164,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/ask", s.guard(s.handleAsk))
 	mux.HandleFunc("POST /api/pup/{id}/{action}", s.guard(s.handlePupAction))
 	mux.HandleFunc("POST /api/thing/{action}", s.guard(s.handleThingAction))
+	mux.HandleFunc("GET /api/catalog", s.guard(s.handleCatalog))
+	mux.HandleFunc("POST /api/room/{action}", s.guard(s.handleRoom))
 	return s.hostCheck(mux)
 }
 
@@ -240,14 +256,17 @@ type ThingJSON struct {
 }
 
 type RoomJSON struct {
-	Key    string    `json:"key"`
-	Title  string    `json:"title"`
-	Icon   string    `json:"icon"`
-	Color  string    `json:"color"`
-	Look   pack.Look `json:"look"`
-	Blurb  string    `json:"blurb"`
-	Pups   []string  `json:"pups"`
-	Things []string  `json:"things"`
+	Key     string      `json:"key"`
+	Style   store.Style `json:"style"`
+	MinCols int         `json:"minCols"`
+	MinRows int         `json:"minRows"`
+	Title   string      `json:"title"`
+	Icon    string      `json:"icon"`
+	Color   string      `json:"color"`
+	Look    pack.Look   `json:"look"`
+	Blurb   string      `json:"blurb"`
+	Pups    []string    `json:"pups"`
+	Things  []string    `json:"things"`
 }
 
 type StateJSON struct {
@@ -309,7 +328,7 @@ func (s *Server) State(fl int) StateJSON {
 		st.Counts[statusNames[p.Status]]++
 	}
 	for _, r := range floor.Rooms(s.App, fl) {
-		rj := RoomJSON{Key: r.Key, Title: r.Title, Icon: r.Icon, Color: r.Color, Look: r.Look, Blurb: r.Blurb, Pups: []string{}, Things: []string{}}
+		rj := RoomJSON{Key: r.Key, Style: r.Style, MinCols: r.MinCols, MinRows: r.MinRows, Title: r.Title, Icon: r.Icon, Color: r.Color, Look: r.Look, Blurb: r.Blurb, Pups: []string{}, Things: []string{}}
 		for _, p := range r.Pups {
 			rj.Pups = append(rj.Pups, p.ID)
 			st.Pups[p.ID] = pupJSON(p)
@@ -462,7 +481,7 @@ func (s *Server) handlePupAction(w http.ResponseWriter, r *http.Request) {
 	switch r.PathValue("action") {
 	case "open", "fork", "remote":
 		act := r.PathValue("action")
-		t := s.App.Target(p, act == "fork", act == "remote")
+		t := floor.TargetFor(s.App, p, act == "fork", act == "remote")
 		if err = s.App.CheckCwd(t.Cwd); err == nil {
 			if opener.Resolve(s.App.Cfg.Opener) == opener.Inline {
 				// A browser can't hand over a terminal; give the command instead.
@@ -519,5 +538,66 @@ func (s *Server) handleThingAction(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, http.StatusBadRequest)
 		return
 	}
+	writeJSON(w, map[string]any{"ok": true, "message": msg})
+}
+
+func (s *Server) handleCatalog(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, map[string]any{"shapes": blocks.Shapes, "floors": blocks.Floors, "walls": blocks.Walls,
+		"decor": blocks.DecorItems, "kinds": blocks.Kinds, "templates": blocks.Templates})
+}
+
+// handleRoom edits a room's building blocks: style, template, reset, door (spawn).
+func (s *Server) handleRoom(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Key      string      `json:"key"`
+		Style    store.Style `json:"style"`
+		Template string      `json:"template"`
+		Index    int         `json:"index"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Key == "" {
+		fail(w, errors.New("missing room key"), http.StatusBadRequest)
+		return
+	}
+	var msg string
+	var err error
+	switch r.PathValue("action") {
+	case "style":
+		err = s.App.SaveStyle(body.Key, body.Style)
+	case "template":
+		for _, tp := range blocks.Templates {
+			if tp.Key == body.Template {
+				err = floor.ApplyTemplate(s.App, body.Key, tp)
+				msg = tp.Icon + " " + tp.Name
+			}
+		}
+		if msg == "" && err == nil {
+			err = fmt.Errorf("unknown template %q", body.Template)
+		}
+	case "reset":
+		err = s.App.ResetStyle(body.Key)
+	case "door":
+		room, ok := floor.FindRoom(s.App, body.Key)
+		doors := room.Style.OfKind(blocks.Door)
+		if !ok || body.Index < 0 || body.Index >= len(doors) {
+			err = errors.New("no such door")
+			break
+		}
+		var t opener.Target
+		if t, err = floor.Spawn(s.App, room, doors[body.Index]); err == nil {
+			if opener.Resolve(s.App.Cfg.Opener) == opener.Inline {
+				msg = t.ShellCommand()
+			} else {
+				msg, err = s.App.Opener().Open(t)
+			}
+		}
+	default:
+		fail(w, errors.New("unknown action"), http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		fail(w, err, http.StatusBadRequest)
+		return
+	}
+	s.touch()
 	writeJSON(w, map[string]any{"ok": true, "message": msg})
 }

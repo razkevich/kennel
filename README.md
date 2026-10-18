@@ -32,6 +32,7 @@ Sessions are **pups** 🐕. Groups are **kennels** 🏠. Other terminals, such a
 | 📺 **Things** | Non-agent terminals as objects in the rooms. Kennel finds them in herdr panes, and you can save your own commands to start, focus or stop. |
 | ⏰ **Jobs** | Background agents from the Claude daemon, and cron tasks scheduled inside sessions (`/loop`, CronCreate) with their last fire time. |
 | 🎨 **Artifacts** | Every artifact your sessions published, newest first, starrable, one key to open. |
+| 🔨 **Build** | Shape any room: templates (on-call room, release train, research lab, lounge, one-on-one corner), size and shape, floor, walls and furniture. Add **purpose blocks**: 🚪 spawn door (new pup with a preset folder, name, prompt and model), 🧲 magnet (auto-adopt), 🔔 bell (desktop alert), 🌀 portal (open in a herdr workspace), 📌 pin board, 🧹 archive chute. In the browser: drag and drop. In the TUI: `B`. |
 | 🔩 **Gear** | MCP servers, skills, plugins, subagents, commands and hooks at user, project and plugin level. Toggle skills, plugins and project MCP servers safely. |
 
 ## Screens
@@ -39,6 +40,8 @@ Sessions are **pups** 🐕. Groups are **kennels** 🏠. Other terminals, such a
 <table>
 <tr><td><img src="docs/img/web-map.png" alt="web map"></td><td><img src="docs/img/web-card.png" alt="pup card"></td></tr>
 <tr><td align="center"><code>kennel map</code>: the office</td><td align="center">click a pup for its card</td></tr>
+<tr><td><img src="docs/img/web-build.png" alt="build mode"></td><td><img src="docs/img/tui-build.png" alt="tui build menu"></td></tr>
+<tr><td align="center">build mode: templates, floors, walls, furniture, blocks</td><td align="center">the same blocks from the TUI (<code>B</code>)</td></tr>
 <tr><td><img src="docs/img/web-ask.png" alt="ask"></td><td><img src="docs/img/web-search.png" alt="web search"></td></tr>
 <tr><td align="center">Ask with citations</td><td align="center">search across transcripts</td></tr>
 <tr><td><img src="docs/img/tui-search.png" alt="tui search"></td><td><img src="docs/img/tui-ask.png" alt="tui ask"></td></tr>
@@ -82,6 +85,7 @@ kennel -demo                # try it on synthetic sessions
 | `s` `r` `m` `N` `x` `D` | star, rename, move to kennel, note, archive, trash |
 | `K` · `e` on a kennel | new kennel · edit name and rules |
 | `u` | next pup that needs you |
+| `B` | build the current room: template, shape, floor, walls, blocks |
 | `F` (map) · `N` (map/jobs) | change floor · new thing |
 | `y` `Y` `p` `A` | copy id, copy resume command, open PR, open artifact |
 | `?` | help |
@@ -132,18 +136,12 @@ KENNEL_SHOTS=/tmp/ans go test ./internal/tui -run TestShots && (cd e2e && node t
 
 ## Roadmap: ideas we're chewing on
 
-**Building blocks: shape your own office**
-- Build mode on the map: drag rooms, pick size and shape (closet, office, hall, yard), floor (grass, wood, tiles, carpet, water, stone) and walls (brick, wood, glass, fence), and place decor from a palette (desks, sofas, plants, bookshelves, arcade, dog beds).
-- Purpose blocks you drop into a kennel:
-  - 🚪 **spawn door**: a new session with a preset folder, name, prompt and model ("new incident pup").
-  - 🧲 **magnet**: auto-adopt rules (cwd, title, branch, people mentioned).
-  - 🔔 **bell**: desktop and sound alert when a pup here needs you.
-  - 🌀 **portal**: bind the room to a herdr workspace, so its pups open there.
-  - 📌 **pin board**: notes and links.
-  - 🧹 **chute**: auto-archive pups idle for N days.
-  - ⏲ **timer**: a recurring prompt for the room.
-  - 📺 **screen**: pin a thing's live output.
-- Templates: "on-call room", "release train", "research lab", "one-on-one corner".
+**More building blocks**
+- ⏲ **timer**: a recurring prompt for a room's pups ("every morning, summarize overnight alerts").
+- 📺 **screen**: pin a thing's live output (the last lines of a log tail) onto a wall.
+- 🧭 **signpost**: link rooms across floors; 🚦 **gate**: hold new pups for approval before they start.
+- 🏷 **label maker**: tag pups by the people, tickets or services they mention.
+- Shareable room templates (export or import JSON), multi-room "office kits", and furniture that does things (a coffee machine that pings the idle pups).
 
 **More cool stuff**
 - Daily digest: "yesterday you shipped 3 PRs, 2 pups are still waiting, Under the Rug grew by 4".

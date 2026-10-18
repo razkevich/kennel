@@ -31,6 +31,11 @@ func TestShots(t *testing.T) {
 	}
 	h.key("u")
 	save("map")
+	h.key("B")
+	save("build")
+	h.typeText("on-call")
+	h.key("enter")
+	h.key("esc")
 	h.key("F")
 	save("projects")
 	h.key("F", "F", "2")

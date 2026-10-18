@@ -139,7 +139,7 @@ func (m Model) hints() string {
 	} else {
 		switch m.tab {
 		case TabMap:
-			hs = []string{hint("←↑↓→", "walk"), hint("tab", "room"), hint("⏎", "open"), hint("F", "floor"), hint("u", "needs you"), hint("/", "search"), hint("a", "ask"), hint("?", "help")}
+			hs = []string{hint("←↑↓→", "walk"), hint("tab", "room"), hint("⏎", "open"), hint("F", "floor"), hint("B", "build"), hint("u", "needs you"), hint("/", "search"), hint("a", "ask"), hint("?", "help")}
 		case TabPups:
 			if m.searching {
 				hs = []string{hint("type", "to filter"), hint("⏎/↓", "to list"), hint("esc", "clear")}
@@ -176,7 +176,7 @@ func (m Model) helpView() string {
 	}{
 		{"getting around", [][2]string{{"1-6 / [ ]", "switch tabs"}, {"ctrl+k", "jump anywhere"}, {"u", "next pup that needs you"}, {"/", "search (names + transcripts)"}, {"a", "ask your pack (RAG)"}, {"F", "map floor: campus / projects / kennels"}}},
 		{"a pup", [][2]string{{"⏎", "open / focus in herdr or Ghostty"}, {"N", "new thing (monitor, server, logs…)"}, {"f", "fork session"}, {"R", "resume with remote control"}, {"t", "quick reply (herdr)"}, {"v / space", "read transcript"}, {"n", "new session here"}}},
-		{"organize", [][2]string{{"s", "star (Best in Show)"}, {"r", "rename"}, {"m", "move to kennel"}, {"N", "note"}, {"x", "archive"}, {"D", "trash (recoverable)"}, {"K", "new kennel"}}},
+		{"organize", [][2]string{{"B", "build: shape, floor, walls, blocks"}, {"s", "star (Best in Show)"}, {"r", "rename"}, {"m", "move to kennel"}, {"N", "note"}, {"x", "archive"}, {"D", "trash (recoverable)"}, {"K", "new kennel"}}},
 		{"handy", [][2]string{{"y / Y", "copy id / resume command"}, {"p / A", "open PR / artifact"}, {"search", "is:live is:starred repo:x since:7d has:pr"}, {"q", "quit"}}},
 	}
 	var cols []string

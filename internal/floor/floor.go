@@ -7,7 +7,9 @@ import (
 	"time"
 
 	"github.com/razkevich/kennel/internal/app"
+	"github.com/razkevich/kennel/internal/blocks"
 	"github.com/razkevich/kennel/internal/pack"
+	"github.com/razkevich/kennel/internal/store"
 	"github.com/razkevich/kennel/internal/things"
 )
 
@@ -19,14 +21,40 @@ const (
 )
 
 type Room struct {
-	Key    string
-	Title  string
-	Icon   string
-	Color  string
-	Look   pack.Look
-	Blurb  string
-	Pups   []*pack.Pup
-	Things []things.Thing
+	Key     string
+	Style   store.Style
+	MinCols int
+	MinRows int
+	Title   string
+	Icon    string
+	Color   string
+	Look    pack.Look
+	Blurb   string
+	Pups    []*pack.Pup
+	Things  []things.Thing
+}
+
+// styled applies the user's building blocks (floor, walls, shape) over a room's defaults.
+func styled(a *app.App, rooms []Room) []Room {
+	styles := a.Styles()
+	for i := range rooms {
+		st, ok := styles[rooms[i].Key]
+		if !ok {
+			continue
+		}
+		rooms[i].Style = st
+		if g, ok := blocks.FloorGlyph(st.Floor); ok {
+			rooms[i].Look.Floor = g
+		}
+		if b, ok := blocks.WallBorder(st.Wall); ok {
+			rooms[i].Look.Border = b
+		}
+		if sh := blocks.ShapeByKey(st.Shape); sh != nil {
+			rooms[i].MinCols, rooms[i].MinRows = sh.Cols, sh.Rows
+			rooms[i].Look.Wide = sh.Cols > 4
+		}
+	}
+	return rooms
 }
 
 // campusOrder decides which room a pup stands in when several smart kennels match.
@@ -41,6 +69,10 @@ func workshop() Room {
 
 // Rooms lays out one floor of the map. Both the TUI and the web map draw these.
 func Rooms(a *app.App, floor int) []Room {
+	return styled(a, rooms(a, floor))
+}
+
+func rooms(a *app.App, floor int) []Room {
 	now := a.Now()
 	pups := a.Pups()
 	allThings := a.Things()

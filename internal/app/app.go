@@ -48,6 +48,7 @@ type App struct {
 	herdr   []opener.HerdrAgent
 	live    map[string]claude.Live
 	things  []things.Thing
+	styles  map[string]store.Style
 	panes   []things.HerdrPane
 	procs   []things.Proc
 }
@@ -131,19 +132,23 @@ func (a *App) Reload() error {
 	if err != nil {
 		return err
 	}
+	styles, err := a.Store.Styles()
+	if err != nil {
+		return err
+	}
 	live := claude.ReadLive(a.Cfg.ClaudeDir, a.Cfg.Alive)
 	jobs := claude.ReadJobs(a.Cfg.ClaudeDir)
 	a.mu.RLock()
 	herdr := a.herdr
 	a.mu.RUnlock()
-	pups := pack.Build(sessions, meta, kennels, live)
+	pups := pack.Build(sessions, meta, withMagnets(kennels, styles), live)
 	applyHerdr(pups, herdr)
 	saved, err := a.Store.Things()
 	if err != nil {
 		return err
 	}
 	a.mu.Lock()
-	a.pups, a.kennels, a.live, a.jobs = pups, kennels, live, jobs
+	a.pups, a.kennels, a.live, a.jobs, a.styles = pups, kennels, live, jobs, styles
 	a.things = things.Resolve(saved, a.panes, a.procs)
 	a.mu.Unlock()
 	return nil
@@ -583,4 +588,59 @@ func (a *App) Stop(t things.Thing) error {
 		return err
 	}
 	return fmt.Errorf("%s isn't running", t.Name)
+}
+
+// ---- room styles (building blocks) ----
+
+func (a *App) Styles() map[string]store.Style {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.styles
+}
+
+func (a *App) Style(key string) store.Style {
+	return a.Styles()[key]
+}
+
+func (a *App) SaveStyle(key string, st store.Style) error {
+	if err := a.Store.SaveStyle(key, st); err != nil {
+		return err
+	}
+	return a.Reload()
+}
+
+func (a *App) ResetStyle(key string) error {
+	if err := a.Store.DeleteStyle(key); err != nil {
+		return err
+	}
+	return a.Reload()
+}
+
+// withMagnets folds magnet blocks into each kennel's adoption rules.
+func withMagnets(kennels []store.Kennel, styles map[string]store.Style) []store.Kennel {
+	out := make([]store.Kennel, len(kennels))
+	copy(out, kennels)
+	for i := range out {
+		for _, b := range styles[fmt.Sprintf("kennel:%d", out[i].ID)].OfKind("magnet") {
+			if c := ExpandHome(strings.TrimSpace(b.Get("cwd"))); c != "" {
+				out[i].Rules.CwdPrefix = append(append([]string{}, out[i].Rules.CwdPrefix...), c)
+			}
+			if m := strings.TrimSpace(b.Get("match")); m != "" {
+				if out[i].Rules.Match == "" {
+					out[i].Rules.Match = m
+				} else {
+					out[i].Rules.Match = "(?:" + out[i].Rules.Match + ")|(?:" + m + ")"
+				}
+			}
+		}
+	}
+	return out
+}
+
+func ExpandHome(p string) string {
+	if p == "~" || strings.HasPrefix(p, "~/") {
+		home, _ := os.UserHomeDir()
+		return home + p[1:]
+	}
+	return p
 }

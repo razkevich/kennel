@@ -32,3 +32,20 @@ test("web screenshots", async ({ page }) => {
   await page.waitForTimeout(400);
   await page.screenshot({ path: out("web-ask") });
 });
+
+test("build screenshot", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 860 });
+  await page.goto("/?t=e2e");
+  await page.waitForFunction(() => window.kennel && window.kennel.app.ents.size > 0);
+  const tok = { "X-Kennel-Token": "e2e", "Content-Type": "application/json" };
+  const post = (path, body) => page.evaluate(([p, b, h]) => fetch(p, { method: "POST", headers: h, body: JSON.stringify(b) }), [path, body, tok]);
+  await post("/api/room/template", { key: "fire", template: "oncall" });
+  await post("/api/room/template", { key: "helping", template: "corner" });
+  await post("/api/room/template", { key: "lobby", template: "lounge" });
+  await page.waitForTimeout(1500);
+  await page.keyboard.press("b");
+  const p = await page.evaluate(() => window.kennel.roomPos("lobby", 0.95, 0.95));
+  await page.mouse.click(p.x, p.y);
+  await page.waitForTimeout(800);
+  await page.screenshot({ path: out("web-build") });
+});

@@ -117,23 +117,38 @@ const app = {
 // ---------- layout ----------
 function layout(state) {
   const viewW = Math.max(18, Math.floor(($("#stage").clientWidth || 1000) / (TILE * 0.85)) - 2);
-  const rooms = [];
-  let x = 2, y = 2, rowH = 0, worldW = 0;
-  for (const r of state.rooms) {
+  const sized = state.rooms.map((r) => {
     const n = r.pups.length + r.things.length;
     const maxCols = r.look.Wide ? 6 : 4;
-    const cols = Math.max(2, Math.min(maxCols, Math.ceil(Math.sqrt(n * 1.6)) || 2));
-    const rows = Math.max(1, Math.ceil(n / cols));
-    const w = Math.ceil(cols * SLOT) + 2;
-    const h = rows * 3 + 4;
-    if (x + w > viewW && x > 2) { x = 2; y += rowH + 2; rowH = 0; }
-    rooms.push({ ...r, x, y, w, h, cols, rows });
-    x += w + 2;
-    rowH = Math.max(rowH, h);
-    worldW = Math.max(worldW, x);
+    const cols = Math.max(2, r.minCols || 0, Math.min(maxCols, Math.ceil(Math.sqrt(n * 1.6)) || 2));
+    const rows = Math.max(1, r.minRows || 0, Math.ceil(n / cols));
+    return { ...r, cols, rows, w: Math.ceil(cols * SLOT) + 2, h: rows * 3 + 4 };
+  });
+  // Rooms the user placed keep their spot; the rest flow into the free space around them.
+  const placed = [];
+  const overlaps = (x, y, w, h) => placed.some((o) => x < o.x + o.w + 2 && x + w + 2 > o.x && y < o.y + o.h + 2 && y + h + 2 > o.y);
+  for (const r of sized) {
+    const pos = r.style && r.style.pos && r.style.pos[String(state.floor)];
+    if (pos) { r.x = Math.max(1, pos.x); r.y = Math.max(2, pos.y); r.pinned = true; placed.push(r); }
   }
+  let x = 2, y = 2, rowH = 0;
+  for (const r of sized) {
+    if (r.pinned) continue;
+    for (let guard = 0; guard < 400; guard++) {
+      if (x + r.w > viewW && x > 2) { x = 2; y += Math.max(rowH, 3) + 2; rowH = 0; }
+      if (!overlaps(x, y, r.w, r.h)) break;
+      x += 2;
+    }
+    r.x = x; r.y = y;
+    placed.push(r);
+    x += r.w + 2;
+    rowH = Math.max(rowH, r.h);
+  }
+  const rooms = sized;
+  let worldW = 0, worldH = 0;
+  for (const r of rooms) { worldW = Math.max(worldW, r.x + r.w + 2); worldH = Math.max(worldH, r.y + r.h + 3); }
   app.rooms = rooms;
-  app.world = { w: Math.max(worldW + 1, viewW + 2), h: y + rowH + 3 };
+  app.world = { w: Math.max(worldW + 1, viewW + 2), h: worldH };
 
   const seen = new Set();
   for (const r of rooms) {
@@ -151,6 +166,8 @@ function layout(state) {
       e.home = { x: cx, y: cy };
       e.room = r;
       if (Math.hypot(e.x - cx, e.y - cy) > 2.5) { e.tx = cx; e.ty = cy; }
+      // Far moves (a room was rebuilt or moved) teleport instead of a long walk.
+      if (it.kind === "thing" || Math.hypot(e.x - cx, e.y - cy) > 6) { e.x = e.tx = cx; e.y = e.ty = cy; }
     });
   }
   for (const id of [...app.ents.keys()]) if (!seen.has(id)) app.ents.delete(id);
@@ -167,6 +184,7 @@ async function loadState() {
   renderFloors();
   renderCounts();
   renderPack();
+  renderBuilder();
   if (app.sel) renderCard();
   if (!app.placedYou && app.rooms.length) {
     const r = app.rooms[0];
@@ -429,6 +447,8 @@ async function runSearch() {
 // ---------- ask ----------
 for (const b of document.querySelectorAll("#side .tabs button")) {
   b.onclick = () => {
+    if (b.dataset.tab === "build") { setBuild(true); return; }
+    if (build.on) setBuild(false);
     for (const x of document.querySelectorAll("#side .tabs button")) x.classList.toggle("on", x === b);
     $("#pack").hidden = b.dataset.tab !== "pack";
     $("#ask").hidden = b.dataset.tab !== "ask";
@@ -544,15 +564,84 @@ function entityAt(px, py) {
 }
 
 let drag = null;
-canvas.addEventListener("mousedown", (e) => { drag = { x: e.clientX, y: e.clientY, cx: app.cam.x, cy: app.cam.y, moved: false }; });
+canvas.addEventListener("mousedown", (e) => {
+  if (e.button !== 0) return;
+  const rc = canvas.getBoundingClientRect();
+  const w = screenToWorld(e.clientX - rc.left, e.clientY - rc.top);
+  if (build.on && !build.carry) {
+    const f = fixtureAt(w.x, w.y);
+    if (f) { build.drag = { fixture: f, moved: false }; return; }
+    const r = roomAt(w.x, w.y);
+    if (r && w.y < r.y + 2) { build.drag = { room: r, dx: w.x - r.x, dy: w.y - r.y, moved: false }; return; }
+  }
+  drag = { x: e.clientX, y: e.clientY, cx: app.cam.x, cy: app.cam.y, moved: false };
+});
+canvas.addEventListener("contextmenu", (e) => {
+  if (!build.on) return;
+  e.preventDefault();
+  const rc = canvas.getBoundingClientRect();
+  const w = screenToWorld(e.clientX - rc.left, e.clientY - rc.top);
+  const f = fixtureAt(w.x, w.y);
+  if (!f) return;
+  const st = styleOf(f.room);
+  (f.type === "decor" ? st.decor : st.blocks).splice(f.idx, 1);
+  saveStyle(f.room).then(renderBuilder);
+});
 window.addEventListener("mousemove", (e) => {
+  if (build.drag) {
+    const rc = canvas.getBoundingClientRect();
+    const w = screenToWorld(e.clientX - rc.left, e.clientY - rc.top);
+    const d = build.drag;
+    d.moved = true;
+    if (d.fixture) {
+      const box = interior(d.fixture.room);
+      d.fixture.item.x = Math.max(0, Math.min(1, (w.x - box.x) / box.w));
+      d.fixture.item.y = Math.max(0, Math.min(1, (w.y + 0.4 - box.y) / box.h));
+    } else if (d.room) {
+      d.room.x = Math.max(1, Math.round(w.x - d.dx));
+      d.room.y = Math.max(2, Math.round(w.y - d.dy));
+    }
+    return;
+  }
   if (!drag) return;
   const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
   if (Math.abs(dx) + Math.abs(dy) > 4) { drag.moved = true; canvas.classList.add("dragging"); app.cam.follow = false; app.flyTo = null; }
   if (drag.moved) { app.cam.x = drag.cx - dx / app.cam.z; app.cam.y = drag.cy - dy / app.cam.z; }
 });
 window.addEventListener("mouseup", (e) => {
+  if (build.drag) {
+    const d = build.drag;
+    build.drag = null;
+    if (d.room && d.moved) {
+      const st = styleOf(d.room);
+      st.pos = st.pos || {};
+      st.pos[String(app.state.floor)] = { x: d.room.x, y: d.room.y };
+      build.room = d.room.key;
+      saveStyle(d.room).then(renderBuilder);
+    } else if (d.fixture && d.moved) saveStyle(d.fixture.room);
+    else { build.room = (d.room || d.fixture.room).key; renderBuilder(); }
+    return;
+  }
+  if (build.on && drag && !drag.moved && e.target === canvas) {
+    const rc = canvas.getBoundingClientRect();
+    const w = screenToWorld(e.clientX - rc.left, e.clientY - rc.top);
+    const r = roomAt(w.x, w.y);
+    if (r && build.carry && build.room === r.key) {
+      const box = interior(r);
+      const item = { kind: build.carry.kind, x: Math.max(0, Math.min(1, (w.x - box.x) / box.w)), y: Math.max(0, Math.min(1, (w.y + 0.4 - box.y) / box.h)) };
+      const st = styleOf(r);
+      if (build.carry.type === "decor") (st.decor = st.decor || []).push(item);
+      else { item.config = {}; (st.blocks = st.blocks || []).push(item); build.carry = null; }
+      saveStyle(r).then(renderBuilder);
+    } else if (r) { build.room = r.key; renderBuilder(); }
+    drag = null;
+    return;
+  }
   if (drag && !drag.moved && e.target === canvas) {
+    const rcf = canvas.getBoundingClientRect();
+    const wf = screenToWorld(e.clientX - rcf.left, e.clientY - rcf.top);
+    const fx = !entityAt(e.clientX - rcf.left, e.clientY - rcf.top) && fixtureAt(wf.x, wf.y);
+    if (fx) { useFixture(fx); drag = null; return; }
     const r = canvas.getBoundingClientRect();
     const hit = entityAt(e.clientX - r.left, e.clientY - r.top);
     if (hit) {
@@ -593,7 +682,8 @@ window.addEventListener("keydown", (e) => {
   const typing = ["INPUT", "TEXTAREA"].includes(document.activeElement.tagName);
   if (e.key === "/" && !typing) { e.preventDefault(); $("#q").focus(); return; }
   if (typing) return;
-  if (e.key === "Escape") { $("#transcript").hidden = true; app.sel = null; $("#card").hidden = true; return; }
+  if (e.key === "Escape") { $("#transcript").hidden = true; app.sel = null; $("#card").hidden = true; if (build.carry) { build.carry = null; renderBuilder(); } return; }
+  if (e.key === "b") { setBuild(!build.on); return; }
   const k = e.key.toLowerCase();
   if (["arrowup", "arrowdown", "arrowleft", "arrowright", "w", "a", "s", "d"].includes(k)) {
     e.preventDefault();
@@ -789,10 +879,15 @@ function drawRoom(r) {
     ctx.fillStyle = "#2b2205"; ctx.fillText(`${unread}!`, sx + tw + 12, sy + 18);
   }
   if (r.look.Decor) { ctx.font = "26px system-ui"; ctx.fillText(r.look.Decor, x0 + W - 36, y0 + 44); }
-  if (!n) {
+  if (!n && !((r.style || {}).decor || []).length) {
     ctx.fillStyle = "#6b6890"; ctx.font = "italic 13px ui-rounded, system-ui";
     ctx.fillText(r.blurb || "empty", x0 + 14, y0 + wallH + 34);
   }
+  if (build.on && build.room === r.key) {
+    ctx.strokeStyle = "#ffd66b"; ctx.lineWidth = 4; ctx.setLineDash([10, 6]);
+    ctx.strokeRect(x0 - 8, y0 - 6, W + 16, H + 14); ctx.setLineDash([]);
+  }
+  drawFixtures(r);
 }
 
 function roundRect(x, y, w, h, r) {
@@ -955,9 +1050,275 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 
+
+// ---------- building blocks ----------
+const build = { on: false, room: null, carry: null, drag: null };
+let catalog = { shapes: [], floors: [], walls: [], decor: [], kinds: [], templates: [] };
+const FLOOR_SWATCH = { wood: "#e8c9a0", grass: "#9fdcae", tiles: "#f4d9c6", carpet: "#d9c9f0", water: "#a9d4f5", stone: "#d8d4cc", metal: "#c9ced8", rug: "#e3b5bd", checker: "#efe3c8" };
+const WALL_SWATCH = { wood: "#8b5e3c", brick: "#a3524a", gold: "#c9a24a", plain: "#8a8fa8", fence: "#fffaf0" };
+
+async function loadCatalog() {
+  try { catalog = await (await api("/api/catalog")).json(); } catch (e) { console.error(e); }
+}
+
+const roomByKey = (k) => app.rooms.find((r) => r.key === k);
+const interior = (r) => ({ x: r.x + 0.8, y: r.y + 2.5, w: r.w - 1.6, h: r.h - 3.1 });
+const styleOf = (r) => { r.style = r.style || {}; return r.style; };
+
+function fixtures() {
+  const out = [];
+  for (const r of app.rooms) {
+    const st = r.style || {};
+    const box = interior(r);
+    (st.decor || []).forEach((d, i) => out.push({ room: r, type: "decor", idx: i, item: d, x: box.x + d.x * box.w, y: box.y + d.y * box.h }));
+    (st.blocks || []).forEach((b, i) => out.push({ room: r, type: "block", idx: i, item: b, x: box.x + b.x * box.w, y: box.y + b.y * box.h }));
+  }
+  return out;
+}
+
+function fixtureAt(wx, wy) {
+  let best = null, bd = 0.9;
+  for (const f of fixtures()) {
+    const d = Math.hypot(f.x - wx, f.y - 0.5 - wy);
+    if (d < bd) { bd = d; best = f; }
+  }
+  return best;
+}
+
+function roomAt(wx, wy) {
+  return app.rooms.find((r) => wx >= r.x && wx <= r.x + r.w && wy >= r.y && wy <= r.y + r.h);
+}
+
+async function saveStyle(r) {
+  try {
+    await api("/api/room/style", { method: "POST", body: JSON.stringify({ key: r.key, style: r.style || {} }) });
+  } catch (e) { toast(e.message, true); }
+  await loadState();
+}
+
+const decorIcon = (k) => (catalog.decor.find((d) => d.key === k) || { icon: "❓" }).icon;
+const kindOf = (k) => catalog.kinds.find((x) => x.key === k) || { icon: "❓", name: k, fields: [] };
+
+function drawFixtures(r) {
+  const st = r.style || {};
+  const box = interior(r);
+  const waiting = r.pups.some((id) => pupOf(id) && pupOf(id).status === "waiting");
+  ctx.textAlign = "center";
+  for (const d of st.decor || []) {
+    const px = (box.x + d.x * box.w) * TILE, py = (box.y + d.y * box.h) * TILE;
+    ctx.fillStyle = "#0002"; ctx.beginPath(); ctx.ellipse(px, py + 2, 14, 4, 0, 0, 7); ctx.fill();
+    ctx.fillStyle = "#000"; ctx.font = "28px system-ui"; ctx.fillText(decorIcon(d.kind), px, py);
+  }
+  for (const b of st.blocks || []) {
+    const px = (box.x + b.x * box.w) * TILE, py = (box.y + b.y * box.h) * TILE;
+    const cfg = b.config || {};
+    ctx.fillStyle = "#0002"; ctx.beginPath(); ctx.ellipse(px, py + 2, 16, 5, 0, 0, 7); ctx.fill();
+    ctx.fillStyle = "#000";
+    switch (b.kind) {
+      case "door": {
+        ctx.fillStyle = "#6b4226"; ctx.fillRect(px - 15, py - 42, 30, 42);
+        ctx.fillStyle = "#9c6b45"; ctx.fillRect(px - 12, py - 39, 24, 39);
+        ctx.fillStyle = "#7a5134"; ctx.fillRect(px - 9, py - 35, 18, 12); ctx.fillRect(px - 9, py - 19, 18, 14);
+        ctx.fillStyle = "#ffd66b"; ctx.beginPath(); ctx.arc(px + 7, py - 18, 2.5, 0, 7); ctx.fill();
+        break;
+      }
+      case "portal": {
+        for (let i = 3; i >= 0; i--) {
+          ctx.strokeStyle = ["#cba6f7", "#89dceb", "#f5c2e7", "#b4befe"][i]; ctx.lineWidth = 3;
+          ctx.beginPath(); ctx.ellipse(px, py - 18, 8 + i * 4 + Math.sin(app.t * 3 + i) * 1.5, 14 + i * 3, app.t * (i % 2 ? 1 : -1) * 0.6, 0, 7); ctx.stroke();
+        }
+        break;
+      }
+      case "board": {
+        ctx.fillStyle = "#b07d4f"; ctx.fillRect(px - 36, py - 46, 72, 44);
+        ctx.fillStyle = "#e7c08d"; ctx.fillRect(px - 33, py - 43, 66, 38);
+        ctx.fillStyle = "#fff6c2"; ctx.fillRect(px - 26, py - 39, 52, 30);
+        ctx.fillStyle = "#f38ba8"; ctx.beginPath(); ctx.arc(px, py - 39, 3, 0, 7); ctx.fill();
+        ctx.fillStyle = "#3d3a5c"; ctx.font = "8px ui-rounded, system-ui"; ctx.textAlign = "left";
+        const words = (cfg.text || "").split(/\s+/); let line = "", y = py - 29, lines = 0;
+        for (const w of words) {
+          if (ctx.measureText(line + w).width > 46) { ctx.fillText(line, px - 23, y); y += 9; line = ""; if (++lines === 3) break; }
+          line += w + " ";
+        }
+        if (lines < 3) ctx.fillText(line, px - 23, y);
+        ctx.textAlign = "center";
+        break;
+      }
+      case "bell": {
+        ctx.save(); ctx.translate(px, py - 18);
+        if (waiting) ctx.rotate(Math.sin(app.t * 14) * 0.35);
+        ctx.font = "28px system-ui"; ctx.fillText("🔔", 0, 10); ctx.restore();
+        break;
+      }
+      case "magnet": {
+        ctx.strokeStyle = "#f38ba8"; ctx.setLineDash([4, 4]); ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(px, py - 14, 18 + Math.sin(app.t * 3) * 2, 0, 7); ctx.stroke(); ctx.setLineDash([]);
+        ctx.font = "24px system-ui"; ctx.fillText("🧲", px, py - 4);
+        break;
+      }
+      case "chute": {
+        ctx.fillStyle = "#45475a"; ctx.fillRect(px - 16, py - 30, 32, 30);
+        ctx.fillStyle = "#1e1e2e"; ctx.fillRect(px - 11, py - 25, 22, 12);
+        ctx.font = "18px system-ui"; ctx.fillText("🧹", px, py - 2);
+        break;
+      }
+    }
+    const k = kindOf(b.kind);
+    const label = b.kind === "door" && cfg.name ? `🚪 ${cfg.name}` : b.kind === "portal" && cfg.workspace ? `🌀 ${cfg.workspace}` :
+      b.kind === "chute" ? `🧹 ${cfg.days || 14}d` : `${k.icon} ${k.name}`;
+    ctx.textAlign = "left";
+    nameTag(px, py + 6, label, build.drag && build.drag.fixture && build.drag.fixture.item === b);
+    ctx.textAlign = "center";
+  }
+  ctx.textAlign = "left";
+}
+
+function setBuild(on) {
+  build.on = on;
+  $("#stage").classList.toggle("building", on);
+  if (!on) { build.carry = null; build.drag = null; }
+  for (const x of document.querySelectorAll("#side .tabs button")) x.classList.toggle("on", x.dataset.tab === (on ? "build" : "pack"));
+  $("#pack").hidden = on; $("#ask").hidden = true; $("#build").hidden = !on;
+  renderBuilder();
+}
+
+function chip(label, on, fn, cls) {
+  const b = el("button", "chip" + (on ? " on" : "") + (cls ? " " + cls : ""), label);
+  b.onclick = fn;
+  return b;
+}
+
+function renderBuilder() {
+  const box = $("#build");
+  if (!box || box.hidden) return;
+  box.innerHTML = "";
+  const r = build.room && roomByKey(build.room);
+  if (!r) {
+    box.appendChild(el("div", "hint", "Click any room to shape it: size, floor, walls, furniture, and blocks that do things. Your own kennels can also pull pups in with a 🧲 magnet."));
+    box.appendChild(el("h3", "", "blocks you can place"));
+    for (const k of catalog.kinds) {
+      const c = el("div", "blockcard");
+      c.appendChild(el("div", "head", `${k.icon} ${k.name}`));
+      c.appendChild(el("div", "hint", k.blurb));
+      box.appendChild(c);
+    }
+    return;
+  }
+  const st = styleOf(r);
+  box.appendChild(el("div", "roomname", `${r.icon} ${r.title}`));
+
+  box.appendChild(el("h3", "", "templates"));
+  const tp = el("div", "chips");
+  for (const t of catalog.templates) tp.appendChild(chip(`${t.icon} ${t.name}`, false, async () => {
+    try { const res = await api("/api/room/template", { method: "POST", body: JSON.stringify({ key: r.key, template: t.key }) }); toast((await res.json()).message); } catch (e) { toast(e.message, true); }
+    await loadState(); renderBuilder();
+  }));
+  box.appendChild(tp);
+
+  box.appendChild(el("h3", "", "shape"));
+  const sh = el("div", "chips");
+  for (const s of catalog.shapes) sh.appendChild(chip(`${s.icon} ${s.name}`, st.shape === s.key, () => { st.shape = st.shape === s.key ? "" : s.key; saveStyle(r).then(renderBuilder); }));
+  box.appendChild(sh);
+
+  box.appendChild(el("h3", "", "floor"));
+  const fl = el("div", "chips");
+  for (const f of catalog.floors) {
+    const b = el("button", "swatch" + (st.floor === f.key ? " on" : ""), f.name);
+    b.style.background = FLOOR_SWATCH[f.key] || "#ccc";
+    b.onclick = () => { st.floor = f.key; saveStyle(r).then(renderBuilder); };
+    fl.appendChild(b);
+  }
+  box.appendChild(fl);
+
+  box.appendChild(el("h3", "", "walls"));
+  const wl = el("div", "chips");
+  for (const w of catalog.walls) {
+    const b = el("button", "swatch" + (st.wall === w.key ? " on" : ""), w.name.split(" ")[0]);
+    b.style.background = WALL_SWATCH[w.key] || "#ccc";
+    if (w.key !== "fence") b.style.color = "#fff";
+    b.onclick = () => { st.wall = w.key; saveStyle(r).then(renderBuilder); };
+    wl.appendChild(b);
+  }
+  box.appendChild(wl);
+
+  box.appendChild(el("h3", "", "furniture — pick one, then click in the room"));
+  const dc = el("div", "chips");
+  for (const d of catalog.decor) {
+    const b = el("button", "decor" + (build.carry && build.carry.kind === d.key ? " carry" : ""), d.icon);
+    b.title = d.name;
+    b.onclick = () => { build.carry = build.carry && build.carry.kind === d.key ? null : { type: "decor", kind: d.key }; renderBuilder(); };
+    dc.appendChild(b);
+  }
+  box.appendChild(dc);
+
+  box.appendChild(el("h3", "", "blocks — pick one, then click in the room"));
+  const bk = el("div", "chips");
+  for (const k of catalog.kinds) bk.appendChild(chip(`${k.icon} ${k.name}`, false, () => {
+    build.carry = build.carry && build.carry.kind === k.key ? null : { type: "block", kind: k.key }; renderBuilder();
+  }, build.carry && build.carry.kind === k.key ? "carry" : ""));
+  box.appendChild(bk);
+
+  (st.blocks || []).forEach((b, i) => {
+    const k = kindOf(b.kind);
+    const c = el("div", "blockcard");
+    const head = el("div", "head", `${k.icon} ${k.name}`);
+    const del = el("button", "", "🗑");
+    del.title = "remove";
+    del.onclick = () => { st.blocks.splice(i, 1); saveStyle(r).then(renderBuilder); };
+    head.appendChild(del);
+    c.appendChild(head);
+    c.appendChild(el("div", "hint", k.blurb));
+    for (const f of k.fields) {
+      c.appendChild(el("label", "", f.label));
+      const inp = el("input");
+      inp.value = (b.config || {})[f.key] || "";
+      inp.placeholder = f.placeholder;
+      inp.dataset.field = f.key;
+      inp.onchange = () => { b.config = b.config || {}; b.config[f.key] = inp.value; saveStyle(r); };
+      c.appendChild(inp);
+    }
+    box.appendChild(c);
+  });
+
+  const reset = el("button", "danger", "Reset this room");
+  reset.onclick = async () => { await api("/api/room/reset", { method: "POST", body: JSON.stringify({ key: r.key }) }); await loadState(); renderBuilder(); };
+  box.appendChild(reset);
+}
+
+// Fixture clicks outside build mode: doors spawn, boards show their note.
+async function useFixture(f) {
+  const b = f.item;
+  if (f.type !== "block") return;
+  const cfg = b.config || {};
+  if (b.kind === "door") {
+    const idx = (f.room.style.blocks || []).filter((x) => x.kind === "door").indexOf(b);
+    if (!confirm(`Start a new pup${cfg.name ? " " + cfg.name : ""} here?`)) return;
+    try {
+      const res = await api("/api/room/door", { method: "POST", body: JSON.stringify({ key: f.room.key, index: idx }) });
+      toast((await res.json()).message || "opened");
+    } catch (e) { toast(e.message, true); }
+  } else if (b.kind === "board") toast("📌 " + (cfg.text || "empty board"));
+  else toast(`${kindOf(b.kind).icon} ${kindOf(b.kind).blurb}`);
+}
+
 // Exposed for end-to-end tests: screen positions of entities.
 window.kennel = {
   app,
+  build,
+  roomPos(key, fx = 0.5, fy = 0.5) {
+    const r = roomByKey(key);
+    if (!r) return null;
+    const box = interior(r);
+    const rc = canvas.getBoundingClientRect();
+    const wx = box.x + fx * box.w, wy = box.y + fy * box.h;
+    return { x: rc.left + (wx * TILE - app.cam.x) * app.cam.z, y: rc.top + (wy * TILE - app.cam.y) * app.cam.z };
+  },
+  wallPos(key) {
+    const r = roomByKey(key);
+    if (!r) return null;
+    const rc = canvas.getBoundingClientRect();
+    return { x: rc.left + ((r.x + r.w - 2) * TILE - app.cam.x) * app.cam.z, y: rc.top + ((r.y + 1) * TILE - app.cam.y) * app.cam.z };
+  },
   reveal(id) {
     const e = app.ents.get(id);
     if (!e) return false;
@@ -978,4 +1339,4 @@ window.kennel = {
 
 setTimeout(() => $("#help").classList.add("faded"), 9000);
 resize();
-loadState().then(() => { listen(); requestAnimationFrame(frame); }).catch((e) => toast(e.message, true));
+Promise.all([loadCatalog(), loadState()]).then(() => { listen(); requestAnimationFrame(frame); }).catch((e) => toast(e.message, true));

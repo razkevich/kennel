@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"runtime"
 	"strings"
 
 	"github.com/razkevich/kennel/internal/claude"
@@ -37,6 +38,11 @@ type Target struct {
 	Pane      string
 	Live      bool
 	Remote    bool
+	// Prompt and Model seed a new session (spawn doors).
+	Prompt string
+	Model  string
+	// Workspace routes herdr tabs into a workspace with this label (portals).
+	Workspace string
 }
 
 // ClaudeArgs are the arguments passed to claude for this target.
@@ -46,11 +52,17 @@ func (t Target) ClaudeArgs() []string {
 		if t.Title != "" {
 			args = []string{"-n", t.Title}
 		}
+		if t.Model != "" {
+			args = append(args, "--model", t.Model)
+		}
 	} else {
 		args = claude.ResumeArgs(t.SessionID, t.Fork)
 	}
 	if t.Remote {
 		args = append(args, "--remote-control")
+	}
+	if t.New && t.Prompt != "" {
+		args = append(args, t.Prompt)
 	}
 	return args
 }
@@ -124,6 +136,13 @@ func (o Opener) herdr(t Target) (string, error) {
 	args := []string{"tab", "create", "--cwd", t.Cwd, "--focus"}
 	if t.Title != "" {
 		args = append(args, "--label", t.Title)
+	}
+	if t.Workspace != "" {
+		ws, err := o.workspace(t.Workspace, t.Cwd)
+		if err != nil {
+			return "", err
+		}
+		args = append(args, "--workspace", ws)
 	}
 	out, err := o.Runner.Run("herdr", args...)
 	if err != nil {
@@ -287,4 +306,51 @@ func InlineShell(cwd, command string) *exec.Cmd {
 	c := exec.Command(sh, "-lc", command)
 	c.Dir = cwd
 	return c
+}
+
+// workspace finds a herdr workspace by label, creating it when missing.
+func (o Opener) workspace(label, cwd string) (string, error) {
+	out, err := o.Runner.Run("herdr", "workspace", "list")
+	if err != nil {
+		return "", err
+	}
+	var list struct {
+		Result struct {
+			Workspaces []struct {
+				ID    string `json:"workspace_id"`
+				Label string `json:"label"`
+			} `json:"workspaces"`
+		} `json:"result"`
+	}
+	_ = json.Unmarshal(out, &list)
+	for _, w := range list.Result.Workspaces {
+		if strings.EqualFold(w.Label, label) {
+			return w.ID, nil
+		}
+	}
+	out, err = o.Runner.Run("herdr", "workspace", "create", "--label", label, "--cwd", cwd, "--no-focus")
+	if err != nil {
+		return "", err
+	}
+	var created struct {
+		Result struct {
+			Workspace struct {
+				ID string `json:"workspace_id"`
+			} `json:"workspace"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(out, &created); err != nil || created.Result.Workspace.ID == "" {
+		return "", fmt.Errorf("herdr workspace create: unexpected response: %s", strings.TrimSpace(string(out)))
+	}
+	return created.Result.Workspace.ID, nil
+}
+
+// Notify shows a desktop notification (macOS Notification Center, or notify-send on Linux).
+func Notify(r Runner, title, body string) error {
+	if runtime.GOOS == "darwin" {
+		_, err := r.Run("osascript", "-e", fmt.Sprintf("display notification %s with title %s sound name \"Glass\"", asQuote(body), asQuote(title)))
+		return err
+	}
+	_, err := r.Run("notify-send", title, body)
+	return err
 }

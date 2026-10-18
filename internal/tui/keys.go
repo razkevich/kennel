@@ -115,6 +115,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "u":
 		return m.jumpUnread()
+	case "B":
+		if md := m.buildModal(); md != nil {
+			m.modal = md
+			return m, nil
+		}
+		return m, toast("pick a room first (a smart kennel, project or kennel)", true)
 	case "esc":
 		if m.query.Value() != "" {
 			m.query.SetValue("")
@@ -237,6 +243,9 @@ func (m Model) pupActions(key string, p *pack.Pup) (tea.Model, tea.Cmd, bool) {
 		m.modal = trashModal(p)
 		return m, nil, true
 	case "n":
+		if cmd, ok := m.spawnFromDoor(); ok {
+			return m, cmd, true
+		}
 		m.modal = newSessionModal(m.app.Target(p, false, false).Cwd)
 		return m, nil, true
 	}

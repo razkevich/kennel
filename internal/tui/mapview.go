@@ -8,8 +8,10 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	zone "github.com/lrstanley/bubblezone"
+	"github.com/razkevich/kennel/internal/blocks"
 	"github.com/razkevich/kennel/internal/floor"
 	"github.com/razkevich/kennel/internal/pack"
+	"github.com/razkevich/kennel/internal/store"
 	"github.com/razkevich/kennel/internal/things"
 )
 
@@ -24,6 +26,9 @@ type room struct {
 	blurb  string
 	pups   []*pack.Pup
 	things []things.Thing
+	style  store.Style
+	minC   int
+	minR   int
 }
 
 // mapItem is whatever stands on a tile: a pup (agent session) or a thing (any other terminal).
@@ -65,7 +70,8 @@ func (m Model) rooms() []room {
 		if strings.HasPrefix(blurb, "/") {
 			blurb = shortPath(blurb)
 		}
-		out = append(out, room{key: r.Key, title: r.Title, icon: r.Icon, color: lipgloss.Color(r.Color), look: r.Look, blurb: blurb, pups: r.Pups, things: r.Things})
+		out = append(out, room{key: r.Key, title: r.Title, icon: r.Icon, color: lipgloss.Color(r.Color), look: r.Look, blurb: blurb, pups: r.Pups, things: r.Things,
+			style: r.Style, minC: r.MinCols, minR: r.MinRows})
 	}
 	return out
 }
@@ -144,18 +150,43 @@ func geometry(r room, maxW, maxRows int) (cols, rows int, shown []mapItem, more 
 	if r.look.Wide {
 		maxCols = 6
 	}
-	maxCols = max(1, min(maxCols, (maxW-4)/spriteW))
-	cols = max(1, min(maxCols, int(math.Ceil(math.Sqrt(float64(n)*1.6)))))
+	maxCols = max(1, min(max(maxCols, r.minC), (maxW-4)/spriteW))
+	cols = max(1, min(maxCols, max(r.minC, int(math.Ceil(math.Sqrt(float64(n)*1.6))))))
 	if n == 0 {
-		cols = 2
+		cols = max(2, min(r.minC, maxCols))
 	}
-	rows = max(1, min(maxRows, (n+cols-1)/cols))
+	rows = max(1, min(max(maxRows, r.minR), max(r.minR, (n+cols-1)/cols)))
 	shown = items
 	if n > cols*rows {
 		shown = items[:cols*rows-1]
 		more = n - len(shown)
 	}
 	return
+}
+
+// blockIcons summarizes a room's purpose blocks for its header.
+func blockIcons(st store.Style) string {
+	var b strings.Builder
+	seen := map[string]bool{}
+	for _, bl := range st.Blocks {
+		if k := blocks.KindByKey(bl.Kind); k != nil && !seen[bl.Kind] {
+			seen[bl.Kind] = true
+			b.WriteString(k.Icon)
+		}
+	}
+	return b.String()
+}
+
+func decorIcons(st store.Style, max int) string {
+	var out []string
+	for _, d := range st.Decor {
+		for _, item := range blocks.DecorItems {
+			if item.Key == d.Kind && len(out) < max {
+				out = append(out, item.Icon)
+			}
+		}
+	}
+	return strings.Join(out, "")
 }
 
 func (m Model) mapMaxRows() int {
@@ -215,6 +246,9 @@ func (m Model) renderRoom(r room, maxW, maxRows int, sel string) string {
 		count += " " + lipgloss.NewStyle().Foreground(cBase).Background(cYellow).Bold(true).Render(fmt.Sprintf(" %d! ", unread))
 	}
 	headerLine := title + count
+	if bi := blockIcons(r.style); bi != "" {
+		headerLine += " " + bi
+	}
 	if lipgloss.Width(headerLine) > innerW {
 		innerW = lipgloss.Width(headerLine)
 	}
@@ -282,9 +316,18 @@ func (m Model) renderRoom(r room, maxW, maxRows int, sel string) string {
 	if r.look.Decor != "" && n > 0 {
 		decor = r.look.Decor
 	}
+	if d := decorIcons(r.style, 3); d != "" {
+		decor = d
+	}
 	hdrGap := innerW - lipgloss.Width(headerLine) - lipgloss.Width(decor)
 	header := headerLine + strings.Repeat(" ", max(0, hdrGap)) + decor
 	floorStrip := floorCell(innerW)
+	if boards := r.style.OfKind(blocks.Board); len(boards) > 0 && boards[0].Get("text") != "" {
+		floorStrip = lipgloss.NewStyle().Foreground(cYellow).Render(truncate("📌 "+boards[0].Get("text"), innerW))
+		if w := lipgloss.Width(floorStrip); w < innerW {
+			floorStrip += strings.Repeat(" ", innerW-w)
+		}
+	}
 
 	border := borderFor(r.look.Border)
 	st := lipgloss.NewStyle().Border(border).BorderForeground(color).Padding(0, 1)
