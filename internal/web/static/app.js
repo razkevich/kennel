@@ -1127,7 +1127,7 @@ function interact(e) {
 
 window.addEventListener("keydown", (e) => {
   const typing = ["INPUT", "TEXTAREA"].includes(document.activeElement.tagName);
-  if (e.key === "/" && !typing) { e.preventDefault(); $("#q").focus(); return; }
+  if ((e.key === "/" && !typing) || ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f")) { e.preventDefault(); $("#q").focus(); $("#q").select(); return; }
   if (typing) return;
   if (e.key === "Escape" && lib.open) { closeLibrary(); return; }
   if (e.key === "Escape") { hideMenu(); app.multi.clear(); setTool("select"); $("#digest").hidden = true; $("#transcript").hidden = true; app.sel = null; $("#card").hidden = true; if (build.carry) { build.carry = null; renderBuilder(); } return; }

@@ -50,7 +50,7 @@ async function clickPup(title, double = false) {
   return id;
 }
 async function backToKennel() {
-  await key("0");
+  await key("k", ["cmd", "shift"]);
   await waitFor(async () => (await selected()).kind === "kennel", "kennel tab selected");
 }
 
@@ -99,6 +99,88 @@ test("⌘T opens a shell tab you can type into; ⌘W closes it; the Kennel tab c
   assert.equal((await tabs()).length, 1, "kennel tab is pinned");
 });
 
+test("Ghostty splits: ⌘D / ⌘⇧D split, ⌘⌥arrows and ⌘[ ] move focus, ⌘⌃ resize and equalize, ⌘⇧↩ zoom, ⌘W closes a split", async () => {
+  await key("t");
+  await waitFor(async () => (await tabs()).length === 2, "shell tab");
+  const panes = async () => (await selected()).panes;
+  const focusedAt = async () => (await panes()).findIndex((p) => p.focused);
+  await key("d");
+  await waitFor(async () => (await panes()).length === 2, "split right");
+  let ps = await panes();
+  assert.ok(ps[1].frame[0] > ps[0].frame[0] + 100, "side by side");
+  assert.equal(ps[0].frame[1], ps[1].frame[1]);
+  assert.equal(await focusedAt(), 1, "the new split has focus");
+  await sleep(600);
+  await call("POST", "/type", { text: "echo right-$((1+1))\n" });
+  await waitFor(async () => (await call("GET", "/text?index=1&pane=1")).text.includes("right-2"), "typed into the right split");
+  assert.ok(!(await call("GET", "/text?index=1&pane=0")).text.includes("right-2"), "left split untouched");
+
+  await key("d", ["cmd", "shift"]);
+  await waitFor(async () => (await panes()).length === 3, "split down");
+  ps = await panes();
+  assert.ok(ps[2].frame[1] > ps[1].frame[1] + 50 && ps[2].frame[0] === ps[1].frame[0], "stacked under the right split");
+
+  await key("left", ["cmd", "alt"]);
+  await waitFor(async () => (await focusedAt()) === 0, "⌘⌥← to the left split");
+  await key("[");
+  await waitFor(async () => (await focusedAt()) === 2, "⌘[ wraps to the last split");
+  await key("]");
+  await waitFor(async () => (await focusedAt()) === 0, "⌘] wraps to the first");
+
+  const w0 = (await panes())[0].frame[2];
+  await key("right", ["cmd", "ctrl"]);
+  await key("right", ["cmd", "ctrl"]);
+  await waitFor(async () => (await panes())[0].frame[2] >= w0 + 15, "⌘⌃→ widens the split");
+  await key("=", ["cmd", "ctrl"]);
+  await waitFor(async () => { const p = await panes(); return Math.abs(p[0].frame[2] - p[1].frame[2]) <= 2; }, "equalized");
+
+  await key("enter", ["cmd", "shift"]);
+  await waitFor(async () => (await selected()).zoomed, "zoomed");
+  ps = await panes();
+  assert.ok(ps[1].hidden && ps[2].hidden && !ps[0].hidden);
+  await call("POST", "/snapshot", { index: 1, path: path.join(os.tmpdir(), "kennel-app-zoom.png") });
+  await key("enter", ["cmd", "shift"]);
+  await waitFor(async () => !(await selected()).zoomed, "unzoomed");
+
+  const f0 = (await panes())[0].font;
+  await key("=");
+  await key("=");
+  await waitFor(async () => (await panes()).every((p) => p.font === f0 + 2), "⌘= grows every split's font");
+  await key("0");
+  await waitFor(async () => (await panes()).every((p) => p.font === f0), "⌘0 resets");
+  await call("POST", "/snapshot", { index: 1, path: path.join(os.tmpdir(), "kennel-app-splits.png") });
+
+  await key("w");
+  await waitFor(async () => (await panes()).length === 2, "⌘W closes just the focused split");
+  await call("POST", "/type", { text: "exit\n" });
+  await waitFor(async () => (await panes()).length === 1, "exiting a shell closes its split");
+  await key("w");
+  await waitFor(async () => (await tabs()).length === 1, "last split closes the tab");
+});
+
+test("⌘K clears the screen and scrollback", async () => {
+  await key("t");
+  await waitFor(async () => (await tabs()).length === 2, "shell tab");
+  await sleep(600);
+  await call("POST", "/type", { text: "echo clear-$((6*7))\n" });
+  await waitFor(async () => (await text(1)).includes("clear-42"), "output");
+  await key("k");
+  await waitFor(async () => !(await text(1)).includes("clear-42"), "cleared");
+  await key("w");
+  await waitFor(async () => (await tabs()).length === 1, "closed");
+});
+
+test("in the Kennel tab, ⌘= / ⌘0 zoom the page and ⌘D does nothing", async () => {
+  await backToKennel();
+  await key("=");
+  await waitFor(async () => (await selected()).pageZoom > 1.05, "page zoomed in");
+  await key("0");
+  await waitFor(async () => (await selected()).pageZoom === 1, "page zoom reset");
+  await key("d");
+  await sleep(300);
+  assert.equal((await tabs()).length, 1);
+});
+
 test("resuming a pup opens it as a tab; resuming again focuses that tab", async () => {
   await backToKennel();
   const id = await clickPup("RATE-LIMITS");
@@ -132,7 +214,7 @@ test("a pup running in another terminal isn't opened twice", async () => {
   assert.equal((await tabs()).length, before);
 });
 
-test("tab shortcuts: ⌘0 Kennel, ⌘1..9 by position, ⌘⇧] next", async () => {
+test("tab shortcuts: ⌘⇧K Kennel, ⌘1..9 by position, ⌘⇧] next", async () => {
   const n = (await tabs()).length;
   assert.ok(n >= 3);
   await key("2");

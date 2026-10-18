@@ -9,7 +9,7 @@ import WebKit
 ///   POST /key       {key, mods}      press a shortcut through the real menus
 ///   POST /select    {index}          select a tab
 ///   POST /type      {text}           type into the selected terminal
-///   GET  /text?index=N               a terminal tab's text
+///   GET  /text?index=N[&pane=K]      a terminal tab's text (its focused split, or split K in order)
 ///   POST /js        {code}           evaluate JavaScript in the kennel page
 ///   POST /click     {x, y}           click inside the kennel page (page coordinates)
 ///   POST /drag      {x, y, toX, toY} drag inside the kennel page with real mouse events
@@ -96,6 +96,12 @@ public final class Automation {
                 "tabs": windows.enumerated().map { i, w in
                     ["index": i, "title": w.title, "kind": w === c.kennelWindow ? "kennel" : "terminal",
                      "session": c.tab(for: w)?.session ?? "", "selected": w === c.selectedWindow, "window": w.windowNumber,
+                     "panes": c.tab(for: w).map { t in t.orderedPanes.map { p in
+                         ["id": p.id, "session": p.session ?? "", "focused": p.id == t.focusedID, "hidden": p.holder.isHidden,
+                          "frame": [p.holder.frame.minX, p.holder.frame.minY, p.holder.frame.width, p.holder.frame.height],
+                          "font": p.view.font.pointSize] as [String: Any] } } ?? [],
+                     "zoomed": c.tab(for: w)?.zoomedID != nil,
+                     "pageZoom": w === c.kennelWindow ? c.web.pageZoom : 0,
                      "bg": c.tab(for: w).map { t in t.view.layer?.backgroundColor.flatMap { NSColor(cgColor: $0)?.usingColorSpace(.sRGB).map { String(format: "#%02x%02x%02x", Int($0.redComponent*255), Int($0.greenComponent*255), Int($0.blueComponent*255)) } } ?? "none" } ?? ""]
                 },
                 "status": c.statusTitle,
@@ -103,7 +109,9 @@ public final class Automation {
                 "url": c.server.url?.absoluteString ?? "",
             ])
         case ("POST", "/key"):
-            let key = r.json["key"] as? String ?? ""
+            let names = ["up": NSUpArrowFunctionKey, "down": NSDownArrowFunctionKey, "left": NSLeftArrowFunctionKey, "right": NSRightArrowFunctionKey]
+            var key = r.json["key"] as? String ?? ""
+            if let code = names[key] { key = String(Character(UnicodeScalar(code)!)) } else if key == "enter" { key = "\r" }
             var flags: NSEvent.ModifierFlags = []
             for m in r.json["mods"] as? [String] ?? ["cmd"] {
                 switch m {
@@ -114,9 +122,11 @@ public final class Automation {
                 default: break
                 }
             }
+            // Like a real keyboard, Shift changes the character ("D", "{").
+            if flags.contains(.shift), let shifted = shiftedKey(key) { key = shifted }
             let ev = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0,
                                       windowNumber: c.selectedWindow?.windowNumber ?? 0, context: nil,
-                                      characters: key, charactersIgnoringModifiers: key, isARepeat: false, keyCode: 0)!
+                                      characters: key, charactersIgnoringModifiers: key, isARepeat: false, keyCode: virtualKeyCode(key))!
             let handled = NSApp.mainMenu?.performKeyEquivalent(with: ev) ?? false
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { reply(200, ["handled": handled]) }
         case ("POST", "/select"):
@@ -134,7 +144,10 @@ public final class Automation {
             let i = Int(r.query["index"] ?? "") ?? -1
             let ws = c.orderedWindows
             guard ws.indices.contains(i), let t = c.tab(for: ws[i]) else { return reply(400, ["error": "no terminal at \(i)"]) }
-            reply(200, ["text": t.text()])
+            let panes = t.orderedPanes
+            let k = Int(r.query["pane"] ?? "")
+            guard let pane = k.map({ panes.indices.contains($0) ? panes[$0] : nil }) ?? t.focused else { return reply(400, ["error": "no pane"]) }
+            reply(200, ["text": pane.text()])
         case ("POST", "/js"):
             let code = r.json["code"] as? String ?? "null"
             c.web.evaluateJavaScript("JSON.stringify((function(){ return \(code) })())") { value, err in
@@ -255,4 +268,18 @@ extension NSImage {
         guard let tiff = tiffRepresentation, let rep = NSBitmapImageRep(data: tiff) else { return nil }
         return rep.representation(using: .png, properties: [:])
     }
+}
+
+/// The ANSI virtual key code for a character, so synthetic shortcuts look like real keystrokes.
+func virtualKeyCode(_ key: String) -> UInt16 {
+    let codes: [Character: UInt16] = [
+        "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8, "v": 9, "b": 11, "q": 12, "w": 13, "e": 14,
+        "r": 15, "y": 16, "t": 17, "1": 18, "2": 19, "3": 20, "4": 21, "6": 22, "5": 23, "=": 24, "+": 24, "9": 25, "7": 26,
+        "-": 27, "_": 27, "8": 28, "0": 29, "]": 30, "}": 30, "{": 33, "<": 43, "o": 31, "u": 32, "[": 33, "i": 34, "p": 35, "\r": 36, "l": 37, "j": 38, "k": 40,
+        ",": 43, "n": 45, "m": 46,
+        Character(UnicodeScalar(NSLeftArrowFunctionKey)!): 123, Character(UnicodeScalar(NSRightArrowFunctionKey)!): 124,
+        Character(UnicodeScalar(NSDownArrowFunctionKey)!): 125, Character(UnicodeScalar(NSUpArrowFunctionKey)!): 126,
+    ]
+    guard let c = key.lowercased().first else { return 0 }
+    return codes[c] ?? 0
 }

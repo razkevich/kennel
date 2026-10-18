@@ -80,7 +80,14 @@ kennel -demo                        # try it on synthetic sessions
 ```
 
 **Keys in the office:** `/` search · `V` `H` `R` tools · Space-drag pan · `+` `-` `Shift+1` zoom · `Delete` archive selected · `l` library · `b` build · `D` digest · `X` interact · `⌘Z` undo · `Esc` close.
-**Keys in the Mac app:** `⌘T` new shell tab · `⌘W` close tab (the Kennel tab is pinned) · `⌘0` Kennel · `⌘1–9` tabs · `⌘⇧[ ]` previous and next.
+**Keys in the Mac app** follow Ghostty's defaults:
+
+| | |
+|---|---|
+| Tabs | `⌘T` new (in the current directory) · `⌘⌥W` close tab · `⌘1–9` by position (`⌘1` is Kennel) · `⌘⇧[ ]` previous/next · `⌘⇧K` Kennel |
+| Splits | `⌘D` split right · `⌘⇧D` split down · `⌘W` close split · `⌘[ ]` previous/next split · `⌘⌥←↑↓→` move between splits · `⌘⌃←↑↓→` resize · `⌘⌃=` equalize · `⌘⇧↩` zoom a split. Drag a divider to resize. Unfocused splits dim (`unfocused-split-opacity`). |
+| Terminal | `⌘K` clear · `⌘F` find, `⌘G` / `⌘⇧G` next/previous, `⌘E` use selection · `⌘=` `⌘-` `⌘0` font size per tab (page zoom in the Kennel tab) · `⌘↩` full screen |
+| Config | `⌘,` opens your Ghostty config · `⌘⇧,` reloads it: font, colors, palette, `split-divider-color`, `unfocused-split-opacity` |
 
 **Themes with Cloudflare:** put `CLOUDFLARE_AI_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` in the environment or in `~/cloudflare_ai_token.env`. Optionally set `KENNEL_CF_MODEL` (default `@cf/meta/llama-3.1-8b-instruct-fast`). Without them, kennel uses `claude` haiku.
 

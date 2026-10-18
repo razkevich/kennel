@@ -9,6 +9,8 @@ public struct GhosttyTheme: Equatable {
     public var cursor: String?
     public var selection: String?
     public var palette: [Int: String] = [:]
+    public var unfocusedSplitOpacity: CGFloat = 0.7
+    public var splitDividerColor: String?
 
     public init() {}
 
@@ -35,6 +37,8 @@ public struct GhosttyTheme: Equatable {
             case "foreground": foreground = Self.hex(value)
             case "cursor-color": cursor = Self.hex(value)
             case "selection-background": selection = Self.hex(value)
+            case "unfocused-split-opacity": if let v = Double(value) { unfocusedSplitOpacity = CGFloat(min(1, max(0.15, v))) }
+            case "split-divider-color": splitDividerColor = Self.hex(value)
             case "palette":
                 let parts = value.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
                 if parts.count == 2, let n = Int(parts[0]) { palette[n] = Self.hex(parts[1]) }
