@@ -182,8 +182,13 @@ func (a *App) RefreshLive(withHerdr bool) []Transition {
 		a.panes, a.procs = panes, procs
 	}
 	a.things = things.Resolve(saved, a.panes, a.procs)
+	// Pups are shared with UI goroutines, so live state is applied to copies
+	// and the slice is swapped; readers keep a consistent snapshot.
 	var out []Transition
-	for _, p := range a.pups {
+	next := make([]*pack.Pup, len(a.pups))
+	for i, old := range a.pups {
+		cp := *old
+		p := &cp
 		prev := p.Status
 		p.Live, p.Status, p.Pane = live[p.ID], live[p.ID].Status, ""
 		if _, ok := live[p.ID]; !ok {
@@ -193,7 +198,9 @@ func (a *App) RefreshLive(withHerdr bool) []Transition {
 		if prev != p.Status && prev != claude.Offline && (p.Status == claude.Waiting || p.Status == claude.Done || (prev == claude.Working && p.Status == claude.Idle)) {
 			out = append(out, Transition{Pup: p, From: prev, To: p.Status})
 		}
+		next[i] = p
 	}
+	a.pups = next
 	a.live, a.herdr, a.jobs = live, herdr, jobs
 	return out
 }
@@ -350,7 +357,16 @@ func (a *App) updateMeta(id string, f func(*store.PupMeta)) error {
 		return err
 	}
 	a.mu.Lock()
-	p.Meta = m
+	next := make([]*pack.Pup, len(a.pups))
+	for i, old := range a.pups {
+		next[i] = old
+		if old.ID == id {
+			cp := *old
+			cp.Meta = m
+			next[i] = &cp
+		}
+	}
+	a.pups = next
 	a.mu.Unlock()
 	return nil
 }
