@@ -21,6 +21,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/razkevich/kennel/internal/app"
@@ -28,6 +29,7 @@ import (
 	"github.com/razkevich/kennel/internal/blocks"
 	"github.com/razkevich/kennel/internal/claude"
 	"github.com/razkevich/kennel/internal/floor"
+	"github.com/razkevich/kennel/internal/indexer"
 	"github.com/razkevich/kennel/internal/opener"
 	"github.com/razkevich/kennel/internal/pack"
 	"github.com/razkevich/kennel/internal/store"
@@ -47,6 +49,8 @@ type Server struct {
 	mu      sync.Mutex
 	version int64
 	print   uint64
+	// indexing is "done/total" while the first sync runs, else "".
+	indexing atomic.Value
 }
 
 func NewToken() string {
@@ -95,6 +99,13 @@ func openBrowser(url string) {
 
 // pump refreshes live state and the index, bumping version when anything visible changes.
 func (s *Server) pump(ctx context.Context) {
+	s.indexing.Store("starting")
+	_, _ = s.App.Sync(ctx, func(p indexer.Progress) {
+		s.indexing.Store(fmt.Sprintf("%d/%d", p.Done, p.Total))
+		s.touch()
+	})
+	s.indexing.Store("")
+	s.touch()
 	t := time.NewTicker(time.Second)
 	defer t.Stop()
 	n := 0
@@ -126,6 +137,8 @@ func (s *Server) touch() {
 
 func (s *Server) fingerprint() uint64 {
 	h := fnv.New64a()
+	ix, _ := s.indexing.Load().(string)
+	fmt.Fprintf(h, "ix%s;", ix)
 	for _, p := range s.App.Pups() {
 		fmt.Fprintf(h, "%s|%d|%d|%s|%v|%v|%d|%s;", p.ID, p.Status, p.Updated.UnixMilli(), p.Title(), p.Meta.Starred, p.Meta.Archived, p.Meta.KennelID, p.Pane)
 	}
@@ -286,6 +299,8 @@ type StateJSON struct {
 	Things  map[string]ThingJSON `json:"things"`
 	Counts  map[string]int       `json:"counts"`
 	Demo    bool                 `json:"demo"`
+	// Indexing reports first-run progress ("12/230"); empty when idle.
+	Indexing string `json:"indexing"`
 }
 
 var statusNames = map[claude.Status]string{claude.Offline: "offline", claude.Idle: "idle", claude.Done: "done", claude.Working: "working", claude.Waiting: "waiting"}
@@ -334,6 +349,7 @@ func (s *Server) State(fl int) StateJSON {
 	for _, p := range s.App.Pups() {
 		st.Counts[statusNames[p.Status]]++
 	}
+	st.Indexing, _ = s.indexing.Load().(string)
 	for _, r := range floor.Rooms(s.App, fl) {
 		rj := RoomJSON{Key: r.Key, Style: r.Style, MinCols: r.MinCols, MinRows: r.MinRows, Title: r.Title, Icon: r.Icon, Color: r.Color, Look: r.Look, Blurb: r.Blurb, Pups: []string{}, Things: []string{}}
 		for _, p := range r.Pups {

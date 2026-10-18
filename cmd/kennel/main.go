@@ -338,7 +338,8 @@ func runMap(cfg app.Config, args []string) error {
 	noOpen := fs.Bool("no-open", false, "don't open the browser")
 	token := fs.String("token", "", "fixed API token (default: random per run)")
 	parseArgs(fs, args)
-	a, err := openApp(cfg, true)
+	// Serve right away; the first index of a big history runs in the background.
+	a, err := openApp(cfg, false)
 	if err != nil {
 		return err
 	}

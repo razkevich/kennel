@@ -250,6 +250,7 @@ function renderCounts() {
   const c = app.state.counts;
   const box = $("#counts");
   box.innerHTML = "";
+  if (app.state.indexing) box.appendChild(el("span", "pill", `🦴 fetching sessions ${app.state.indexing}`));
   const add = (k, text) => { if (c[k]) box.appendChild(el("span", "pill " + k, text)); };
   add("waiting", `❗ ${c.waiting} needs you`);
   add("working", `⚡ ${c.working} working`);
