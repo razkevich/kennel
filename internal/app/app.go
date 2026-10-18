@@ -39,6 +39,8 @@ type Config struct {
 	Alive func(pid int) bool
 	// Demo is set for synthetic data: project folders needn't exist.
 	Demo bool
+	// ThemeLLM overrides the categorizer's model (tests).
+	ThemeLLM ask.LLM
 }
 
 type App struct {

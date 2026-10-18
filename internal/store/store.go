@@ -112,6 +112,18 @@ func (s *Store) migrate() error {
 	if _, err := s.DB.Exec(metaSchema); err != nil {
 		return err
 	}
+	// Columns added after first release; metadata tables are never dropped.
+	for _, col := range []struct{ table, name, def string }{
+		{"pup_meta", "theme", "TEXT NOT NULL DEFAULT ''"},
+	} {
+		var n int
+		_ = s.DB.QueryRow(`SELECT count(*) FROM pragma_table_info(?) WHERE name=?`, col.table, col.name).Scan(&n)
+		if n == 0 {
+			if _, err := s.DB.Exec(`ALTER TABLE ` + col.table + ` ADD COLUMN ` + col.name + ` ` + col.def); err != nil {
+				return err
+			}
+		}
+	}
 	var v string
 	_ = s.DB.QueryRow(`SELECT v FROM kv WHERE k='index_version'`).Scan(&v)
 	if v != indexVersion {

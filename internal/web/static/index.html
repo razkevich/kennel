@@ -11,6 +11,8 @@
 <header id="top">
   <div class="logo"><span class="face">▼•ᴥ•▼</span> kennel</div>
   <nav id="floors" aria-label="floors"></nav>
+  <button id="libbtn" class="topbtn" title="all sessions (L)">📚 Library</button>
+  <button id="digestbtn" class="topbtn" title="what happened (D)">📰</button>
   <div id="counts"></div>
   <div class="search">
     <input id="q" type="search" placeholder="Search names, prompts, transcripts…  ( / )" autocomplete="off" spellcheck="false">
@@ -21,6 +23,23 @@
 <main>
   <div id="stage">
     <canvas id="map" aria-label="kennel map"></canvas>
+    <div id="inbox"><div class="inhead"><b>📥 New</b><span>drag onto a kennel</span><select id="inboxn" title="how many"><option>8</option><option selected>12</option><option>20</option><option>40</option></select><button id="inboxtoggle" title="hide">–</button></div><div id="inboxlist"></div></div>
+    <div id="library" hidden>
+      <div class="libbar">
+        <b>📚 Library</b>
+        <input id="libq" type="search" placeholder="filter by title, ask, repo, theme…">
+        <select id="libwhen"><option value="1">24h</option><option value="7">7 days</option><option value="14" selected>2 weeks</option><option value="30">30 days</option><option value="0">all time</option></select>
+        <select id="libagent"><option value="">any agent</option><option value="claude">Claude</option><option value="codex">Codex</option><option value="cursor">Cursor</option></select>
+        <select id="libkennel"></select>
+        <select id="libtheme"></select>
+        <label>group <select id="libgroup"><option value="day">day</option><option value="week">week</option><option value="theme">theme</option><option value="kennel">kennel</option><option value="repo">repo</option><option value="agent">agent</option><option value="none">none</option></select></label>
+        <label>sort <select id="libsort"><option value="new">newest</option><option value="old">oldest</option><option value="msgs">most messages</option><option value="cost">cost</option></select></label>
+        <button id="libthemes" title="categorize with an LLM">✨ Themes</button>
+        <button id="libclose" title="close (Esc)">✕</button>
+      </div>
+      <div class="libsel" id="libsel" hidden><span id="libselcount"></span><select id="libmove"></select><button id="libdo">move</button><button id="libclear">clear</button></div>
+      <div id="libbody"></div>
+    </div>
     <div id="hint" hidden></div>
     <div id="help">
       <b>arrows/WASD</b> walk · <b>X</b> interact · <b>click</b> select · <b>double-click</b> open · <b>drag/scroll</b> pan · <b>pinch/⌘-scroll</b> zoom
@@ -29,9 +48,12 @@
   <aside id="side">
     <div id="card" hidden></div>
     <div class="tabs">
-      <button data-tab="pack" class="on">🐾 Pack</button>
-      <button data-tab="ask">💬 Ask</button>
-      <button data-tab="build">🔨 Build</button>
+      <button data-tab="pack" class="on" title="Pack">🐾 Pack</button>
+      <button data-tab="ask" title="Ask">💬</button>
+      <button data-tab="jobs" title="Jobs & things">⏰</button>
+      <button data-tab="art" title="Artifacts">🎨</button>
+      <button data-tab="gear" title="Gear: MCP, skills, plugins">🔩</button>
+      <button data-tab="build" title="Build">🔨</button>
     </div>
     <section id="treats">
       <div class="treathead"><b>🦴 Treats</b><span>drag onto a pup</span><button id="addtreat" title="save a treat">＋</button></div>
@@ -39,6 +61,9 @@
     </section>
     <section id="pack"></section>
     <section id="build" hidden></section>
+    <section id="jobs" hidden></section>
+    <section id="art" hidden></section>
+    <section id="gear" hidden></section>
     <section id="ask" hidden>
       <form id="askform">
         <textarea id="askq" rows="3" placeholder="Ask your pack… e.g. what did we decide about the postgres upgrade?"></textarea>
@@ -58,6 +83,7 @@
   </div>
 </div>
 <div id="toast" hidden></div>
+<div id="digest" hidden><div class="sheet"><div class="bar"><b>📰 What happened</b><select id="digestdays"><option value="1">last day</option><option value="7">last week</option><option value="14">2 weeks</option></select><button id="digestclose">✕</button></div><div id="digestbody"></div></div></div>
 <script src="app.js"></script>
 </body>
 </html>

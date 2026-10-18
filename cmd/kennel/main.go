@@ -12,15 +12,12 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	zone "github.com/lrstanley/bubblezone"
 	"github.com/razkevich/kennel/internal/app"
 	"github.com/razkevich/kennel/internal/ask"
 	"github.com/razkevich/kennel/internal/demo"
 	"github.com/razkevich/kennel/internal/digest"
 	"github.com/razkevich/kennel/internal/indexer"
 	"github.com/razkevich/kennel/internal/opener"
-	"github.com/razkevich/kennel/internal/tui"
 	"github.com/razkevich/kennel/internal/web"
 )
 
@@ -29,8 +26,7 @@ var version = "dev"
 const usage = `▼•ᴥ•▼ kennel — find, organize and open your Claude Code sessions
 
 usage:
-  kennel                      open the TUI
-  kennel map [-port N]        open the Gather-style web map in your browser
+  kennel [map] [-port N]      open kennel in your browser (the Mac app shows the same page)
   kennel search <query>       search names and transcripts  (-json)
   kennel ask <question>       answer from past sessions, with sources
   kennel ls [query]           list sessions                 (-json)
@@ -113,9 +109,7 @@ func run(args []string) error {
 	}
 
 	switch cmd {
-	case "":
-		return runTUI(cfg, demoMode)
-	case "map":
+	case "", "map":
 		return runMap(cfg, args)
 	case "index":
 		return runIndex(cfg, args)
@@ -155,19 +149,6 @@ func openApp(cfg app.Config, sync bool) (*app.App, error) {
 		}
 	}
 	return a, nil
-}
-
-func runTUI(cfg app.Config, demoMode bool) error {
-	a, err := openApp(cfg, false)
-	if err != nil {
-		return err
-	}
-	defer a.Close()
-	zone.NewGlobal()
-	m := tui.New(a, tui.Options{NoHerdr: demoMode})
-	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
-	_, err = p.Run()
-	return err
 }
 
 func runIndex(cfg app.Config, args []string) error {

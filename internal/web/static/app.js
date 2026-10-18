@@ -220,6 +220,10 @@ async function loadState() {
   renderCounts();
   renderPack();
   renderBuilder();
+  renderThemeStatus();
+  loadInbox();
+  if (lib.open) refreshLibrary();
+  if (app.tab === "jobs") renderJobs();
   if (app.sel) renderCard();
   if (!app.placedYou && app.rooms.length) {
     const r = app.rooms[0];
@@ -571,17 +575,20 @@ async function runSearch() {
 }
 
 // ---------- ask ----------
-for (const b of document.querySelectorAll("#side .tabs button")) {
-  b.onclick = () => {
-    if (b.dataset.tab === "build") { setBuild(true); return; }
-    if (build.on) setBuild(false);
-    for (const x of document.querySelectorAll("#side .tabs button")) x.classList.toggle("on", x === b);
-    $("#pack").hidden = b.dataset.tab !== "pack";
-    $("#treats").hidden = b.dataset.tab !== "pack";
-    $("#ask").hidden = b.dataset.tab !== "ask";
-    if (b.dataset.tab === "ask") $("#askq").focus();
-  };
+const PANELS = ["pack", "ask", "build", "jobs", "art", "gear"];
+function showTab(tab) {
+  if (tab === "build") { setBuild(true); return; }
+  if (build.on) setBuild(false);
+  for (const x of document.querySelectorAll("#side .tabs button")) x.classList.toggle("on", x.dataset.tab === tab);
+  for (const p of PANELS) $("#" + p).hidden = p !== tab;
+  $("#treats").hidden = tab !== "pack";
+  if (tab === "ask") $("#askq").focus();
+  if (tab === "jobs") renderJobs();
+  if (tab === "art") renderArt();
+  if (tab === "gear") renderGear();
+  app.tab = tab;
 }
+for (const b of document.querySelectorAll("#side .tabs button")) b.onclick = () => showTab(b.dataset.tab);
 
 $("#askform").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -816,8 +823,11 @@ window.addEventListener("keydown", (e) => {
   const typing = ["INPUT", "TEXTAREA"].includes(document.activeElement.tagName);
   if (e.key === "/" && !typing) { e.preventDefault(); $("#q").focus(); return; }
   if (typing) return;
-  if (e.key === "Escape") { $("#transcript").hidden = true; app.sel = null; $("#card").hidden = true; if (build.carry) { build.carry = null; renderBuilder(); } return; }
+  if (e.key === "Escape" && lib.open) { closeLibrary(); return; }
+  if (e.key === "Escape") { $("#digest").hidden = true; $("#transcript").hidden = true; app.sel = null; $("#card").hidden = true; if (build.carry) { build.carry = null; renderBuilder(); } return; }
   if (e.key === "b") { setBuild(!build.on); return; }
+  if (e.key === "l" || e.key === "L") { lib.open ? closeLibrary() : openLibrary(); return; }
+  if (e.key === "D") { openDigest(); return; }
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") { e.preventDefault(); undo(); return; }
   const k = e.key.toLowerCase();
   if (["arrowup", "arrowdown", "arrowleft", "arrowright", "w", "a", "s", "d"].includes(k)) {
@@ -1017,6 +1027,10 @@ function drawRoom(r) {
   if (!n && !((r.style || {}).decor || []).length) {
     ctx.fillStyle = "#6b6890"; ctx.font = "italic 13px ui-rounded, system-ui";
     ctx.fillText(r.blurb || "empty", x0 + 14, y0 + wallH + 34);
+  }
+  if (app.dropRoom === r.key) {
+    ctx.fillStyle = "#ffd66b33"; ctx.fillRect(x0, y0, W, H);
+    ctx.strokeStyle = "#ffd66b"; ctx.lineWidth = 5; ctx.strokeRect(x0 - 6, y0 - 4, W + 12, H + 10);
   }
   if (build.on && build.room === r.key) {
     ctx.strokeStyle = "#ffd66b"; ctx.lineWidth = 4; ctx.setLineDash([10, 6]);
@@ -1317,7 +1331,8 @@ function setBuild(on) {
   $("#stage").classList.toggle("building", on);
   if (!on) { build.carry = null; build.drag = null; }
   for (const x of document.querySelectorAll("#side .tabs button")) x.classList.toggle("on", x.dataset.tab === (on ? "build" : "pack"));
-  $("#pack").hidden = on; $("#treats").hidden = on; $("#ask").hidden = true; $("#build").hidden = !on;
+  for (const p of PANELS) $("#" + p).hidden = p !== (on ? "build" : "pack");
+  $("#treats").hidden = on;
   renderBuilder();
 }
 
@@ -1496,14 +1511,29 @@ const dropTargetAt = (clientX, clientY) => {
 
 canvas.addEventListener("dragover", (e) => {
   e.preventDefault();
+  if ([...e.dataTransfer.types].includes("application/x-kennel-pup")) {
+    e.dataTransfer.dropEffect = "move";
+    const r = kennelRoomAt(e.clientX, e.clientY);
+    app.dropRoom = r ? r.key : null;
+    return;
+  }
   e.dataTransfer.dropEffect = "copy";
   $("#stage").classList.add("dropping");
   app.dropHover = dropTargetAt(e.clientX, e.clientY);
 });
-canvas.addEventListener("dragleave", () => { $("#stage").classList.remove("dropping"); app.dropHover = null; });
+canvas.addEventListener("dragleave", () => { $("#stage").classList.remove("dropping"); app.dropHover = null; app.dropRoom = null; });
 canvas.addEventListener("drop", async (e) => {
   e.preventDefault();
   $("#stage").classList.remove("dropping");
+  $("#stage").classList.remove("pupdrag");
+  const pupId = e.dataTransfer.getData("application/x-kennel-pup");
+  if (pupId) {
+    app.dropHover = null;
+    const r = kennelRoomAt(e.clientX, e.clientY);
+    if (r) await fileInto(r, pupId);
+    else toast(app.state.floor === 2 ? "drop it inside one of your kennels" : "switch to 🏠 Kennels to file pups", true);
+    return;
+  }
   const target = dropTargetAt(e.clientX, e.clientY);
   app.dropHover = null;
   if (!target) { toast("drop it right on a pup (or a spawn door)", true); return; }
@@ -1547,9 +1577,306 @@ function drawDropHover() {
   ctx.textAlign = "left";
 }
 
+
+// ---------- inbox: newest sessions not in a kennel yet ----------
+let inboxN = 12;
+try { inboxN = Number(localStorage.getItem("kennel.inboxN")) || 12; } catch (_) {}
+$("#inboxn").value = String(inboxN);
+$("#inboxn").onchange = () => { inboxN = Number($("#inboxn").value); try { localStorage.setItem("kennel.inboxN", String(inboxN)); } catch (_) {} loadInbox(); };
+$("#inboxtoggle").onclick = () => {
+  const box = $("#inbox");
+  box.classList.toggle("collapsed");
+  $("#inboxtoggle").textContent = box.classList.contains("collapsed") ? "+" : "–";
+  try { localStorage.setItem("kennel.inboxCollapsed", box.classList.contains("collapsed") ? "1" : ""); } catch (_) {}
+};
+try { if (localStorage.getItem("kennel.inboxCollapsed")) { $("#inbox").classList.add("collapsed"); $("#inboxtoggle").textContent = "+"; } } catch (_) {}
+
+function relAge(ms) {
+  const d = ((app.state ? app.state.now : Date.now()) - ms) / 1000;
+  if (d < 3600) return `${Math.max(1, Math.floor(d / 60))}m`;
+  if (d < 86400) return `${Math.floor(d / 3600)}h`;
+  return `${Math.floor(d / 86400)}d`;
+}
+
+function draggablePup(node, p) {
+  node.draggable = true;
+  node.addEventListener("dragstart", (e) => {
+    e.dataTransfer.setData("application/x-kennel-pup", p.id);
+    e.dataTransfer.setData("text/plain", p.title);
+    e.dataTransfer.effectAllowed = "move";
+    $("#stage").classList.add("pupdrag");
+  });
+  node.addEventListener("dragend", () => $("#stage").classList.remove("pupdrag"));
+}
+
+let inboxItems = [];
+async function loadInbox() {
+  try { inboxItems = await (await api(`/api/inbox?n=${inboxN}`)).json(); } catch (_) { inboxItems = []; }
+  const list = $("#inboxlist");
+  list.innerHTML = "";
+  if (!inboxItems.length) list.appendChild(el("div", "inpup", "✨ everything is filed"));
+  for (const p of inboxItems) {
+    const chip = el("div", "inpup");
+    chip.title = `${p.title}\n${p.snippet || ""}`;
+    chip.dataset.id = p.id;
+    chip.append(miniDog(p.fur, p.status, p.agent), el("span", "", p.title), el("span", "age", relAge(p.updated)));
+    chip.onclick = () => { app.state.pups[p.id] = app.state.pups[p.id] || p; select(p.id, false); };
+    draggablePup(chip, p);
+    list.appendChild(chip);
+  }
+}
+
+// A pup dropped on one of your kennels on the map is filed there.
+function kennelRoomAt(clientX, clientY) {
+  const rc = canvas.getBoundingClientRect();
+  const w = screenToWorld(clientX - rc.left, clientY - rc.top);
+  const r = roomAt(w.x, w.y);
+  return r && r.key.startsWith("kennel:") ? r : null;
+}
+
+async function fileInto(r, pupId) {
+  await act("move", pupId, { kennel: Number(r.key.slice(7)) });
+  toast(`🏠 filed into ${r.icon} ${r.title}`, false, true);
+  loadInbox();
+}
+
+// ---------- library ----------
+let library = [];
+const libSelected = new Set();
+const lib = { open: false };
+
+async function openLibrary() {
+  lib.open = true;
+  $("#library").hidden = false;
+  try { library = await (await api("/api/library")).json(); } catch (e) { toast(e.message, true); }
+  fillLibFilters();
+  renderLibrary();
+  $("#libq").focus();
+}
+let libFetch = null;
+function refreshLibrary() {
+  if (libFetch) return;
+  libFetch = api("/api/library").then((r) => r.json()).then((l) => { library = l; fillLibFilters(); renderLibrary(); })
+    .catch(() => {}).finally(() => { libFetch = null; });
+}
+function closeLibrary() { lib.open = false; $("#library").hidden = true; }
+$("#libbtn").onclick = () => (lib.open ? closeLibrary() : openLibrary());
+$("#libclose").onclick = closeLibrary;
+for (const id of ["#libq", "#libwhen", "#libagent", "#libkennel", "#libtheme", "#libgroup", "#libsort"]) $(id).addEventListener("input", renderLibrary);
+
+function fillLibFilters() {
+  const k = $("#libkennel"), cur = k.value;
+  k.innerHTML = "";
+  k.append(new Option("any kennel", ""), new Option("📥 not filed", "none"));
+  for (const x of app.state.kennels || []) k.appendChild(new Option(`${x.icon} ${x.name}`, x.name));
+  k.value = cur;
+  const t = $("#libtheme"), curT = t.value;
+  const themes = [...new Set(library.map((p) => p.theme).filter(Boolean))].sort();
+  t.innerHTML = "";
+  t.append(new Option("any theme", ""), new Option("no theme yet", "none"));
+  for (const x of themes) t.appendChild(new Option(x, x));
+  t.value = curT;
+  const mv = $("#libmove");
+  mv.innerHTML = "";
+  mv.appendChild(new Option("move to…", ""));
+  mv.appendChild(new Option("📥 no kennel", "0"));
+  for (const x of app.state.kennels || []) mv.appendChild(new Option(`${x.icon} ${x.name}`, String(x.id)));
+}
+
+function weekOf(ms) {
+  const d = new Date(ms);
+  const day = (d.getDay() + 6) % 7;
+  d.setDate(d.getDate() - day);
+  return "week of " + d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function renderLibrary() {
+  if (!lib.open) return;
+  const q = $("#libq").value.trim().toLowerCase();
+  const days = Number($("#libwhen").value);
+  const agent = $("#libagent").value, kennel = $("#libkennel").value, theme = $("#libtheme").value;
+  const now = app.state ? app.state.now : Date.now();
+  let rows = library.filter((p) => {
+    if (days && now - p.updated > days * 86400000) return false;
+    if (agent && p.agent !== agent) return false;
+    if (kennel === "none" ? p.kennel : kennel && p.kennel !== kennel) return false;
+    if (theme === "none" ? p.theme : theme && p.theme !== theme) return false;
+    if (q && !`${p.title} ${p.firstPrompt} ${p.repo} ${p.theme} ${p.kennel} ${p.branch}`.toLowerCase().includes(q)) return false;
+    return true;
+  });
+  const sort = $("#libsort").value;
+  rows.sort((a, b) => sort === "old" ? a.updated - b.updated : sort === "msgs" ? b.messages - a.messages : sort === "cost" ? b.cost - a.cost : b.updated - a.updated);
+  const group = $("#libgroup").value;
+  const keyOf = (p) => group === "day" ? new Date(p.updated).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })
+    : group === "week" ? weekOf(p.updated) : group === "theme" ? (p.theme || "no theme yet") : group === "kennel" ? (p.kennel || "📥 not filed")
+    : group === "repo" ? (p.repo || "—") : group === "agent" ? p.agent : "";
+  const groups = new Map();
+  for (const p of rows) { const k = keyOf(p); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(p); }
+  const body = $("#libbody");
+  body.innerHTML = "";
+  if (!rows.length) body.appendChild(el("div", "libempty", "No sessions match these filters."));
+  for (const [k, list] of groups) {
+    const g = el("div", "libgroup");
+    if (group !== "none") g.appendChild(el("h4", "", `${k} · ${list.length}`));
+    for (const p of list) {
+      const r = el("div", "librow" + (app.sel === p.id ? " on" : ""));
+      const cb = el("input");
+      cb.type = "checkbox";
+      cb.checked = libSelected.has(p.id);
+      cb.onclick = (e) => { e.stopPropagation(); cb.checked ? libSelected.add(p.id) : libSelected.delete(p.id); renderLibSel(); };
+      r.append(cb, miniDog(p.fur, p.status, p.agent), el("span", "t", (p.starred ? "★ " : "") + p.title), el("span", "s", p.snippet || p.firstPrompt || ""));
+      r.append(p.theme ? el("span", "pill theme", p.theme) : el("span", ""), p.kennel ? el("span", "pill kennel", "🏠 " + p.kennel) : el("span", ""));
+      r.append(el("span", "d", [p.repo, `${p.messages} msgs`].filter(Boolean).join(" · ")), el("span", "d", relAge(p.updated)));
+      r.onclick = () => { app.state.pups[p.id] = app.state.pups[p.id] || p; select(p.id, false); renderLibrary(); };
+      draggablePup(r, p);
+      g.appendChild(r);
+    }
+    body.appendChild(g);
+  }
+  renderLibSel();
+}
+
+function renderLibSel() {
+  $("#libsel").hidden = libSelected.size === 0;
+  $("#libselcount").textContent = `${libSelected.size} selected`;
+}
+$("#libclear").onclick = () => { libSelected.clear(); renderLibrary(); };
+$("#libdo").onclick = async () => {
+  const v = $("#libmove").value;
+  if (v === "") return;
+  for (const id of libSelected) await api(`/api/pup/${id}/move`, { method: "POST", body: JSON.stringify({ kennel: Number(v) }) });
+  const n = libSelected.size;
+  libSelected.clear();
+  await loadState();
+  library = await (await api("/api/library")).json();
+  renderLibrary();
+  loadInbox();
+  toast(`🚚 moved ${n} pups`, false, true);
+};
+$("#libthemes").onclick = async () => {
+  const redo = library.some((p) => p.theme) && confirm("Re-categorize sessions that already have a theme too? (Cancel = only the ones without)");
+  try {
+    const res = await api("/api/themes/run", { method: "POST", body: JSON.stringify({ redo }) });
+    toast(`✨ categorizing with ${(await res.json()).provider}…`);
+  } catch (e) { toast(e.message, true); }
+};
+
+function renderThemeStatus() {
+  const t = app.state.themes || {};
+  const btn = $("#libthemes");
+  btn.textContent = t.running ? `✨ ${t.done}/${t.total || "…"}` : "✨ Themes";
+  btn.title = `categorize with ${t.provider || "an LLM"}` + (t.error ? ` — last error: ${t.error}` : "");
+  if (lib.wasRunning && !t.running) {
+    if (t.error) toast("themes: " + t.error, true);
+    else toast(`✨ themes ready (${(t.themes || []).length})`);
+    refreshLibrary();
+  }
+  lib.wasRunning = t.running;
+}
+
+// ---------- side panels: jobs & things, artifacts, gear ----------
+async function renderJobs() {
+  const box = $("#jobs");
+  box.innerHTML = "";
+  box.className = "panel";
+  let d;
+  try { d = await (await api("/api/jobs")).json(); } catch (e) { box.textContent = e.message; return; }
+  box.appendChild(el("h4", "", `Things · ${d.things.length}`));
+  for (const t of d.things) {
+    const r = el("div", "prow");
+    r.innerHTML = "";
+    r.append(el("b", "", `${t.icon} ${t.name} `), el("span", t.running ? "on" : "off", t.running ? "● running" : "○ stopped"), el("div", "m", "$ " + t.command));
+    r.onclick = () => select(t.key, true);
+    box.appendChild(r);
+  }
+  box.appendChild(el("h4", "", `Background agents · ${d.jobs.length}`));
+  for (const j of d.jobs) {
+    const r = el("div", "prow");
+    r.append(el("b", "", (j.running ? "🏃 " : "🐕 ") + j.title + " "), el("span", j.running ? "on" : "off", j.state), el("div", "m", j.detail));
+    r.onclick = () => jumpToSession(j.session);
+    box.appendChild(r);
+  }
+  box.appendChild(el("h4", "", `Scheduled tasks · ${d.crons.length}`));
+  for (const c of d.crons) {
+    const r = el("div", "prow");
+    r.append(el("b", "", `⏰ ${c.title} `), el("span", c.live ? "on" : "off", `${c.expr} · fired ${c.fires}×`), el("div", "m", c.prompt));
+    r.onclick = () => jumpToSession(c.session);
+    box.appendChild(r);
+  }
+}
+
+async function renderArt() {
+  const box = $("#art");
+  box.innerHTML = "";
+  box.className = "panel";
+  let arts;
+  try { arts = await (await api("/api/artifacts")).json(); } catch (e) { box.textContent = e.message; return; }
+  box.appendChild(el("h4", "", `Artifacts · ${arts.length}`));
+  for (const a of arts) {
+    const r = el("div", "prow");
+    r.append(el("b", "", "🎨 " + (a.title || a.url)), el("div", "m", `from ${a.pup} · ${relAge(a.at)} ago`));
+    r.onclick = () => window.open(a.url, "_blank", "noopener");
+    box.appendChild(r);
+  }
+}
+
+let gearScope = 0;
+async function renderGear() {
+  const box = $("#gear");
+  box.innerHTML = "";
+  box.className = "panel";
+  let scopes;
+  try { scopes = await (await api("/api/gear")).json(); } catch (e) { box.textContent = e.message; return; }
+  gearScope = Math.min(gearScope, scopes.length - 1);
+  const tabs = el("div", "gearscopes");
+  scopes.forEach((sc, i) => {
+    const b = el("button", i === gearScope ? "on" : "", (sc.name === "User" ? "👤 " : sc.name === "Plugins" ? "🧩 " : "📁 ") + sc.name);
+    b.onclick = () => { gearScope = i; renderGear(); };
+    tabs.appendChild(b);
+  });
+  box.appendChild(tabs);
+  const sc = scopes[gearScope];
+  if (!sc) return;
+  let kind = "";
+  for (const it of sc.items) {
+    if (it.kind !== kind) { kind = it.kind; box.appendChild(el("h4", "", kind + "s")); }
+    const row = el("div", "gitem");
+    const w = el("div", "w");
+    w.append(el("div", "n", `${it.icon} ${it.name}`), el("div", "d", `${it.level} · ${it.detail}`));
+    const sw = el("button", "switch" + (it.enabled ? " on" : ""));
+    sw.title = it.toggleable ? (it.enabled ? "disable" : "enable") : "managed outside kennel";
+    sw.disabled = !it.toggleable;
+    sw.onclick = async () => {
+      try {
+        const res = await api("/api/gear/toggle", { method: "POST", body: JSON.stringify({ Scope: sc.name, Kind: it.kind, Name: it.name, Level: it.level }) });
+        await loadState();
+        toast((await res.json()).message, false, true);
+      } catch (e) { toast(e.message, true); }
+      renderGear();
+    };
+    row.append(w, sw);
+    box.appendChild(row);
+  }
+}
+
+// ---------- digest ----------
+async function openDigest() {
+  $("#digest").hidden = false;
+  const d = await (await api(`/api/digest?days=${$("#digestdays").value}`)).json();
+  const body = $("#digestbody");
+  body.innerHTML = "";
+  for (const l of d.lines) body.appendChild(el("div", "", l));
+}
+$("#digestbtn").onclick = openDigest;
+$("#digestdays").onchange = openDigest;
+$("#digestclose").onclick = () => ($("#digest").hidden = true);
+$("#digest").addEventListener("click", (e) => { if (e.target.id === "digest") $("#digest").hidden = true; });
+
 // Exposed for end-to-end tests: screen positions of entities.
 window.kennel = {
   app,
+  lib,
+  fileInto: (key, id) => fileInto(roomByKey(key), id),
   build,
   roomPos(key, fx = 0.5, fy = 0.5) {
     const r = roomByKey(key);

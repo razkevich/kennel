@@ -28,7 +28,9 @@ import (
 	"github.com/razkevich/kennel/internal/ask"
 	"github.com/razkevich/kennel/internal/blocks"
 	"github.com/razkevich/kennel/internal/claude"
+	"github.com/razkevich/kennel/internal/digest"
 	"github.com/razkevich/kennel/internal/floor"
+	"github.com/razkevich/kennel/internal/gear"
 	"github.com/razkevich/kennel/internal/indexer"
 	"github.com/razkevich/kennel/internal/opener"
 	"github.com/razkevich/kennel/internal/pack"
@@ -51,6 +53,17 @@ type Server struct {
 	print   uint64
 	// indexing is "done/total" while the first sync runs, else "".
 	indexing atomic.Value
+	// themes reports the categorizer's progress.
+	themes atomic.Value
+}
+
+type ThemeStatus struct {
+	Running  bool     `json:"running"`
+	Done     int      `json:"done"`
+	Total    int      `json:"total"`
+	Provider string   `json:"provider"`
+	Error    string   `json:"error,omitempty"`
+	Themes   []string `json:"themes"`
 }
 
 func NewToken() string {
@@ -139,6 +152,11 @@ func (s *Server) fingerprint() uint64 {
 	h := fnv.New64a()
 	ix, _ := s.indexing.Load().(string)
 	fmt.Fprintf(h, "ix%s;", ix)
+	th, _ := s.themes.Load().(ThemeStatus)
+	fmt.Fprintf(h, "th%v%d%s;", th.Running, th.Done, th.Error)
+	for _, p := range s.App.Pups() {
+		fmt.Fprintf(h, "t%s", p.Meta.Theme)
+	}
 	for _, p := range s.App.Pups() {
 		fmt.Fprintf(h, "%s|%d|%d|%s|%v|%v|%d|%s;", p.ID, p.Status, p.Updated.UnixMilli(), p.Title(), p.Meta.Starred, p.Meta.Archived, p.Meta.KennelID, p.Pane)
 	}
@@ -186,6 +204,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/drop", s.guard(s.handleDrop))
 	mux.HandleFunc("POST /api/undo", s.guard(s.handleUndo))
 	mux.HandleFunc("POST /api/kennels", s.guard(s.handleAddKennel))
+	mux.HandleFunc("GET /api/library", s.guard(s.handleLibrary))
+	mux.HandleFunc("GET /api/inbox", s.guard(s.handleInbox))
+	mux.HandleFunc("POST /api/themes/run", s.guard(s.handleThemes))
+	mux.HandleFunc("GET /api/jobs", s.guard(s.handleJobs))
+	mux.HandleFunc("GET /api/artifacts", s.guard(s.handleArtifacts))
+	mux.HandleFunc("GET /api/gear", s.guard(s.handleGear))
+	mux.HandleFunc("POST /api/gear/toggle", s.guard(s.handleGearToggle))
+	mux.HandleFunc("GET /api/digest", s.guard(s.handleDigest))
 	mux.HandleFunc("POST /api/room/{action}", s.guard(s.handleRoom))
 	return s.hostCheck(mux)
 }
@@ -257,6 +283,8 @@ type PupJSON struct {
 	PRs         []string `json:"prs"`
 	Artifacts   int      `json:"artifacts"`
 	Kennel      string   `json:"kennel"`
+	KennelID    int64    `json:"kennelId"`
+	Theme       string   `json:"theme"`
 	Unread      bool     `json:"unread"`
 	Messages    int      `json:"messages"`
 	Cost        float64  `json:"cost"`
@@ -306,6 +334,7 @@ type StateJSON struct {
 	// Undo names the action ⌘Z would reverse; empty when there's nothing to undo.
 	Undo    string       `json:"undo"`
 	Kennels []KennelJSON `json:"kennels"`
+	Themes  ThemeStatus  `json:"themes"`
 }
 
 type KennelJSON struct {
@@ -326,7 +355,9 @@ func pupJSON(p *pack.Pup) PupJSON {
 	}
 	if p.Kennel != nil {
 		j.Kennel = p.Kennel.Name
+		j.KennelID = p.Kennel.ID
 	}
+	j.Theme = p.Meta.Theme
 	if j.PRs == nil {
 		j.PRs = []string{}
 	}
@@ -362,6 +393,10 @@ func (s *Server) State(fl int) StateJSON {
 	}
 	st.Indexing, _ = s.indexing.Load().(string)
 	st.Undo = s.App.UndoLabel()
+	st.Themes, _ = s.themes.Load().(ThemeStatus)
+	if st.Themes.Provider == "" {
+		_, st.Themes.Provider = s.App.ThemeLLM()
+	}
 	st.Kennels = []KennelJSON{}
 	for _, k := range s.App.Kennels() {
 		st.Kennels = append(st.Kennels, KennelJSON{k.ID, k.Name, k.Icon})
@@ -848,4 +883,206 @@ func (s *Server) handleAddKennel(w http.ResponseWriter, r *http.Request) {
 	}
 	s.touch()
 	writeJSON(w, k)
+}
+
+func (s *Server) handleLibrary(w http.ResponseWriter, r *http.Request) {
+	out := []PupJSON{}
+	for _, p := range s.App.Pups() {
+		if !p.Empty() {
+			out = append(out, pupJSON(p))
+		}
+	}
+	writeJSON(w, out)
+}
+
+// handleThemes starts categorizing in the background; progress shows up in /api/state.
+func (s *Server) handleThemes(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		IDs  []string `json:"ids"`
+		Redo bool     `json:"redo"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	if cur, _ := s.themes.Load().(ThemeStatus); cur.Running {
+		fail(w, errors.New("already categorizing"), http.StatusConflict)
+		return
+	}
+	_, provider := s.App.ThemeLLM()
+	s.themes.Store(ThemeStatus{Running: true, Provider: provider})
+	s.touch()
+	go func() {
+		err := s.App.Categorize(context.Background(), body.IDs, body.Redo, func(p app.ThemeProgress) {
+			s.themes.Store(ThemeStatus{Running: true, Done: p.Done, Total: p.Total, Provider: provider, Themes: p.Themes})
+			s.touch()
+		})
+		final := ThemeStatus{Provider: provider}
+		if cur, ok := s.themes.Load().(ThemeStatus); ok {
+			final.Done, final.Total, final.Themes = cur.Done, cur.Total, cur.Themes
+		}
+		if err != nil {
+			final.Error = err.Error()
+		}
+		s.themes.Store(final)
+		s.touch()
+	}()
+	writeJSON(w, map[string]any{"ok": true, "provider": provider})
+}
+
+func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request) {
+	type jobJSON struct {
+		Session string `json:"session"`
+		Title   string `json:"title"`
+		State   string `json:"state"`
+		Detail  string `json:"detail"`
+		Running bool   `json:"running"`
+		Updated int64  `json:"updated"`
+	}
+	type cronJSON struct {
+		Session  string `json:"session"`
+		Title    string `json:"title"`
+		Expr     string `json:"expr"`
+		Prompt   string `json:"prompt"`
+		Fires    int    `json:"fires"`
+		LastFire int64  `json:"lastFire"`
+		Live     bool   `json:"live"`
+	}
+	out := struct {
+		Jobs   []jobJSON   `json:"jobs"`
+		Crons  []cronJSON  `json:"crons"`
+		Things []ThingJSON `json:"things"`
+	}{Jobs: []jobJSON{}, Crons: []cronJSON{}, Things: []ThingJSON{}}
+	for _, j := range s.App.Jobs() {
+		title := strings.TrimSpace(strings.ReplaceAll(j.Name, "⑂", ""))
+		if p := s.App.Pup(j.SessionID); p != nil {
+			title = p.Title()
+		}
+		detail := j.Detail
+		if detail == "" {
+			detail = j.Intent
+		}
+		out.Jobs = append(out.Jobs, jobJSON{j.SessionID, title, j.State, detail, j.Running(), j.UpdatedAt.UnixMilli()})
+	}
+	for _, p := range s.App.Pups() {
+		for _, c := range p.Crons {
+			out.Crons = append(out.Crons, cronJSON{p.ID, p.Title(), c.Expr, c.Prompt, c.Fires, c.LastFire.UnixMilli(), p.Status.Live()})
+		}
+	}
+	for _, t := range s.App.Things() {
+		out.Things = append(out.Things, thingJSON(t))
+	}
+	writeJSON(w, out)
+}
+
+func (s *Server) handleArtifacts(w http.ResponseWriter, r *http.Request) {
+	type artJSON struct {
+		URL     string `json:"url"`
+		Title   string `json:"title"`
+		At      int64  `json:"at"`
+		Session string `json:"session"`
+		Pup     string `json:"pup"`
+	}
+	out := []artJSON{}
+	for _, a := range s.App.Artifacts() {
+		out = append(out, artJSON{a.URL, a.Title, a.At.UnixMilli(), a.Pup.ID, a.Pup.Title()})
+	}
+	writeJSON(w, out)
+}
+
+func (s *Server) gearScopes() []gear.Scope {
+	var roots []string
+	for _, pr := range s.App.Projects() {
+		roots = append(roots, pr.Root)
+	}
+	return gear.Inventory(s.App.Cfg.ClaudeDir, roots)
+}
+
+func (s *Server) handleGear(w http.ResponseWriter, r *http.Request) {
+	type itemJSON struct {
+		Kind       string `json:"kind"`
+		Icon       string `json:"icon"`
+		Name       string `json:"name"`
+		Level      string `json:"level"`
+		Detail     string `json:"detail"`
+		Path       string `json:"path"`
+		Enabled    bool   `json:"enabled"`
+		Toggleable bool   `json:"toggleable"`
+	}
+	type scopeJSON struct {
+		Name  string     `json:"name"`
+		Root  string     `json:"root"`
+		Items []itemJSON `json:"items"`
+	}
+	out := []scopeJSON{}
+	for _, sc := range s.gearScopes() {
+		sj := scopeJSON{Name: sc.Name, Root: sc.Root, Items: []itemJSON{}}
+		for _, it := range sc.Items {
+			sj.Items = append(sj.Items, itemJSON{string(it.Kind), gear.KindIcon[it.Kind], it.Name, it.Level, it.Detail, it.Path, it.Enabled, it.Toggle != nil})
+		}
+		out = append(out, sj)
+	}
+	writeJSON(w, out)
+}
+
+func (s *Server) handleGearToggle(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Scope, Kind, Name, Level string
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	find := func() *gear.Item {
+		for _, sc := range s.gearScopes() {
+			if sc.Name != body.Scope {
+				continue
+			}
+			for _, it := range sc.Items {
+				if string(it.Kind) == body.Kind && it.Name == body.Name && it.Level == body.Level && it.Toggle != nil {
+					it := it
+					return &it
+				}
+			}
+		}
+		return nil
+	}
+	it := find()
+	if it == nil {
+		fail(w, errors.New("that item can't be toggled from kennel"), http.StatusBadRequest)
+		return
+	}
+	if err := it.Toggle(); err != nil {
+		fail(w, err, http.StatusBadRequest)
+		return
+	}
+	verb := "disabled"
+	if !it.Enabled {
+		verb = "enabled"
+	}
+	s.App.Remember(verb+" "+it.Name, func() error {
+		if again := find(); again != nil {
+			return again.Toggle()
+		}
+		return fmt.Errorf("%s isn't there anymore", body.Name)
+	})
+	writeJSON(w, map[string]any{"ok": true, "message": verb + " " + it.Name + " — takes effect in new sessions"})
+}
+
+func (s *Server) handleDigest(w http.ResponseWriter, r *http.Request) {
+	days := 1
+	fmt.Sscan(r.URL.Query().Get("days"), &days)
+	d := digest.Build(s.App.Pups(), s.App.Now(), time.Duration(max(days, 1))*24*time.Hour)
+	writeJSON(w, map[string]any{"days": days, "lines": d.Lines()})
+}
+
+// handleInbox lists the newest sessions that aren't in a kennel yet.
+func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
+	n := 12
+	fmt.Sscan(r.URL.Query().Get("n"), &n)
+	out := []PupJSON{}
+	for _, p := range s.App.Pups() {
+		if len(out) >= n {
+			break
+		}
+		if p.Empty() || p.Meta.Archived || p.Kennel != nil {
+			continue
+		}
+		out = append(out, pupJSON(p))
+	}
+	writeJSON(w, out)
 }

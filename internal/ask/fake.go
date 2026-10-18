@@ -9,6 +9,34 @@ import (
 type Fake struct{}
 
 func (Fake) Complete(_ context.Context, _ string, prompt string, onText func(string)) (string, error) {
+	if strings.Contains(prompt, "Propose 8-14 short themes") {
+		return "Payments, Infra, Mobile, Search, Tooling, Incidents", nil
+	}
+	if strings.Contains(prompt, "Assign each coding-assistant session") {
+		var out []string
+		for _, line := range strings.Split(prompt, "\n") {
+			id, rest, ok := strings.Cut(line, " | ")
+			if !ok || len(id) != 8 {
+				continue
+			}
+			l := strings.ToLower(rest)
+			theme := "Tooling"
+			switch {
+			case strings.Contains(l, "checkout") || strings.Contains(l, "payment") || strings.Contains(l, "invoice") || strings.Contains(l, "rate"):
+				theme = "Payments"
+			case strings.Contains(l, "incident") || strings.Contains(l, "crash") || strings.Contains(l, "flaky"):
+				theme = "Incidents"
+			case strings.Contains(l, "postgres") || strings.Contains(l, "terraform") || strings.Contains(l, "cost") || strings.Contains(l, "infra"):
+				theme = "Infra"
+			case strings.Contains(l, "ios") || strings.Contains(l, "mobile") || strings.Contains(l, "dark mode") || strings.Contains(l, "widget"):
+				theme = "Mobile"
+			case strings.Contains(l, "search"):
+				theme = "Search"
+			}
+			out = append(out, id+": "+theme)
+		}
+		return strings.Join(out, "\n"), nil
+	}
 	if strings.Contains(prompt, "names workstreams") {
 		return "STRIPE-FLICKER", nil
 	}

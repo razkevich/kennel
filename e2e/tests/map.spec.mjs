@@ -85,7 +85,7 @@ test("search finds pups by content with highlighted snippets", async ({ page }) 
 
 test("ask answers with clickable citations", async ({ page }) => {
   await open(page);
-  await page.locator("#side .tabs button", { hasText: "Ask" }).click();
+  await page.locator("#side .tabs button[data-tab=ask]").click();
   await page.locator("#askq").fill("why did the payment form flicker?");
   await page.locator("#askform button").click();
   await expect(page.locator("#answer")).toContainText("memoizing its options", { timeout: 15000 });

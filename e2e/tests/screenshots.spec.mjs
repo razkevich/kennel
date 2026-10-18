@@ -38,7 +38,7 @@ test("web screenshots", async ({ page }) => {
   await page.screenshot({ path: out("web-search") });
   await page.keyboard.press("Escape");
 
-  await page.locator("#side .tabs button", { hasText: "Ask" }).click();
+  await page.locator("#side .tabs button[data-tab=ask]").click();
   await page.locator("#askq").fill("what did we decide about the postgres upgrade?");
   await page.locator("#askform button").click();
   await page.locator("#sources .source").first().waitFor();
@@ -61,4 +61,26 @@ test("build screenshot", async ({ page }) => {
   await page.mouse.click(p.x, p.y);
   await page.waitForTimeout(800);
   await page.screenshot({ path: out("web-build") });
+});
+
+test("library and panels screenshots", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 860 });
+  await page.goto("/?t=e2e");
+  await page.waitForFunction(() => window.kennel && window.kennel.app.state && window.kennel.app.ents.size > 0);
+  await page.evaluate(() => fetch("/api/themes/run", { method: "POST", headers: { "X-Kennel-Token": "e2e" }, body: "{}" }));
+  await page.waitForFunction(() => window.kennel.app.state.themes && !window.kennel.app.state.themes.running && window.kennel.app.state.themes.done > 0);
+  await page.waitForTimeout(800);
+  await page.screenshot({ path: out("web-inbox") });
+  await page.keyboard.press("l");
+  await page.locator("#libwhen").selectOption("0");
+  await page.locator("#libgroup").selectOption("theme");
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: out("web-library") });
+  await page.keyboard.press("Escape");
+  await page.locator("#side .tabs button[data-tab=gear]").click();
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: out("web-gear") });
+  await page.locator("#side .tabs button[data-tab=jobs]").click();
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: out("web-jobs") });
 });
