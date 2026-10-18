@@ -12,14 +12,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/razkevich/kennel/internal/term"
 	"hash/fnv"
 	"io/fs"
+	"log"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"runtime"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -57,6 +61,9 @@ type Server struct {
 
 	subMu sync.Mutex
 	subs  map[chan []byte]bool
+
+	// Terms are the sessions running in the page's own terminal panel.
+	Terms *term.Manager
 }
 
 // handoff broadcasts a launch to connected pages; the Mac app's page opens it as a tab.
@@ -100,7 +107,7 @@ func Serve(ctx context.Context, a *app.App, addr string, open bool, token string
 	if token == "" {
 		token = NewToken()
 	}
-	s := &Server{App: a, Token: token, Herdr: !a.Cfg.Demo}
+	s := &Server{App: a, Token: token, Herdr: !a.Cfg.Demo, Terms: term.NewManager()}
 	if a.Cfg.Opener == opener.App {
 		a.Cfg.Handoff = s.handoff
 	}
@@ -113,6 +120,7 @@ func Serve(ctx context.Context, a *app.App, addr string, open bool, token string
 	}
 	go func() {
 		<-ctx.Done()
+		s.Terms.StopAll()
 		sctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(sctx)
@@ -249,6 +257,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/artifacts", s.guard(s.handleArtifacts))
 	mux.HandleFunc("POST /api/room/{action}", s.guard(s.handleRoom))
 	mux.HandleFunc("POST /api/appearance", s.guard(s.handleAppearance))
+	mux.HandleFunc("POST /api/prefs", s.guard(s.handlePrefs))
+	mux.HandleFunc("POST /api/term/{id}/{action}", s.guard(s.handleTerm))
+	mux.HandleFunc("GET /api/term/{id}/stream", s.guard(s.handleTermStream))
 	return s.hostCheck(mux)
 }
 
@@ -291,6 +302,9 @@ func writeJSON(w http.ResponseWriter, v any) {
 }
 
 func fail(w http.ResponseWriter, err error, code int) {
+	if code >= 400 {
+		log.Printf("kennel: %v", err)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
@@ -327,7 +341,10 @@ type PupJSON struct {
 	Pane        string   `json:"pane"`
 	Cwd         string   `json:"cwd"`
 	Project     string   `json:"project"`
-	Note        string   `json:"note"`
+	// Term is set while the pup runs in kennel's own terminal panel.
+	Term bool   `json:"term"`
+	Role string `json:"role"`
+	Note string `json:"note"`
 }
 
 type ThingJSON struct {
@@ -360,12 +377,14 @@ type RoomJSON struct {
 }
 
 type StateJSON struct {
-	Version int64              `json:"version"`
-	Now     int64              `json:"now"`
-	Floor   int64              `json:"floor"`
-	Floors  []FloorJSON        `json:"floors"`
-	Rooms   []RoomJSON         `json:"rooms"`
-	Pups    map[string]PupJSON `json:"pups"`
+	Version int64 `json:"version"`
+	Now     int64 `json:"now"`
+	// Space is the project root whose map this is, or "" for all projects.
+	Space  string             `json:"space"`
+	Floor  int64              `json:"floor"`
+	Floors []FloorJSON        `json:"floors"`
+	Rooms  []RoomJSON         `json:"rooms"`
+	Pups   map[string]PupJSON `json:"pups"`
 	// Tray lists recent and live pups from every floor, newest first, for the side panel.
 	Tray     []string             `json:"tray"`
 	Projects []ProjectJSON        `json:"projects"`
@@ -380,6 +399,8 @@ type StateJSON struct {
 	Themes  ThemeStatus  `json:"themes"`
 	// Appearance is "light", "dark" or "" (follow the system), shared by every open page.
 	Appearance string `json:"appearance"`
+	// Prefs are the page's remembered filters (tray, library), as JSON strings.
+	Prefs map[string]string `json:"prefs"`
 }
 
 type KennelJSON struct {
@@ -408,7 +429,7 @@ func pupJSON(p *pack.Pup) PupJSON {
 	j := PupJSON{ID: p.ID, Agent: p.AgentKind(), Title: p.Title(), Status: statusNames[p.Status], Repo: p.Repo(), Branch: p.Branch(), Snippet: p.Snippet(),
 		FirstPrompt: p.FirstPrompt, Recap: p.Recap, Updated: p.Updated.UnixMilli(), Started: p.Started.UnixMilli(), Fur: furColor(p.ID, p.Color),
 		Starred: p.Meta.Starred, Archived: p.Meta.Archived, Remote: p.Remote != "", Crons: len(p.Crons), PRs: p.PRs, Artifacts: len(p.Artifacts),
-		Unread: p.Unread(), Messages: p.NUser, Cost: p.Cost, Pane: p.Pane, Cwd: p.Cwd, Project: app.ProjectRoot(p.Cwd), Note: p.Meta.Note}
+		Unread: p.Unread(), Messages: p.NUser, Cost: p.Cost, Pane: p.Pane, Cwd: p.Cwd, Project: app.ProjectRoot(p.Cwd), Role: p.Role(), Note: p.Meta.Note}
 	if !p.Live.Since.IsZero() {
 		j.Since = p.Live.Since.UnixMilli()
 	}
@@ -441,11 +462,13 @@ func furColor(id, c string) string {
 	return furs[h.Sum32()%uint32(len(furs))]
 }
 
-// State is one floor of the map plus everything the side panel needs.
-func (s *Server) State(fl int64) StateJSON {
+// State is one floor of a space's map plus everything the side panel needs.
+func (s *Server) State(space string, fl int64) StateJSON {
 	st := StateJSON{Version: s.Version(), Now: s.App.Now().UnixMilli(), Pups: map[string]PupJSON{}, Things: map[string]ThingJSON{},
-		Counts: map[string]int{}, Demo: s.App.Cfg.Demo, Floors: []FloorJSON{}, Tray: []string{}, Projects: []ProjectJSON{}, Rooms: []RoomJSON{}}
-	for _, f := range s.App.Floors() {
+		Counts: map[string]int{}, Demo: s.App.Cfg.Demo, Floors: []FloorJSON{}, Tray: []string{}, Projects: []ProjectJSON{}, Rooms: []RoomJSON{},
+		Space: space, Prefs: map[string]string{}}
+	floors, _ := s.App.OpenSpace(space)
+	for _, f := range floors {
 		st.Floors = append(st.Floors, FloorJSON{f.ID, f.Name, f.Icon})
 		if f.ID == fl {
 			st.Floor = fl
@@ -457,9 +480,9 @@ func (s *Server) State(fl int64) StateJSON {
 	now := s.App.Now()
 	for _, p := range s.App.Pups() {
 		st.Counts[statusNames[p.Status]]++
-		if !p.Meta.Archived && !p.Empty() && (p.Status.Live() || now.Sub(p.Updated) < floor.Recent) {
+		if !p.Meta.Archived && !p.Empty() && (p.Status.Live() || now.Sub(p.Updated) < floor.Recent) && (space == "" || app.ProjectRoot(p.Cwd) == space) {
 			st.Tray = append(st.Tray, p.ID)
-			st.Pups[p.ID] = pupJSON(p)
+			st.Pups[p.ID] = s.pupJSON(p)
 		}
 	}
 	for _, pr := range s.App.Projects() {
@@ -473,13 +496,20 @@ func (s *Server) State(fl int64) StateJSON {
 	}
 	st.Kennels = []KennelJSON{}
 	for _, k := range s.App.Kennels() {
-		st.Kennels = append(st.Kennels, KennelJSON{k.ID, k.Name, k.Icon, s.App.FloorOf(k), k.Smart})
+		if s.App.SpaceOf(k) == space {
+			st.Kennels = append(st.Kennels, KennelJSON{k.ID, k.Name, k.Icon, s.App.FloorOf(k), k.Smart})
+		}
+	}
+	for _, key := range prefKeys {
+		if v := s.App.Store.Get("pref:" + key); v != "" {
+			st.Prefs[key] = v
+		}
 	}
 	for _, r := range floor.Rooms(s.App, st.Floor) {
 		rj := RoomJSON{Key: r.Key, Kennel: r.KennelID, Smart: r.Smart, Older: r.Older, Style: r.Style, MinCols: r.MinCols, MinRows: r.MinRows, Title: r.Title, Icon: r.Icon, Color: r.Color, Look: r.Look, Blurb: r.Blurb, Pups: []string{}, Things: []string{}}
 		for _, p := range r.Pups {
 			rj.Pups = append(rj.Pups, p.ID)
-			st.Pups[p.ID] = pupJSON(p)
+			st.Pups[p.ID] = s.pupJSON(p)
 		}
 		for _, t := range r.Things {
 			rj.Things = append(rj.Things, t.Key())
@@ -491,13 +521,20 @@ func (s *Server) State(fl int64) StateJSON {
 }
 
 func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
-	var fl int64
-	fmt.Sscan(s.App.Store.Get("web_floor"), &fl)
-	if v := r.URL.Query().Get("floor"); v != "" {
-		fmt.Sscan(v, &fl)
-		_ = s.App.Store.Set("web_floor", fmt.Sprint(fl))
+	// The page remembers which space it was in and which floor of each space.
+	q := r.URL.Query()
+	space := s.App.Store.Get("web_space")
+	if q.Has("space") {
+		space = q.Get("space")
+		_ = s.App.Store.Set("web_space", space)
 	}
-	st := s.State(fl)
+	var fl int64
+	fmt.Sscan(s.App.Store.Get("web_floor:"+space), &fl)
+	if v := q.Get("floor"); v != "" {
+		fmt.Sscan(v, &fl)
+		_ = s.App.Store.Set("web_floor:"+space, fmt.Sprint(fl))
+	}
+	st := s.State(space, fl)
 	st.Appearance = s.App.Store.Get("web_appearance")
 	writeJSON(w, st)
 }
@@ -604,8 +641,16 @@ func (s *Server) handleTranscript(w http.ResponseWriter, r *http.Request) {
 		Text string `json:"text"`
 	}
 	out := []chunk{}
+	// ?last=N is the conversation tail the pup card shows: the last N prompts and replies.
+	last, _ := strconv.Atoi(r.URL.Query().Get("last"))
 	for _, c := range chunks {
+		if last > 0 && c.Role != claude.RoleUser && c.Role != claude.RoleAssistant {
+			continue
+		}
 		out = append(out, chunk{Role: string(c.Role), TS: c.TS.UnixMilli(), Text: c.Text})
+	}
+	if last > 0 && len(out) > last {
+		out = out[len(out)-last:]
 	}
 	writeJSON(w, map[string]any{"pup": pupJSON(p), "chunks": out})
 }
@@ -658,7 +703,6 @@ func (s *Server) handlePupAction(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Title  string   `json:"title"`
-		Text   string   `json:"text"`
 		Cwd    string   `json:"cwd"`
 		With   []string `json:"with"`
 		Agent  string   `json:"agent"`
@@ -688,8 +732,6 @@ func (s *Server) handlePupAction(w http.ResponseWriter, r *http.Request) {
 		err = s.App.ToggleArchive(p.ID)
 	case "rename":
 		err = s.App.Rename(p.ID, strings.TrimSpace(body.Title))
-	case "tell":
-		msg, err = s.App.Tell(p, body.Text)
 	case "clone":
 		if p.AgentKind() != "claude" {
 			err = errors.New("clone works on Claude sessions; use Convert for other agents")
@@ -1284,10 +1326,11 @@ func (s *Server) handleFloor(w http.ResponseWriter, r *http.Request) {
 // handleSort suggests a kennel for each session; nothing is filed until apply.
 func (s *Server) handleSort(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		IDs []string `json:"ids"`
+		IDs   []string `json:"ids"`
+		Space string   `json:"space"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
-	out, err := s.App.SuggestKennels(r.Context(), body.IDs)
+	out, err := s.App.SuggestKennels(r.Context(), body.IDs, body.Space)
 	if err != nil {
 		fail(w, err, http.StatusBadRequest)
 		return
@@ -1312,3 +1355,141 @@ func (s *Server) handleSortApply(w http.ResponseWriter, r *http.Request) {
 	s.touch()
 	writeJSON(w, map[string]any{"ok": true, "message": fmt.Sprintf("🗂 filed %d sessions", n)})
 }
+
+// prefKeys are the page filters kennel remembers between sessions and launches.
+var prefKeys = []string{"tray", "library", "layout"}
+
+func (s *Server) handlePrefs(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Key   string `json:"key"`
+		Value string `json:"value"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || !slices.Contains(prefKeys, body.Key) || len(body.Value) > 4096 {
+		fail(w, errors.New("unknown or oversized preference"), http.StatusBadRequest)
+		return
+	}
+	if err := s.App.Store.Set("pref:"+body.Key, body.Value); err != nil {
+		fail(w, err, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+func (s *Server) pupJSON(p *pack.Pup) PupJSON {
+	j := pupJSON(p)
+	j.Term = s.Terms != nil && s.Terms.Get(p.ID) != nil
+	return j
+}
+
+// handleTerm starts, feeds, resizes or stops a session's terminal in the panel.
+func (s *Server) handleTerm(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var body struct {
+		Cols int    `json:"cols"`
+		Rows int    `json:"rows"`
+		Data string `json:"data"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	t := s.Terms.Get(id)
+	switch r.PathValue("action") {
+	case "start":
+		if t != nil {
+			_ = t.Resize(body.Cols, body.Rows)
+			break
+		}
+		p := s.App.Pup(id)
+		if p == nil {
+			fail(w, errors.New("no such session"), http.StatusNotFound)
+			return
+		}
+		if p.Status.Live() {
+			fail(w, fmt.Errorf("%s is running in another terminal; go to it there", p.Title()), http.StatusConflict)
+			return
+		}
+		tg := floor.TargetFor(s.App, p, false, false)
+		if err := s.App.CheckCwd(tg.Cwd); err != nil {
+			fail(w, err, http.StatusBadRequest)
+			return
+		}
+		bin, args := tg.Command()
+		line := opener.CommandLine(bin, args)
+		shell := os.Getenv("SHELL")
+		if shell == "" {
+			shell = "/bin/zsh"
+		}
+		cmdArgs := []string{"-l", "-c", line}
+		// Demo and tests never start a real agent: the terminal says what it would run and echoes.
+		if s.App.Cfg.Demo || opener.Resolve(s.App.Cfg.Opener) == opener.Print {
+			shell, cmdArgs = "/bin/sh", []string{"-c", "printf '%s\\n' " + shellQuote("would run: "+line) + "; exec cat"}
+		}
+		var err error
+		dir := tg.Cwd
+		if _, err := os.Stat(dir); err != nil {
+			dir, _ = os.UserHomeDir() // demo sessions point at folders that don't exist
+		}
+		if _, err = s.Terms.Start(id, dir, shell, cmdArgs, nil, body.Cols, body.Rows); err != nil {
+			fail(w, err, http.StatusInternalServerError)
+			return
+		}
+		s.touch()
+	case "input":
+		if t == nil {
+			fail(w, errors.New("not running here"), http.StatusConflict)
+			return
+		}
+		if err := t.Write([]byte(body.Data)); err != nil {
+			fail(w, err, http.StatusConflict)
+			return
+		}
+	case "resize":
+		if t != nil {
+			_ = t.Resize(body.Cols, body.Rows)
+		}
+	case "stop":
+		if t != nil {
+			t.Stop()
+		}
+		s.touch()
+	default:
+		fail(w, errors.New("unknown action"), http.StatusNotFound)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// handleTermStream sends a terminal's scrollback, then its output, as base64 events.
+func (s *Server) handleTermStream(w http.ResponseWriter, r *http.Request) {
+	fl, ok := w.(http.Flusher)
+	t := s.Terms.Get(r.PathValue("id"))
+	if !ok || t == nil {
+		fail(w, errors.New("not running here"), http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-store")
+	back, live, detach := t.Attach()
+	defer detach()
+	send := func(b []byte) {
+		fmt.Fprintf(w, "data: %s\n\n", base64.StdEncoding.EncodeToString(b))
+		fl.Flush()
+	}
+	if len(back) > 0 {
+		send(back)
+	}
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case b, open := <-live:
+			if !open {
+				fmt.Fprint(w, "event: exit\ndata: {}\n\n")
+				fl.Flush()
+				s.touch()
+				return
+			}
+			send(b)
+		}
+	}
+}
+
+func shellQuote(v string) string { return "'" + strings.ReplaceAll(v, "'", `'\''`) + "'" }

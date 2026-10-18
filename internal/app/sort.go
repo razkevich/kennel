@@ -22,8 +22,8 @@ type Suggestion struct {
 const sortLimit = 80
 
 // SuggestKennels asks the theme model where each session belongs, preferring your
-// own kennels. Like Categorize, only titles, first asks and recaps are sent.
-func (a *App) SuggestKennels(ctx context.Context, ids []string) ([]Suggestion, error) {
+// own kennels in the space. Like Categorize, only titles, first asks and recaps are sent.
+func (a *App) SuggestKennels(ctx context.Context, ids []string, space string) ([]Suggestion, error) {
 	var todo []*pack.Pup
 	for _, id := range ids {
 		if p := a.Pup(id); p != nil && !p.Empty() {
@@ -39,7 +39,7 @@ func (a *App) SuggestKennels(ctx context.Context, ids []string) ([]Suggestion, e
 	own := map[string]store.Kennel{}
 	var names []string
 	for _, k := range a.Kennels() {
-		if k.Smart != "" {
+		if k.Smart != "" || a.SpaceOf(k) != space {
 			continue
 		}
 		own[strings.ToLower(k.Name)] = k

@@ -7,16 +7,18 @@ import (
 	"strings"
 )
 
-// Floor is one level of the map; each kennel stands on exactly one.
+// Floor is one level of a space's map; each kennel stands on exactly one.
+// Space is a project root, or "" for the space that spans all projects.
 type Floor struct {
-	ID   int64
-	Name string
-	Icon string
-	Sort int
+	ID    int64
+	Name  string
+	Icon  string
+	Sort  int
+	Space string
 }
 
 func (s *Store) Floors() ([]Floor, error) {
-	rows, err := s.DB.Query(`SELECT id, name, icon, sort FROM floors ORDER BY sort, id`)
+	rows, err := s.DB.Query(`SELECT id, name, icon, sort, space FROM floors ORDER BY sort, id`)
 	if err != nil {
 		return nil, err
 	}
@@ -24,7 +26,7 @@ func (s *Store) Floors() ([]Floor, error) {
 	var out []Floor
 	for rows.Next() {
 		var f Floor
-		if err := rows.Scan(&f.ID, &f.Name, &f.Icon, &f.Sort); err != nil {
+		if err := rows.Scan(&f.ID, &f.Name, &f.Icon, &f.Sort, &f.Space); err != nil {
 			return nil, err
 		}
 		out = append(out, f)
@@ -38,15 +40,15 @@ func (s *Store) SaveFloor(f *Floor) error {
 	}
 	if f.ID == 0 {
 		_ = s.DB.QueryRow(`SELECT coalesce(max(sort), 0) + 1 FROM floors`).Scan(&f.Sort)
-		res, err := s.DB.Exec(`INSERT INTO floors(name, icon, sort) VALUES(?,?,?)`, f.Name, f.Icon, f.Sort)
+		res, err := s.DB.Exec(`INSERT INTO floors(name, icon, sort, space) VALUES(?,?,?,?)`, f.Name, f.Icon, f.Sort, f.Space)
 		if err != nil {
 			return err
 		}
 		f.ID, _ = res.LastInsertId()
 		return nil
 	}
-	_, err := s.DB.Exec(`INSERT INTO floors(id, name, icon, sort) VALUES(?,?,?,?)
-		ON CONFLICT(id) DO UPDATE SET name=excluded.name, icon=excluded.icon, sort=excluded.sort`, f.ID, f.Name, f.Icon, f.Sort)
+	_, err := s.DB.Exec(`INSERT INTO floors(id, name, icon, sort, space) VALUES(?,?,?,?,?)
+		ON CONFLICT(id) DO UPDATE SET name=excluded.name, icon=excluded.icon, sort=excluded.sort, space=excluded.space`, f.ID, f.Name, f.Icon, f.Sort, f.Space)
 	return err
 }
 

@@ -205,7 +205,7 @@ const pupOf = (id) => app.state && app.state.pups[id];
 // Your own kennels hold the pups you file; smart ones fill themselves.
 const isOwnKennel = (r) => !!(r && r.kennel && !r.smart);
 const ownKennels = () => (app.state.kennels || []).filter((k) => !k.smart);
-const dimmed = (p) => !!(app.project && p && p.project !== app.project);
+const inSpace = (p) => !app.state.space || p.project === app.state.space;
 const thingOf = (id) => app.state && app.state.things[id];
 
 // ---------- data ----------
@@ -235,12 +235,20 @@ async function cycleAppearance() {
 }
 
 async function loadState() {
-  const res = await api(app.floor === null ? "/api/state" : `/api/state?floor=${app.floor}`);
+  const q = new URLSearchParams();
+  if (app.space !== null) q.set("space", app.space);
+  if (app.floor !== null) q.set("floor", app.floor);
+  const res = await api(`/api/state?${q}`);
   app.state = await res.json();
   app.floor = app.state.floor;
   if ((app.state.appearance || "") !== appearance) applyAppearance(app.state.appearance);
   layout(app.state);
   loadTreats();
+  if (!app.laidOut) {
+    app.laidOut = true;
+    const l = readPref("layout");
+    if (l && l.side) { document.documentElement.style.setProperty("--side", l.side + "px"); resize(); }
+  }
   renderFloors();
   renderProjects();
   renderCounts();
@@ -251,6 +259,7 @@ async function loadState() {
   if (lib.open) refreshLibrary();
   if (app.tab === "jobs") renderJobs();
   if (app.sel) renderCard();
+  if (app.tab === "term") showTerm();
   if (!app.framed && app.rooms.length) {
     app.framed = true;
     frameWorld();
@@ -297,7 +306,7 @@ async function newFloor() {
   const name = prompt("Name the new floor", `Floor ${app.state.floors.length + 1}`);
   if (!name || !name.trim()) return;
   try {
-    const f = await (await api("/api/floors", { method: "POST", body: JSON.stringify({ Name: name.trim(), Icon: "🏢" }) })).json();
+    const f = await (await api("/api/floors", { method: "POST", body: JSON.stringify({ Name: name.trim(), Icon: "🏢", Space: app.state.space }) })).json();
     goFloor(f.ID);
     toast(`🏢 built ${f.Name}`, false, true);
   } catch (e) { toast(e.message, true); }
@@ -310,7 +319,7 @@ function floorMenu(f) {
   return [
     ["✎ Rename…", async () => { const n = prompt("Rename floor", f.name); if (n && n.trim() && await post("rename", { name: n.trim() })) toast(`✎ ${n.trim()}`, false, true); }],
     ["🗑 Remove floor", async () => {
-      if (app.state.floors.length < 2) { toast("the last floor stays", true); return; }
+      if (app.state.floors.length < 2) { toast("a space keeps at least one floor", true); return; }
       if (await post("delete")) { app.ents.clear(); toast(`🗑 removed ${f.name}; its kennels moved to another floor`, false, true); }
     }],
   ];
@@ -332,13 +341,22 @@ function floorTabAt(x, y) {
 
 function renderProjects() {
   const sel = $("#projectsel");
-  const v = app.project;
+  const v = app.state.space;
   sel.innerHTML = "";
-  sel.appendChild(new Option("All projects", ""));
-  for (const pr of app.state.projects) sel.appendChild(new Option(`${pr.name} · ${pr.count}`, pr.root));
-  if (v && !app.state.projects.some((pr) => pr.root === v)) sel.appendChild(new Option(v.split("/").pop(), v));
+  sel.appendChild(new Option("🌐 All projects", ""));
+  for (const pr of app.state.projects) sel.appendChild(new Option(`📁 ${pr.name} · ${pr.count}`, pr.root));
+  if (v && !app.state.projects.some((pr) => pr.root === v)) sel.appendChild(new Option(`📁 ${v.split("/").pop()}`, v));
   sel.value = v;
   sel.classList.toggle("on", !!v);
+}
+
+// Each project has its own space: floors, kennels and smart rooms of its own.
+function goSpace(space) {
+  app.space = space; app.floor = null; app.sel = null; app.multi.clear();
+  $("#card").hidden = true;
+  app.framed = false; app.ents.clear();
+  if (lib.open) closeLibrary();
+  loadState();
 }
 
 function renderCounts() {
@@ -361,40 +379,88 @@ function miniDog(fur, status, agent) {
   return cv;
 }
 
-// The session tray: everything recent, grouped by what it needs from you. Drag any
-// row onto one of your kennels to file it.
-const tray = { q: "", closed: {}, more: {} };
+// The sessions list: everything from the last week, grouped and sorted your way.
+// Drag any row onto one of your kennels to file it.
+const tray = { q: "", closed: {}, more: {}, group: "status", sort: "recent" };
+
+const prefTimers = {};
+function savePref(key, value) {
+  clearTimeout(prefTimers[key]);
+  prefTimers[key] = setTimeout(() => api("/api/prefs", { method: "POST", body: JSON.stringify({ key, value: JSON.stringify(value) }) }).catch(() => {}), 300);
+}
+const readPref = (key) => { try { return JSON.parse((app.state.prefs || {})[key] || "null"); } catch (_) { return null; } };
 
 function renderPack() {
   const box = $("#pack");
   if (!box.querySelector(".traylist")) {
+    const saved = readPref("tray");
+    if (saved) Object.assign(tray, { q: saved.q || "", closed: saved.closed || {}, group: saved.group || "status", sort: saved.sort || "recent" });
     box.innerHTML = "";
     const q = el("input");
     q.type = "search";
     q.className = "trayq";
     q.placeholder = "Filter sessions…";
-    q.oninput = () => { tray.q = q.value; renderTray(); };
-    box.append(q, el("div", "traylist"));
+    q.value = tray.q;
+    q.oninput = () => { tray.q = q.value; renderTray(); saveTray(); };
+    const opts = el("div", "trayopts");
+    const pick = (label, key, choices) => {
+      const l = el("label", "", label);
+      const sel = el("select");
+      for (const [v, t] of choices) sel.appendChild(new Option(t, v));
+      sel.value = tray[key];
+      sel.dataset.key = key;
+      sel.onchange = () => { tray[key] = sel.value; renderTray(); saveTray(); };
+      l.appendChild(sel);
+      return l;
+    };
+    opts.append(
+      pick("group", "group", [["status", "by status"], ["kennel", "by kennel"], ["project", "by project"], ["role", "by role"], ["none", "none"]]),
+      pick("sort", "sort", [["recent", "most recent"], ["active", "most active"], ["cost", "most expensive"], ["name", "name"]]));
+    box.append(q, opts, el("div", "traylist"));
   }
   renderTray();
+}
+
+const saveTray = () => savePref("tray", { q: tray.q, closed: tray.closed, group: tray.group, sort: tray.sort });
+
+const TRAY_SORT = {
+  recent: (a, b) => b.updated - a.updated,
+  active: (a, b) => b.messages - a.messages || b.updated - a.updated,
+  cost: (a, b) => b.cost - a.cost || b.updated - a.updated,
+  name: (a, b) => a.title.localeCompare(b.title),
+};
+
+function trayGroups(pups) {
+  const by = (keyOf, labelOf) => {
+    const m = new Map();
+    for (const p of pups) { const k = keyOf(p); if (!m.has(k)) m.set(k, []); m.get(k).push(p); }
+    return [...m.entries()].map(([k, items]) => [k, labelOf(k), items]);
+  };
+  switch (tray.group) {
+    case "kennel": return by((p) => p.kennel || "", (k) => k ? `🏠 ${k}` : "📥 New, not in a kennel").sort((a, b) => (a[0] === "" ? -1 : b[0] === "" ? 1 : a[0].localeCompare(b[0])));
+    case "project": return by((p) => p.repo || "—", (k) => `📁 ${k}`).sort((a, b) => b[2].length - a[2].length);
+    case "role": return by((p) => p.role || "", (k) => ROLES[k] ? `${ROLES[k].icon} ${ROLES[k].name.split(":")[0]}` : "🐾 Other").sort((a, b) => b[2].length - a[2].length);
+    case "none": return [["all", `All · last week`, pups]];
+  }
+  const used = new Set();
+  const take = (f) => pups.filter((p) => !used.has(p.id) && f(p)).map((p) => (used.add(p.id), p));
+  return [
+    ["waiting", "❗ Needs you", take((p) => p.status === "waiting")],
+    ["working", "⚡ Working", take((p) => p.status === "working")],
+    ["new", "📥 New, not in a kennel", take((p) => !p.kennel)],
+    ["recent", "🕘 Recent", take(() => true)],
+  ];
 }
 
 function renderTray() {
   const list = $("#pack .traylist");
   const q = tray.q.trim().toLowerCase();
   const pups = app.state.tray.map(pupOf).filter(Boolean)
-    .filter((p) => !dimmed(p))
-    .filter((p) => !q || `${p.title} ${p.repo} ${p.kennel} ${p.snippet} ${p.branch}`.toLowerCase().includes(q));
-  const used = new Set();
-  const take = (f) => pups.filter((p) => !used.has(p.id) && f(p)).map((p) => (used.add(p.id), p));
-  const groups = [
-    ["waiting", "❗ Needs you", take((p) => p.status === "waiting")],
-    ["new", "📥 New, not in a kennel", take((p) => !p.kennel)],
-    ["working", "⚡ Working", take((p) => p.status === "working")],
-    ["recent", "🕘 Recent", take(() => true)],
-  ];
+    .filter((p) => !q || `${p.title} ${p.repo} ${p.kennel} ${p.snippet} ${p.branch} ${p.role}`.toLowerCase().includes(q))
+    .sort(TRAY_SORT[tray.sort] || TRAY_SORT.recent);
+  const groups = trayGroups(pups);
   // Rebuilding the list under the cursor would break hovers and drags, so only redraw on change.
-  const sig = JSON.stringify([q, app.project, app.sel, tray.closed, tray.more, groups.map(([k, , items]) => [k, items.map((p) => [p.id, p.title, p.status, p.kennel, p.updated, p.starred])])]);
+  const sig = JSON.stringify([q, tray.group, tray.sort, app.state.space, app.sel, tray.closed, tray.more, groups.map(([k, , items]) => [k, items.map((p) => [p.id, p.title, p.status, p.kennel, p.updated, p.starred, p.term])])]);
   if (sig === tray.sig) return;
   tray.sig = sig;
   list.innerHTML = "";
@@ -402,14 +468,16 @@ function renderTray() {
     if (!items.length) continue;
     const g = el("div", "group" + (tray.closed[key] ? " closed" : ""));
     const h = el("h4", "", `${label} · ${items.length}`);
-    h.onclick = () => { tray.closed[key] = !tray.closed[key]; renderTray(); };
-    if (key === "new") {
-      const sort = el("button", "sortbtn", "✨ Sort into kennels");
-      sort.title = "Suggest a kennel for each new session; you review before anything moves";
-      sort.onclick = (e) => { e.stopPropagation(); openSort(items.map((p) => p.id)); };
-      h.appendChild(sort);
-    }
+    h.onclick = () => { tray.closed[key] = !tray.closed[key]; renderTray(); saveTray(); };
     g.appendChild(h);
+    if (key === "new" || (tray.group === "kennel" && key === "")) {
+      if (!tray.closed[key]) {
+        const sort = el("button", "sortbtn", "✨ Sort these into kennels");
+        sort.title = "Suggest a kennel for each new session; you review before anything moves";
+        sort.onclick = () => openSort(items.map((p) => p.id));
+        g.appendChild(sort);
+      }
+    }
     if (!tray.closed[key]) {
       const limit = tray.more[key] ? items.length : 25;
       for (const p of items.slice(0, limit)) g.appendChild(memberRow(p));
@@ -421,23 +489,24 @@ function renderTray() {
     }
     list.appendChild(g);
   }
-  if (!list.children.length) list.appendChild(el("div", "empty", q || app.project ? "Nothing matches." : "No sessions in the last two weeks."));
+  if (!list.children.length) list.appendChild(el("div", "empty", q ? "Nothing matches." : "No sessions in the last week."));
 }
 
 function memberRow(p) {
   const row = el("div", "member" + (app.sel === p.id ? " on" : ""));
   row.dataset.id = p.id;
   const who = el("div", "who");
-  who.appendChild(el("div", "name", (p.starred ? "★ " : "") + p.title));
+  who.appendChild(el("div", "name", (p.starred ? "★ " : "") + (ROLES[p.role] ? ROLES[p.role].icon + " " : "") + p.title));
   who.appendChild(el("div", "what", p.snippet || p.repo));
   const side = el("div", "side");
-  if (p.kennel) side.appendChild(el("span", "pill kennel", p.kennel));
+  if (p.term) side.appendChild(el("span", "pill here", "🖥 here"));
+  else if (p.kennel) side.appendChild(el("span", "pill kennel", p.kennel));
   side.appendChild(el("span", "age", relAge(p.updated)));
   const dot = el("span", "dot");
   dot.style.background = STATUS[p.status].color;
   row.append(miniDog(p.fur, p.status, p.agent), who, side, dot);
   row.title = "click to see it · double-click to open · drag onto a kennel to file";
-  row.onclick = () => select(p.id, app.ents.has(p.id));
+  row.onclick = () => { select(p.id, app.ents.has(p.id)); if (app.tab === "term") showTerm(); };
   row.ondblclick = () => act("open", p.id);
   draggablePup(row, p);
   return row;
@@ -487,6 +556,7 @@ function renderCard() {
     const row = el("div", "row");
     row.appendChild(miniDog(p.fur, p.status, p.agent));
     row.appendChild(el("span", "title", p.title));
+    if (ROLES[p.role]) { const r = el("span", "role", ROLES[p.role].icon); r.title = ROLES[p.role].name; row.appendChild(r); }
     const pill = el("span", "status", st.label);
     pill.style.background = st.color;
     row.append(pill, close);
@@ -495,8 +565,8 @@ function renderCard() {
     if (p.kennel) meta.push("🏠 " + p.kennel);
     const actions = el("div", "actions");
     const btn = (label, fn, primary) => { const b = el("button", primary ? "primary" : "", label); b.onclick = fn; actions.appendChild(b); };
-    btn(p.status === "offline" ? "▶ Resume" : "↗ Go to", () => act("open", p.id), true);
-    btn("💬 Tell…", () => openTell(p.id));
+    btn(p.status === "offline" ? "▶ Resume in a tab" : "↗ Go to", () => act("open", p.id), true);
+    btn("🖥 Terminal", () => showTab("term"));
     btn(p.starred ? "★ Unstar" : "☆ Star", () => act("star", p.id));
     btn("📜 Read", () => openTranscript(p.id));
     actions.appendChild(menuButton(() => [
@@ -653,6 +723,18 @@ function toast(text, err, undoable) {
   const t = $("#toast");
   t.textContent = text;
   t.className = err ? "err" : "";
+  // A command to run (no terminal to open it in) gets a Copy button and stays up.
+  const cmd = !err && /^cd .+ && \S/.test(text);
+  if (cmd) {
+    const c = el("button", "undo", "Copy");
+    c.onclick = (e) => { e.stopPropagation(); navigator.clipboard.writeText(text).then(() => toast("📋 copied, paste it in a terminal")); };
+    t.appendChild(c);
+  }
+  if (err || cmd) {
+    const x = el("button", "undo", "✕");
+    x.onclick = (e) => { e.stopPropagation(); t.hidden = true; };
+    t.appendChild(x);
+  }
   if (undoable && app.state && app.state.undo) {
     const b = el("button", "undo", "↶ Undo");
     b.title = "undo " + app.state.undo + " (⌘Z)";
@@ -661,7 +743,8 @@ function toast(text, err, undoable) {
   }
   t.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (t.hidden = true), undoable ? 6000 : 3500);
+  // Errors and commands stay until dismissed, so they can't blink by unread.
+  if (!err && !cmd) toastTimer = setTimeout(() => (t.hidden = true), undoable ? 6000 : 3500);
 }
 
 async function undo() {
@@ -733,7 +816,7 @@ async function runSearch() {
 }
 
 // ---------- ask ----------
-const PANELS = ["pack", "ask", "build", "jobs", "art"];
+const PANELS = ["pack", "term", "ask", "build", "jobs", "art"];
 function showTab(tab) {
   if (tab === "build") { setBuild(true); return; }
   if (build.on) setBuild(false);
@@ -742,6 +825,8 @@ function showTab(tab) {
   if (tab === "ask") $("#askq").focus();
   if (tab === "jobs") renderJobs();
   if (tab === "art") renderArt();
+  if (tab === "term") showTerm(); else detachTerm();
+  $("#side").classList.toggle("termmode", tab === "term");
   app.tab = tab;
 }
 for (const b of document.querySelectorAll("#side .tabs button")) b.onclick = () => showTab(b.dataset.tab);
@@ -1040,6 +1125,7 @@ function click(sx, sy, w, e) {
     const dbl = app.lastClick.id === hit.id && now - app.lastClick.at < 450;
     app.lastClick = { id: hit.id, at: now };
     select(hit.id, false);
+    if (hit.kind === "pup" && !build.on) showTab("term");
     if (dbl) interact(hit);
     return;
   }
@@ -1202,7 +1288,7 @@ function pupMenu(ent) {
   const ids = app.multi.size > 1 && app.multi.has(ent.id) ? [...app.multi] : [ent.id];
   const items = [];
   if (ids.length === 1) {
-    items.push(["💬 Tell…", () => openTell(ent.id)], ["↗ Open", () => act("open", ent.id)], ["⑂ Fork", () => act("fork", ent.id)],
+    items.push(["🖥 Terminal", () => { select(ent.id, false); showTab("term"); }], ["↗ Open in a tab", () => act("open", ent.id)], ["⑂ Fork", () => act("fork", ent.id)],
       [p && p.starred ? "☆ Unstar" : "★ Star", () => act("star", ent.id)],
       ["✎ Rename…", () => { const t = prompt("Rename", p ? p.title : ""); if (t) act("rename", ent.id, { title: t }); }]);
   }
@@ -1234,60 +1320,136 @@ function roomMenu(r) {
   return items;
 }
 
-// Quick tell: one line to a pup without leaving the map. In the Mac app a pup open in
-// a Kennel tab gets it typed there; otherwise the server delivers it (herdr pane, or a
-// headless turn for an asleep Claude session).
-const tellWaits = new Map();
-let tellSeq = 0;
-function askNativeToTell(id, text) {
-  if (!native) return Promise.resolve(false);
-  const req = ++tellSeq;
-  return new Promise((res) => {
-    tellWaits.set(req, res);
-    native.postMessage({ type: "tell", req, session: id, text });
-    setTimeout(() => { if (tellWaits.delete(req)) res(false); }, 1500);
+// The terminal panel: the selected pup runs here when it's asleep (▶ Resume here),
+// re-attaches when it already runs here, and otherwise shows its latest messages.
+const convo = { id: null, msgs: [], sig: "" };
+let termUI = { id: null, xterm: null, fit: null, es: null, q: Promise.resolve(), ro: null };
+
+function showTerm() {
+  const box = $("#term");
+  const p = app.sel && pupOf(app.sel);
+  if (!p) {
+    detachTerm();
+    box.innerHTML = "";
+    box.appendChild(el("div", "empty", "Click a pup to see its terminal here."));
+    return;
+  }
+  if (p.term) { attachTerm(p); return; }
+  detachTerm();
+  box.innerHTML = "";
+  const head = el("div", "termhead");
+  head.append(el("b", "", `${ROLES[p.role] ? ROLES[p.role].icon + " " : ""}${p.title}`), el("span", "st " + p.status, STATUS[p.status].label));
+  box.appendChild(head);
+  const msgs = el("div", "msgs");
+  box.appendChild(msgs);
+  if (convo.id !== p.id) { convo.id = p.id; convo.msgs = []; convo.sig = ""; }
+  paintMsgs(msgs, p);
+  loadConvo(p.id);
+  const acts = el("div", "termacts");
+  if (p.status === "offline") {
+    const here = el("button", "primary", "▶ Resume here");
+    here.onclick = () => startTerm(p);
+    const tab = el("button", "", "↗ Open in a tab");
+    tab.onclick = () => act("open", p.id);
+    acts.append(here, tab);
+    acts.appendChild(el("span", "how", p.agent === "cursor" ? "Cursor opens as an editor, not here." : ""));
+    if (p.agent === "cursor") here.disabled = true;
+  } else {
+    const go = el("button", "primary", "↗ Go to it");
+    go.onclick = () => act("open", p.id);
+    acts.append(go, el("span", "how", "It's running in another terminal."));
+  }
+  box.appendChild(acts);
+}
+
+function paintMsgs(node, p) {
+  node.innerHTML = "";
+  if (!convo.msgs.length) { node.appendChild(el("div", "m empty", p.snippet || "…")); return; }
+  for (const m of convo.msgs) {
+    const d = el("div", "m " + m.role);
+    d.append(el("b", "", m.role === "user" ? "you" : "pup"), el("span", "", m.text.length > 600 ? m.text.slice(0, 600) + "…" : m.text));
+    node.appendChild(d);
+  }
+  node.scrollTop = node.scrollHeight;
+}
+
+async function loadConvo(id) {
+  try {
+    const d = await (await api(`/api/transcript/${id}?last=8`)).json();
+    if (convo.id !== id) return;
+    const sig = JSON.stringify(d.chunks.map((c) => [c.ts, c.text.length]));
+    if (sig === convo.sig) return;
+    convo.sig = sig;
+    convo.msgs = d.chunks;
+    const node = $("#term .msgs");
+    if (node && app.sel === id) paintMsgs(node, pupOf(id));
+  } catch (_) {}
+}
+
+async function startTerm(p) {
+  const box = $("#term");
+  // A first size from the panel; the terminal fits itself once it's on screen.
+  const cols = Math.max(40, Math.floor((box.clientWidth - 16) / 7.6)), rows = Math.max(12, Math.floor((box.clientHeight - 60) / 17));
+  try {
+    await api(`/api/term/${p.id}/start`, { method: "POST", body: JSON.stringify({ cols, rows }) });
+    await loadState();
+    showTerm();
+  } catch (e) { toast(e.message, true); }
+}
+
+function attachTerm(p) {
+  if (termUI.id === p.id && termUI.xterm) { termUI.fit.fit(); return; }
+  detachTerm();
+  const box = $("#term");
+  box.innerHTML = "";
+  const bar = el("div", "termhead");
+  const stop = el("button", "", "■ Stop");
+  stop.title = "end the session here";
+  stop.onclick = () => api(`/api/term/${p.id}/stop`, { method: "POST", body: "{}" }).catch(() => {});
+  const tab = el("button", "", "↗ Tab");
+  tab.title = "move it to a dedicated tab: it stops here and resumes there";
+  tab.onclick = async () => { await api(`/api/term/${p.id}/stop`, { method: "POST", body: "{}" }).catch(() => {}); setTimeout(() => act("open", p.id), 600); };
+  bar.append(el("b", "", `🖥 ${p.title}`), el("span", "st here", "running here"), tab, stop);
+  const screen = el("div", "screen");
+  box.append(bar, screen);
+  const { cols, rows } = mountXterm(p.id, screen);
+  api(`/api/term/${p.id}/resize`, { method: "POST", body: JSON.stringify({ cols, rows }) }).catch(() => {});
+  streamTerm(p.id);
+}
+
+function mountXterm(id, screen) {
+  const x = new Terminal({ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 12.5, cursorBlink: true, scrollback: 5000,
+    theme: { background: "#1e1e2e", foreground: "#cdd6f4", cursor: "#f5e0dc", selectionBackground: "#585b70" } });
+  const fit = new FitAddon.FitAddon();
+  x.loadAddon(fit);
+  x.open(screen);
+  fit.fit();
+  termUI = { id, xterm: x, fit, es: null, q: Promise.resolve(), ro: null };
+  // Keystrokes go in order: each POST waits for the one before.
+  x.onData((d) => { termUI.q = termUI.q.then(() => api(`/api/term/${id}/input`, { method: "POST", body: JSON.stringify({ data: d }) })).catch(() => {}); });
+  x.onResize(({ cols, rows }) => api(`/api/term/${id}/resize`, { method: "POST", body: JSON.stringify({ cols, rows }) }).catch(() => {}));
+  termUI.ro = new ResizeObserver(() => { try { fit.fit(); } catch (_) {} });
+  termUI.ro.observe(screen);
+  x.focus();
+  return { cols: x.cols, rows: x.rows };
+}
+
+function streamTerm(id) {
+  const es = new EventSource(`/api/term/${id}/stream?t=${TOKEN}`);
+  termUI.es = es;
+  es.onmessage = (e) => { if (termUI.id === id) termUI.xterm.write(Uint8Array.from(atob(e.data), (c) => c.charCodeAt(0))); };
+  es.addEventListener("exit", () => {
+    es.close();
+    if (termUI.id === id) termUI.xterm.write("\r\n\x1b[2m[session ended]\x1b[0m\r\n");
+    loadState();
   });
 }
-function toldByNative(req, ok) { const res = tellWaits.get(req); if (res) { tellWaits.delete(req); res(ok); } }
 
-function openTell(id) {
-  const p = pupOf(id);
-  if (!p) return;
-  const box = $("#tell");
-  box.hidden = false;
-  box.querySelector(".to").textContent = `💬 Tell ${p.title}`;
-  const reachable = p.status === "offline" ? p.agent === "claude" : !!(p.pane || native);
-  const how = p.status === "offline" ? (p.agent === "claude" ? "It works on it in the background; the reply lands in its transcript." : "Asleep and not a Claude session: open it to talk to it.")
-    : p.pane ? "Typed into its herdr pane." : native ? "Typed into its tab." : "It's running in a terminal kennel can't type into.";
-  box.querySelector(".how").textContent = how;
-  box.querySelector(".row").hidden = !reachable;
-  box.querySelector(".go").hidden = reachable;
-  box.querySelector(".go").onclick = () => { closeTell(); act("open", id); };
-  const e = app.ents.get(id);
-  const st = $("#stage").getBoundingClientRect();
-  if (e) {
-    const pos = window.kennel.screenPos(id);
-    box.style.left = Math.max(12, Math.min(st.width - 372, pos.x - st.left - 180)) + "px";
-    box.style.top = Math.max(12, Math.min(st.height - 120, pos.y - st.top + 30)) + "px";
-  } else { box.style.left = (st.width / 2 - 180) + "px"; box.style.top = "80px"; }
-  const inp = box.querySelector("input");
-  inp.value = "";
-  box.dataset.id = id;
-  (reachable ? inp : box.querySelector(".go")).focus();
-}
-
-function closeTell() {
-  $("#tell").hidden = true;
-  if ($("#tell").contains(document.activeElement)) document.activeElement.blur();
-}
-
-async function sendTell() {
-  const box = $("#tell");
-  const id = box.dataset.id, text = box.querySelector("input").value.trim();
-  if (!text) return;
-  closeTell();
-  if (await askNativeToTell(id, text)) { toast(`💬 told ${pupOf(id).title}`); return; }
-  act("tell", id, { text });
+function detachTerm() {
+  if (termUI.es) termUI.es.close();
+  if (termUI.ro) termUI.ro.disconnect();
+  if (termUI.xterm) termUI.xterm.dispose();
+  termUI = { id: null, xterm: null, fit: null, es: null, q: Promise.resolve(), ro: null };
 }
 
 // Sorting new sessions: the model suggests a kennel for each; you adjust, then file them all.
@@ -1299,7 +1461,7 @@ async function openSort(ids) {
   body.appendChild(el("div", "empty", `✨ Reading ${ids.length} sessions…`));
   sheet.querySelector(".apply").disabled = true;
   let sugg;
-  try { sugg = await (await api("/api/sort", { method: "POST", body: JSON.stringify({ ids }) })).json(); }
+  try { sugg = await (await api("/api/sort", { method: "POST", body: JSON.stringify({ ids, space: app.state.space }) })).json(); }
   catch (e) { body.innerHTML = ""; body.appendChild(el("div", "empty", e.message)); return; }
   const fresh = [...new Set(sugg.filter((x) => !x.kennelId).map((x) => x.kennel))];
   const byId = new Map(sugg.map((x) => [x.id, x]));
@@ -1446,7 +1608,6 @@ window.addEventListener("keydown", (e) => {
     return;
   }
   if (e.key === "T") { cycleAppearance(); return; }
-  if (e.key === "t" && app.sel && pupOf(app.sel)) { e.preventDefault(); openTell(app.sel); return; }
   if (e.key === "b") { setBuild(!build.on); return; }
   if (e.key === "l" || e.key === "L") { lib.open ? closeLibrary() : openLibrary(); return; }
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") { e.preventDefault(); undo(); return; }
@@ -1624,13 +1785,6 @@ const WALL = 1.6; // tiles of back wall above each room's floor
 
 
 function drawRoom(r) {
-  ctx.save();
-  if (app.project && !r.pups.some((id) => !dimmed(pupOf(id)))) ctx.globalAlpha = 0.45;
-  drawRoomBody(r);
-  ctx.restore();
-}
-
-function drawRoomBody(r) {
   const x0 = r.x * TILE, y0 = r.y * TILE, W = r.w * TILE, H = r.h * TILE;
   const wallH = WALL * TILE;
   const style = r.look.Border;
@@ -1812,16 +1966,38 @@ function nameTag(x, y, text, selected, dot) {
   ctx.fillStyle = "#fff"; ctx.fillText(t, tx, y + 13);
 }
 
+const ROLES = {
+  firefighter: { icon: "🧑‍🚒", name: "Firefighter: incidents and alerts" },
+  reviewer: { icon: "🧐", name: "Reviewer: PR reviews" },
+  helper: { icon: "🎧", name: "Helper: a colleague's ask" },
+  trader: { icon: "📈", name: "Trader: markets and odds" },
+  banker: { icon: "💰", name: "Banker: cost and billing" },
+  builder: { icon: "👷", name: "Builder: infra and deploys" },
+  detective: { icon: "🕵️", name: "Detective: tests and bugs" },
+  artist: { icon: "🎨", name: "Artist: UI and design" },
+  mechanic: { icon: "🔧", name: "Mechanic: tools and setup" },
+  scholar: { icon: "🎓", name: "Scholar: a quick question" },
+  captain: { icon: "⚓", name: "Captain: shipped a PR" },
+};
+
+// Pixel accessories in sprite cells: [rows, palette, column, row]; rows above the head are negative.
+const GEAR = {
+  firefighter: [["....RRRRRR....", "..RRRRYYRRRR..", ".RRRRRRRRRRRR."], { R: "#e0473e", Y: "#ffd54a" }, 0, -2],
+  builder: [[".....YYYY.....", "...YYYYYYYY...", ".YYYYYYYYYYYY."], { Y: "#f6c431" }, 0, -2],
+  banker: [["....KKKKKK....", "....KKKKKK....", "....GGGGGG....", "..KKKKKKKKKK.."], { K: "#22222e", G: "#3fbf6f" }, 0, -3],
+  artist: [["......P.......", "...PPPPPPPP...", "..PPPPPPPPP..."], { P: "#b03a6f" }, 0, -2],
+  scholar: [["..KKKKKKKKKK..", ".....KKKK...Y.", "............Y."], { K: "#22222e", Y: "#ffd54a" }, 0, -2],
+  captain: [["...WWWWWWWW...", "..NNNNYYNNNN.."], { W: "#ffffff", N: "#283a7a", Y: "#ffd54a" }, 0, -1],
+  helper: [["...KKKKKKKK...", "..K........K..", ".KK........KK.", ".KK........KK."], { K: "#33333f" }, 0, 0],
+  reviewer: [["...KKKK.KKKK..", "...K..KKK..K..", "...KKKK.KKKK.."], { K: "#1d1d26" }, 0, 3],
+  mechanic: [["..GG", "..GG", "GGGG", ".GG.", ".GG.", ".GG."], { G: "#8e95a8" }, 13, 4],
+  detective: [[".KKK.", "K...K", "K...K", ".KKK.", "....B", ".....B"], { K: "#4a3426", B: "#4a3426" }, 13, 3],
+  trader: [["....G", "...GG", "G.G.G", "GG..G", "G...G"], { G: "#2fb36b" }, 13, 2],
+};
+
 function drawPup(e) {
   const p = pupOf(e.id);
   if (!p) return;
-  ctx.save();
-  if (dimmed(p)) ctx.globalAlpha = 0.18;
-  drawPupBody(e, p);
-  ctx.restore();
-}
-
-function drawPupBody(e, p) {
   const s = 3;
   const x = e.x * TILE, y = e.y * TILE;
   const selected = app.sel === e.id;
@@ -1838,6 +2014,8 @@ function drawPupBody(e, p) {
   ctx.save();
   if (e.dir < 0) { ctx.translate(x * 2, 0); ctx.scale(-1, 1); }
   drawPixels(ctx, grid, dogPalette(p.fur, p.status === "offline", p.agent), x - w / 2, y - h + dy, s);
+  const gear = GEAR[p.role];
+  if (gear) drawPixels(ctx, gear[0], gear[1], x - w / 2 + gear[2] * s, y - h + dy + gear[3] * s, s);
   ctx.restore();
   if (selected) { ctx.strokeStyle = "#3d47db"; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.ellipse(x, y + 2, 23, 7, 0, 0, 7); ctx.stroke(); }
   const top = y - h + dy;
@@ -2531,8 +2709,13 @@ const lib = { open: false };
 async function openLibrary() {
   lib.open = true;
   $("#library").hidden = false;
-  try { library = await (await api("/api/library")).json(); } catch (e) { toast(e.message, true); }
+  try { library = (await (await api("/api/library")).json()).filter(inSpace); } catch (e) { toast(e.message, true); }
   fillLibFilters();
+  const saved = readPref("library");
+  if (saved && !lib.restored) {
+    lib.restored = true;
+    for (const id of LIB_FILTERS) if (saved[id] !== undefined) $(id).value = saved[id];
+  }
   renderLibrary();
   $("#libq").focus();
 }
@@ -2542,17 +2725,20 @@ async function openLibraryFor(kennelName) {
   $("#libwhen").value = "0";
   $("#libkennel").value = kennelName;
   renderLibrary();
+  saveLibFilters();
 }
 
 function refreshLibrary() {
   if (libFetch) return;
-  libFetch = api("/api/library").then((r) => r.json()).then((l) => { library = l; fillLibFilters(); renderLibrary(); })
+  libFetch = api("/api/library").then((r) => r.json()).then((l) => { library = l.filter(inSpace); fillLibFilters(); renderLibrary(); })
     .catch(() => {}).finally(() => { libFetch = null; });
 }
 function closeLibrary() { lib.open = false; $("#library").hidden = true; }
 $("#libbtn").onclick = () => (lib.open ? closeLibrary() : openLibrary());
 $("#libclose").onclick = closeLibrary;
-for (const id of ["#libq", "#libwhen", "#libagent", "#libkennel", "#libtheme", "#libgroup", "#libsort"]) $(id).addEventListener("input", renderLibrary);
+const LIB_FILTERS = ["#libq", "#libwhen", "#libagent", "#libkennel", "#libtheme", "#libgroup", "#libsort"];
+const saveLibFilters = () => savePref("library", Object.fromEntries(LIB_FILTERS.map((id) => [id, $(id).value])));
+for (const id of LIB_FILTERS) $(id).addEventListener("input", () => { renderLibrary(); saveLibFilters(); });
 
 function fillLibFilters() {
   const k = $("#libkennel"), cur = k.value;
@@ -2744,7 +2930,6 @@ async function renderArt() {
 // Exposed for end-to-end tests: screen positions of entities.
 window.kennel = {
   app,
-  toldByNative,
   setAppearance: async (a) => { applyAppearance(a); await api("/api/appearance", { method: "POST", body: JSON.stringify({ appearance: a }) }); },
   toast,
   lib,
@@ -2786,23 +2971,31 @@ window.kennel = {
 };
 
 $("#buildbtn").onclick = () => setBuild(!build.on);
-$("#tell input").addEventListener("keydown", (e) => {
-  if (e.key === "Enter") { e.preventDefault(); sendTell(); }
-  if (e.key === "Escape") { e.preventDefault(); closeTell(); }
-  e.stopPropagation();
-});
-$("#tell .send").onclick = sendTell;
+// Drag the side panel's left edge to resize it; the width is remembered.
+(() => {
+  const grip = $("#sidegrip");
+  grip.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    const startX = e.clientX, startW = $("#side").getBoundingClientRect().width;
+    document.body.classList.add("resizing");
+    const move = (ev) => {
+      const w = Math.max(300, Math.min(window.innerWidth * 0.7, startW + (startX - ev.clientX)));
+      document.documentElement.style.setProperty("--side", w + "px");
+      resize();
+    };
+    const up = () => {
+      window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up);
+      document.body.classList.remove("resizing");
+      savePref("layout", { side: $("#side").getBoundingClientRect().width });
+    };
+    window.addEventListener("mousemove", move); window.addEventListener("mouseup", up);
+  });
+})();
 $("#sort .apply").onclick = applySort;
 $("#sort .cancel").onclick = () => ($("#sort").hidden = true);
 $("#sort").addEventListener("click", (e) => { if (e.target.id === "sort") $("#sort").hidden = true; });
-$("#tell .go").addEventListener("keydown", (e) => { if (e.key === "Escape") closeTell(); });
-try { app.project = localStorage.getItem("kennel.project") || ""; } catch (_) { app.project = ""; }
-$("#projectsel").onchange = () => {
-  app.project = $("#projectsel").value;
-  try { localStorage.setItem("kennel.project", app.project); } catch (_) {}
-  $("#projectsel").classList.toggle("on", !!app.project);
-  renderTray();
-};
+app.space = null;
+$("#projectsel").onchange = () => goSpace($("#projectsel").value);
 $("#themebtn").onclick = cycleAppearance;
 systemDark.addEventListener("change", () => applyAppearance(appearance));
 applyAppearance(appearance);

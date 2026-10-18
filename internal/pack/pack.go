@@ -170,6 +170,44 @@ var Smarts = []Smart{
 		Look: Look{Border: "normal", Floor: "▚", Decor: "🐀"}, Match: func(p *Pup, _ time.Time) bool { return p.Meta.Archived || p.Empty() }},
 }
 
+var (
+	tradeRe  = regexp.MustCompile(`(?i)\b(kalshi|polymarket|trad(e|ing)|orderbook|market maker|odds|betting)\b`)
+	costRe   = regexp.MustCompile(`(?i)\b(cost|costs|billing|finops|spend|budget|pricing|invoice|savings|cheaper)\b`)
+	infraRe  = regexp.MustCompile(`(?i)\b(terraform|k8s|kubernetes|gke|eks|helm|docker|deploy(ment)?|cluster|infra|aws|gcp|shard(s|ing)?|migrat(e|ion)|postgres|database)\b`)
+	testRe   = regexp.MustCompile(`(?i)\b(tests?|flaky|e2e|playwright|jest|pytest|ci|debug(ging)?|bug)\b`)
+	designRe = regexp.MustCompile(`(?i)\b(css|ui|ux|frontend|design|figma|react|component|animation|layout|style)\b`)
+)
+
+// Role is what a pup mostly does, for the hat or prop it wears on the map.
+func (p *Pup) Role() string {
+	text := p.Title() + " " + p.FirstPrompt
+	switch {
+	case fireRe.MatchString(text):
+		return "firefighter"
+	case reviewRe.MatchString(p.FirstPrompt) && strings.Contains(strings.ToLower(p.FirstPrompt), "review"):
+		return "reviewer"
+	case slackPaste.MatchString(p.FirstPrompt):
+		return "helper"
+	case tradeRe.MatchString(text):
+		return "trader"
+	case costRe.MatchString(text):
+		return "banker"
+	case infraRe.MatchString(text):
+		return "builder"
+	case testRe.MatchString(text):
+		return "detective"
+	case designRe.MatchString(text):
+		return "artist"
+	case yakRe.MatchString(p.FirstPrompt):
+		return "mechanic"
+	case p.NUser > 0 && p.NUser <= 3 && questionRe.MatchString(p.FirstPrompt):
+		return "scholar"
+	case len(p.PRs) > 0:
+		return "captain"
+	}
+	return ""
+}
+
 func SmartByKey(key string) *Smart {
 	for i := range Smarts {
 		if Smarts[i].Key == key {

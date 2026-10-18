@@ -26,8 +26,10 @@ Sessions are **pups**: Claude Code corgis ▼•ᴥ•▼, Codex huskies ▲•�
 | 🗺 **The office** | One map, with as many **floors** as you like (＋ in the dock; right-click a floor tab to rename or remove it; drag a kennel onto a tab to move it). Each floor holds **your kennels**, which show what you filed, and optional **smart rooms** that fill themselves: Live now, Firehouse, Helping Out, Best in Show, Lobby, Workshop and more, added from 🔨 Build. Pups wander, sit at desks while working, and bounce with `!` when they need you. Click to inspect, double-click to open. |
 | ✋ **Arrange it by hand** | Drag pups anywhere in their room, or onto another kennel to file them. Marquee-select several and move them together. Select a room to get handles: drag its wall to move it and its handles to resize it, with snap guides as you go. Draw a new kennel with the ▭ tool. Right-click anything for its actions. Take pups out of a kennel by dragging them out, with Delete, or from the right-click menu or their card. That only unfiles them: the session goes back to 📥 New in the tray, and rule-based kennels won't pull it back. Tools: `V` select, `H` hand (or hold Space), `R` kennel. |
 | 🌗 **Light and dark** | A day office and a night office. The 🖥 Auto / ☀️ Light / 🌙 Dark switch in the top bar (or `Shift+T`, or View → Appearance in the Mac app) is shared by every open window. |
-| 🐾 **Session tray** | The side panel lists the last two weeks: ❗ needs you, 📥 new (not in a kennel), ⚡ working, 🕘 recent. Filter it, and drag any row onto a kennel to file it, or press **✨ Sort into kennels**: the model suggests a kennel for each new session (yours first, new ones only when nothing fits), you adjust, and everything is filed in one undoable step. Kennels on the map show the last two weeks too; older sessions stay filed and are one click away in the Library. |
-| 📁 **Project filter** | Pick a project at the top: the tray narrows to it and the rest of the map fades. |
+| 🐾 **Sessions** | The side panel lists the last week: ❗ needs you, ⚡ working, 📥 new (not in a kennel), 🕘 recent. Group by status, kennel, project or role; sort by most recent, most active, cost or name; filter by text. Drag any row onto a kennel to file it, or press **✨ Sort these into kennels**: the model suggests a kennel for each new session (yours first), you adjust, and everything is filed in one undoable step. Kennels on the map show the last week too; older sessions stay filed and are one click away in the Library. Your filters and the panel's width are remembered. |
+| 🖥 **Terminal panel** | Click a pup and the panel below its card becomes its terminal: an asleep session resumes right there (▶ Resume here), one already running here re-attaches with its scrollback, and one running elsewhere shows its latest messages with ↗ Go to. Move it to a dedicated tab whenever you like. Drag the panel's left edge to make it wider. |
+| 📁 **Spaces** | The selector at the top switches spaces: 🌐 All projects, or one space per project with its own floors, kennels and smart rooms. |
+| 🎩 **Roles** | Pups wear what they do: a firefighter's helmet for incidents, glasses for reviews, a hard hat for infra, a top hat for cost work, a beret for UI, a headset for colleagues' asks, a magnifier for tests, and more. |
 | 📚 **Library** | Every past session: filter by date, agent, kennel or theme, group by day, week, theme, kennel, repo or agent, sort, and move many at once. |
 | ✨ **Themes** | Automatic categories from an LLM, Cloudflare Workers AI or your `claude` haiku. Only titles, first asks and recaps are sent. |
 | 🔎 **Search** | Fuzzy titles, branches and PRs, plus full-text over every prompt, reply and tool call, with highlighted snippets. Filters: `is:live` `repo:x` `agent:codex` `since:7d` `has:pr`. |
@@ -36,7 +38,6 @@ Sessions are **pups**: Claude Code corgis ▼•ᴥ•▼, Codex huskies ▲•�
 | 🗂 **Organize** | Star, rename (written like `/rename`), notes, archive, recoverable trash, rooms with auto-adopt magnets. **Undo** everything with ⌘Z. |
 | ⑂ **Fork, clone, merge, convert** | Fork; clone into another project; merge several sessions into a new pup from a brief; distill a long one; continue any session in another agent (Claude ↔ Codex ↔ Cursor) through a Markdown handoff. The original is never touched. |
 | 📌 **Shelves** | Keep files, links, `#slack-channels`, tickets and your sessions' artifacts on a kennel: they sit on its back wall and its card, open in one click, and have a ⋯ menu to move or remove them. The 📎 panel lists everything, including artifacts from sessions (pin or hide them). Drag any item onto a kennel to pin it, or onto a pup to feed it: a live pup gets it as a prompt, an asleep one wakes up with it. |
-| 💬 **Quick tell** | Select a pup and press `t` (or right-click → Tell): type one line and stay on the map. It's typed into the pup's herdr pane or Kennel tab, or an asleep Claude session works on it in the background. |
 | 🔨 **Build** | Room templates, shapes, floors, walls and furniture, plus purpose blocks: 🚪 spawn door, 🧲 magnet, 🔔 bell, 🌀 portal to a herdr workspace, 📌 pin board, 🧹 archive chute. |
 | ⏰ **Jobs** | Background agents, in-session cron tasks, monitors and servers. |
 
@@ -81,7 +82,7 @@ kennel export KALSHI -o kalshi.md
 kennel -demo                        # try it on synthetic sessions
 ```
 
-**Keys in the office:** `/` search · `V` `H` `R` tools · Space-drag pan · `+` `-` `Shift+1` zoom · `Delete` remove from kennel (archive elsewhere) · `Shift+T` light/dark · `t` tell · `Enter` open · arrows pan · `l` library · `b` build · `⌘Z` undo · `Esc` close.
+**Keys in the office:** `/` search · `V` `H` `R` tools · Space-drag pan · `+` `-` `Shift+1` zoom · `Delete` remove from kennel (archive elsewhere) · `Shift+T` light/dark · `Enter` open · arrows pan · `l` library · `b` build · `⌘Z` undo · `Esc` close.
 **Keys in the Mac app** follow Ghostty's defaults:
 
 | | |

@@ -180,25 +180,21 @@ test("dark mode: the Kennel tab's window chrome follows the page", async () => {
   await call("POST", "/jsasync", { code: `await window.kennel.setAppearance(""); return true` });
 });
 
-test("quick tell types into a pup's open tab without leaving the Kennel tab", async () => {
+test("the terminal panel runs a pup inside the Kennel tab", async () => {
   await backToKennel();
-  const id = await pupId("RATE-LIMITS");
-  await call("POST", "/jsasync", { code: `await fetch("/api/pup/${id}/open", { method: "POST", headers: { "X-Kennel-Token": new URLSearchParams(location.search).get("t") }, body: "{}" }); return true` });
-  await waitFor(async () => (await tabs()).some((t) => t.session === id), "tab opened");
-  const tab = (await tabs()).find((t) => t.session === id).index;
-  await backToKennel();
+  const id = await pupId("DARK-MODE");
   await call("POST", "/jsasync", { code: `
     window.kennel.app.sel = ${JSON.stringify(id)};
-    window.dispatchEvent(new KeyboardEvent("keydown", { key: "t" }));
-    const inp = document.querySelector("#tell input");
-    inp.value = "ping from the map";
-    inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    document.querySelector('#side .tabs button[data-tab="term"]').click();
+    await new Promise((r) => setTimeout(r, 200));
+    [...document.querySelectorAll("#term button")].find((b) => b.textContent.includes("Resume here")).click();
     return true` });
-  await waitFor(async () => (await text(tab)).includes("ping from the map"), "typed into the tab");
-  assert.equal((await selected()).kind, "kennel", "stayed on the Kennel tab");
-  await call("POST", "/select", { index: tab });
-  await key("w", ["cmd", "alt"]);
-  await backToKennel();
+  await waitFor(() => js(`(document.querySelector("#term .xterm-rows") || {}).textContent?.includes("would run: claude --resume")`), "terminal output");
+  await js(`(() => { const t = document.querySelector("#term textarea"); t && t.focus(); return true })()`);
+  await call("POST", "/jsasync", { code: `await fetch("/api/term/${id}/input", { method: "POST", headers: { "X-Kennel-Token": new URLSearchParams(location.search).get("t") }, body: JSON.stringify({ data: "from the app\\r" }) }); return true` });
+  await waitFor(() => js(`document.querySelector("#term .xterm-rows").textContent.includes("from the app")`), "echo");
+  assert.equal((await tabs()).length, 1, "no extra tab opened");
+  await call("POST", "/jsasync", { code: `await fetch("/api/term/${id}/stop", { method: "POST", headers: { "X-Kennel-Token": new URLSearchParams(location.search).get("t") }, body: "{}" }); document.querySelector('#side .tabs button[data-tab="pack"]').click(); return true` });
 });
 
 test("in the Kennel tab, ⌘= / ⌘0 zoom the page and ⌘D does nothing", async () => {

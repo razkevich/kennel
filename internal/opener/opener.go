@@ -166,12 +166,24 @@ func Resolve(k Kind) Kind {
 	return Inline
 }
 
+// ForPage picks where the web map opens sessions when nothing says otherwise:
+// Ghostty when it's installed, else the command is shown for you to run.
+func ForPage() Kind {
+	if _, err := os.Stat("/Applications/Ghostty.app"); err == nil {
+		return Ghostty
+	}
+	return Print
+}
+
 type Opener struct {
 	Kind   Kind
 	Runner Runner
 	// Handoff delivers launches in App mode.
 	Handoff func(Run) error
 }
+
+// CommandLine is bin and args as one shell-quoted line.
+func CommandLine(bin string, args []string) string { return commandLine(bin, args) }
 
 func commandLine(bin string, args []string) string {
 	parts := []string{bin}

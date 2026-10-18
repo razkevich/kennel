@@ -43,18 +43,63 @@ test("tray: filter, collapse groups, drag a session onto a kennel to file it", a
   await expect.poll(() => page.evaluate((k) => window.kennel.app.rooms.find((r) => r.key === k).pups.length, payments)).toBe(0);
 });
 
-test("project filter dims other projects and narrows the tray", async ({ page }) => {
+test("each project has its own space: floors, kennels, sessions; switching is remembered", async ({ page }) => {
   await open(page);
+  await expect(page.locator("#projectsel")).toHaveValue("");
   await page.locator("#projectsel").selectOption("/Users/demo/code/infra");
+  await page.waitForFunction(() => window.kennel.app.state.space === "/Users/demo/code/infra");
   await expect(page.locator("#projectsel")).toHaveClass(/on/);
-  const shown = await page.locator("#pack .member").count();
-  expect(shown).toBeGreaterThan(0);
+  // A fresh space starts with one floor named after the project and no rooms.
+  await expect(page.locator("#floors button.on")).toHaveText("📁 infra");
+  await expect.poll(() => page.evaluate(() => window.kennel.app.rooms.length)).toBe(0);
   const projects = await page.evaluate(() => [...document.querySelectorAll("#pack .member")].map((m) => window.kennel.app.state.pups[m.dataset.id].project));
+  expect(projects.length).toBeGreaterThan(0);
   expect(new Set(projects)).toEqual(new Set(["/Users/demo/code/infra"]));
+
+  // Rooms built here belong to this space; smart rooms only pick this project's pups.
+  await page.keyboard.press("b");
+  await page.locator("#build .smartgrid .smart", { hasText: "Lobby" }).click();
+  await page.waitForFunction(() => window.kennel.app.rooms.some((r) => r.smart === "lobby"));
+  const lobbyProjects = await page.evaluate(() => {
+    const r = window.kennel.app.rooms.find((x) => x.smart === "lobby");
+    return [...new Set(r.pups.map((id) => window.kennel.app.state.pups[id].project))];
+  });
+  expect(lobbyProjects).toEqual(["/Users/demo/code/infra"]);
+  await page.keyboard.press("b");
+
+  // Reload: still in the infra space; All projects still has its own map.
+  await page.goto("/?t=e2e");
+  await page.waitForFunction(() => window.kennel && window.kennel.app.state);
+  await expect(page.locator("#projectsel")).toHaveValue("/Users/demo/code/infra");
   await page.locator("#projectsel").selectOption("");
-  await expect.poll(() => page.locator("#pack .member").count()).toBeGreaterThan(shown);
+  await page.waitForFunction(() => window.kennel.app.state.space === "" && window.kennel.app.rooms.some((r) => r.title === "Payments"));
+  expect(await page.evaluate(() => window.kennel.app.rooms.some((r) => r.smart === "lobby" && r.pups.some((id) => window.kennel.app.state.pups[id].project !== "/Users/demo/code/infra")))).toBe(true);
 });
 
+test("filters are remembered across reloads: list text, collapsed group, library filters", async ({ page }) => {
+  await open(page);
+  await page.locator("#pack .trayq").fill("pg");
+  await page.locator("#pack h4", { hasText: "New" }).click();
+  await page.keyboard.press("l");
+  await page.locator("#libagent").selectOption("codex");
+  await page.locator("#libgroup").selectOption("agent");
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(500);
+  await page.goto("/?t=e2e");
+  await page.waitForFunction(() => window.kennel && window.kennel.app.state && document.querySelector("#pack .trayq"));
+  await expect(page.locator("#pack .trayq")).toHaveValue("pg");
+  await expect(page.locator("#pack .group.closed")).toHaveCount(1);
+  await page.keyboard.press("l");
+  await expect(page.locator("#libagent")).toHaveValue("codex");
+  await expect(page.locator("#libgroup")).toHaveValue("agent");
+  // Put things back for the other tests.
+  await page.locator("#libagent").selectOption("");
+  await page.locator("#libgroup").selectOption("day");
+  await page.keyboard.press("Escape");
+  await page.locator("#pack h4", { hasText: "New" }).click();
+  await page.locator("#pack .trayq").fill("");
+  await page.waitForTimeout(500);
+});
 test("clicking a pup opens its card, double-click resumes it", async ({ page }) => {
   await open(page);
   const id = await pupId(page, "PG-UPGRADE");
@@ -75,7 +120,7 @@ test("card buttons: star shows up in the pack, read opens the transcript", async
   const card = page.locator("#card");
   await expect(card).toContainText("CHECKOUT-V2");
   await card.getByRole("button", { name: "☆ Star" }).click();
-  await expect(page.locator("#pack .member", { hasText: "★ CHECKOUT-V2" })).toBeVisible();
+  await expect(page.locator("#pack .member", { hasText: /★.*CHECKOUT-V2/ })).toBeVisible();
   await expect(card.getByRole("button", { name: "★ Unstar" })).toBeVisible();
 
   await card.getByRole("button", { name: "📜 Read" }).click();
@@ -298,35 +343,57 @@ test("feeding: drag a shelf item or a desktop file onto a pup", async ({ page })
   await expect(page.locator("#toast")).toContainText("notes.md");
 });
 
-test("quick tell: one line to a pup without leaving the map", async ({ page }) => {
+test("the terminal panel: messages, resume here, type into it, move to a tab", async ({ page }) => {
   await open(page);
   const id = await pupId(page, "RATE-LIMITS");
   await clickEntity(page, id);
-  await page.keyboard.press("t");
-  const tell = page.locator("#tell");
-  await expect(tell).toBeVisible();
-  await expect(tell).toContainText("Tell RATE-LIMITS");
-  await expect(tell).toContainText("in the background");
-  await tell.locator("input").fill("add per-tenant overrides to the limiter");
-  await tell.locator("input").press("Enter");
-  await expect(tell).toBeHidden();
-  await expect(page.locator("#toast")).toContainText(`claude --resume ${id} -p`);
-  await expect(page.locator("#toast")).toContainText("per-tenant overrides");
-  // From the right-click menu, and Esc cancels.
-  const pos = await page.evaluate((i) => window.kennel.screenPos(i), id);
-  await page.mouse.click(pos.x, pos.y, { button: "right" });
-  await page.locator("#ctxmenu button", { hasText: "Tell" }).click();
-  await expect(tell).toBeVisible();
-  await tell.locator("input").press("Escape");
-  await expect(tell).toBeHidden();
-  // A live pup kennel can't type into gets a way to go there instead of a dead input.
+  // Clicking a pup on the map opens its terminal panel; asleep, it shows the latest messages.
+  await expect(page.locator('#side .tabs button[data-tab="term"]')).toHaveClass(/on/);
+  const term = page.locator("#term");
+  await expect.poll(() => term.locator(".m.user, .m.assistant").count()).toBeGreaterThan(0);
+  await term.locator("button", { hasText: "Resume here" }).click();
+  const screen = term.locator(".xterm-rows");
+  await expect(screen).toContainText(`would run: claude --resume ${id}`);
+  await page.keyboard.type("hello pty");
+  await page.keyboard.press("Enter");
+  await expect(screen).toContainText("hello pty");
+  await page.locator('#side .tabs button[data-tab="pack"]').click();
+  await expect(page.locator(`#pack .member[data-id="${id}"] .pill.here`)).toBeVisible();
+  // Back to it: it re-attaches with the scrollback.
+  await page.locator(`#pack .member[data-id="${id}"]`).click();
+  await page.locator('#side .tabs button[data-tab="term"]').click();
+  await expect(screen).toContainText("hello pty");
+  await term.locator("button", { hasText: "Stop" }).click();
+  await expect.poll(() => page.evaluate((i) => window.kennel.app.state.pups[i].term, id)).toBe(false);
+  // A pup running in another terminal offers Go to instead.
   const far = await page.evaluate(() => Object.values(window.kennel.app.state.pups).find((p) => p.status !== "offline" && !p.pane)?.id);
-  expect(far).toBeTruthy();
-  await page.evaluate((i) => { window.kennel.app.sel = i; }, far);
-  await page.keyboard.press("t");
-  await expect(tell.locator(".row")).toBeHidden();
-  await expect(tell.locator("button.go")).toBeVisible();
-  await expect(tell).toContainText("can't type into");
-  await tell.locator("button.go").click();
-  await expect(tell).toBeHidden();
+  await clickEntity(page, far);
+  await expect(term.locator("button", { hasText: "Go to it" })).toBeVisible();
+  await expect(term.locator("button", { hasText: "Resume here" })).toHaveCount(0);
+});
+
+test("sessions list: group and sort", async ({ page }) => {
+  await open(page);
+  const tray = page.locator("#pack");
+  await tray.locator('select[data-key="group"]').selectOption("role");
+  await expect(tray.locator("h4", { hasText: "Firefighter" })).toBeVisible();
+  await tray.locator('select[data-key="group"]').selectOption("project");
+  await expect(tray.locator("h4", { hasText: "📁 infra" })).toBeVisible();
+  await tray.locator('select[data-key="group"]').selectOption("none");
+  await tray.locator('select[data-key="sort"]').selectOption("name");
+  const names = await tray.locator(".member .name").allTextContents();
+  const plain = names.map((n) => n.replace(/^[^A-Za-z0-9]+/, ""));
+  expect(plain).toEqual([...plain].sort((a, b) => a.localeCompare(b)));
+  await tray.locator('select[data-key="group"]').selectOption("status");
+  await tray.locator('select[data-key="sort"]').selectOption("recent");
+});
+test("pups wear their role: a role icon on the card and in the New list", async ({ page }) => {
+  await open(page);
+  const roles = await page.evaluate(() => Object.fromEntries(Object.values(window.kennel.app.state.pups).map((p) => [p.title, p.role])));
+  expect(roles["INCIDENT-0612"]).toBe("firefighter");
+  expect(roles["review infra#91"]).toBe("reviewer");
+  const id = await pupId(page, "INCIDENT-0612");
+  await clickEntity(page, id);
+  await expect(page.locator("#card .role")).toHaveText("🧑‍🚒");
+  await expect(page.locator("#pack .member", { hasText: "review infra#91" })).toContainText("🧐");
 });

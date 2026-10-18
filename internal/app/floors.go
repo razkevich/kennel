@@ -3,6 +3,7 @@ package app
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 
 	"github.com/razkevich/kennel/internal/store"
 )
@@ -13,18 +14,55 @@ func (a *App) Floors() []store.Floor {
 	return a.floors
 }
 
-// FloorOf is the floor a kennel stands on; kennels without one belong to the first floor.
+// FloorOf is the floor a kennel stands on; kennels without one belong to the
+// first floor of the all-projects space.
 func (a *App) FloorOf(k store.Kennel) int64 {
-	fs := a.Floors()
-	for _, f := range fs {
+	for _, f := range a.Floors() {
 		if f.ID == k.Floor {
 			return f.ID
 		}
 	}
-	if len(fs) > 0 {
+	if fs := a.FloorsIn(""); len(fs) > 0 {
 		return fs[0].ID
 	}
 	return 0
+}
+
+// FloorsIn lists a space's floors: a project root, or "" for all projects.
+func (a *App) FloorsIn(space string) []store.Floor {
+	var out []store.Floor
+	for _, f := range a.Floors() {
+		if f.Space == space {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// SpaceOf is the space a kennel's floor belongs to.
+func (a *App) SpaceOf(k store.Kennel) string {
+	id := a.FloorOf(k)
+	for _, f := range a.Floors() {
+		if f.ID == id {
+			return f.Space
+		}
+	}
+	return ""
+}
+
+// OpenSpace makes sure a project's space has a floor, named after the project.
+func (a *App) OpenSpace(space string) ([]store.Floor, error) {
+	if fs := a.FloorsIn(space); len(fs) > 0 || space == "" {
+		return fs, nil
+	}
+	f := store.Floor{Name: filepath.Base(space), Icon: "📁", Space: space}
+	if err := a.Store.SaveFloor(&f); err != nil {
+		return nil, err
+	}
+	if err := a.Reload(); err != nil {
+		return nil, err
+	}
+	return a.FloorsIn(space), nil
 }
 
 func (a *App) floor(id int64) (store.Floor, bool) {
@@ -58,14 +96,14 @@ func (a *App) DeleteFloor(id int64) error {
 		return fmt.Errorf("no floor %d", id)
 	}
 	var to int64
-	for _, f := range a.Floors() {
+	for _, f := range a.FloorsIn(gone.Space) {
 		if f.ID != id {
 			to = f.ID
 			break
 		}
 	}
 	if to == 0 {
-		return errors.New("the last floor can't be removed")
+		return errors.New("a space keeps at least one floor")
 	}
 	var moved []int64
 	for _, k := range a.Kennels() {

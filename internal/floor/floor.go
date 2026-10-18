@@ -3,6 +3,7 @@ package floor
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/razkevich/kennel/internal/app"
@@ -71,9 +72,9 @@ func SmartKindByKey(key string) (SmartKind, bool) {
 	return SmartKind{}, false
 }
 
-// Recent is how far back the map and the session tray reach: kennels show what you
+// Recent is how far back the map and the New list reach (the last week): kennels show what you
 // worked on in this window (plus anything live) and count the rest as older.
-const Recent = 14 * 24 * time.Hour
+const Recent = 7 * 24 * time.Hour
 
 var keepsOld = map[string]bool{"rug": true, "dumpster": true, "best": true, "shipped": true}
 
@@ -105,8 +106,17 @@ func styled(a *app.App, rooms []Room) []Room {
 // wait in the page's session tray until you drag them somewhere.
 func Rooms(a *app.App, floorID int64) []Room {
 	now := a.Now()
+	space := ""
+	for _, f := range a.Floors() {
+		if f.ID == floorID {
+			space = f.Space
+		}
+	}
+	// In a project's space, smart rooms only pick from that project.
 	pups := a.Pups()
 	allThings := a.Things()
+	inSpace := func(p *pack.Pup) bool { return space == "" || app.ProjectRoot(p.Cwd) == space }
+	thingInSpace := func(t things.Thing) bool { return space == "" || strings.HasPrefix(t.Cwd, space) }
 	placed := map[string]bool{}
 
 	var rooms []Room
@@ -173,13 +183,13 @@ func Rooms(a *app.App, floorID int64) []Room {
 		switch r.Smart {
 		case Workshop:
 			for _, t := range allThings {
-				if !homed[t.Key()] {
+				if !homed[t.Key()] && thingInSpace(t) {
 					r.Things = append(r.Things, t)
 				}
 			}
 		case Lobby:
 			for _, p := range pups {
-				if !placed[p.ID] && !p.Meta.Archived && !p.Empty() && now.Sub(p.Updated) < Recent {
+				if !placed[p.ID] && inSpace(p) && !p.Meta.Archived && !p.Empty() && now.Sub(p.Updated) < Recent {
 					r.Pups = append(r.Pups, p)
 					placed[p.ID] = true
 				}
@@ -190,7 +200,7 @@ func Rooms(a *app.App, floorID int64) []Room {
 				continue
 			}
 			for _, p := range pups {
-				if placed[p.ID] || !sm.Match(p, now) {
+				if placed[p.ID] || !inSpace(p) || !sm.Match(p, now) {
 					continue
 				}
 				if !keepsOld[r.Smart] && !p.Status.Live() && now.Sub(p.Updated) > Recent {

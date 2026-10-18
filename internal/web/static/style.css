@@ -357,25 +357,15 @@ button.dots:hover { background: var(--card2); color: var(--ink); }
 .cardshelf h5 { margin: 0 0 4px; font-size: 11px; letter-spacing: .5px; color: var(--dim); text-transform: uppercase; }
 .cardshelf input { width: 100%; margin-top: 4px; padding: 6px 9px; border-radius: 9px; border: 1px solid var(--line); background: var(--card2); }
 
-/* ---------- quick tell ---------- */
-#tell { position: absolute; z-index: 25; width: 360px; background: var(--card); border: 1px solid var(--line); border-radius: 14px;
-  box-shadow: 0 16px 40px #282d4f33; padding: 10px 12px; }
-#tell .to { font-weight: 700; font-size: 13px; margin-bottom: 6px; }
-#tell .row { display: flex; gap: 6px; }
-#tell input { flex: 1; min-width: 0; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--accent); background: var(--card2); }
-#tell input:focus { outline: none; box-shadow: 0 0 0 3px var(--accent2); }
-#tell .send { border: 0; border-radius: 10px; background: var(--accent); color: #fff; font-weight: 700; padding: 0 12px; }
-#tell .how { margin-top: 6px; font-size: 11.5px; color: var(--dim); }
 
 .buildhead { display: flex; align-items: center; gap: 8px; margin: 2px 0 8px; padding: 8px 10px; border-radius: 12px; background: var(--warm-bg); border: 1px solid var(--warm-line); color: var(--warm-ink); }
 .buildhead span { flex: 1; font-size: 11.5px; }
 .buildhead button { border: 0; border-radius: 9px; background: var(--accent); color: #fff; font-weight: 700; padding: 5px 12px; }
 #buildbtn.on { background: var(--accent2); color: var(--accent); }
 #card .actions button.dots { border: 1px solid var(--line); width: auto; padding: 0 10px; height: auto; }
-#tell .go { border: 0; border-radius: 10px; background: var(--accent); color: #fff; font-weight: 700; padding: 8px 14px; }
 
 /* ---------- sorting into kennels ---------- */
-.group h4 .sortbtn { float: right; margin-top: -3px; border: 1px solid var(--accent); background: var(--accent2); color: var(--accent); border-radius: 999px; padding: 2px 9px; font-size: 10.5px; font-weight: 700; letter-spacing: 0; text-transform: none; }
+.group .sortbtn { display: block; width: calc(100% - 8px); margin: 0 4px 6px; border: 1px dashed var(--accent); background: var(--accent2); color: var(--accent); border-radius: 10px; padding: 6px 10px; font-size: 12px; font-weight: 700; }
 #sort { position: fixed; inset: 0; background: var(--scrim); display: flex; align-items: center; justify-content: center; z-index: 22; }
 #sort[hidden] { display: none; }
 #sort .sheet { width: min(640px, 92vw); max-height: 80vh; background: var(--card); color: var(--ink); border-radius: 18px; border: 1px solid var(--line); box-shadow: 0 30px 80px #2b2f4a40; display: flex; flex-direction: column; overflow: hidden; }
@@ -392,3 +382,35 @@ button.dots:hover { background: var(--card2); color: var(--ink); }
 #sort .foot .apply:disabled { opacity: .5; }
 #sort .empty { color: var(--dim); padding: 24px; text-align: center; }
 #card button.older { margin-top: 8px; border: 1px dashed var(--line2); background: none; color: var(--sub); border-radius: 10px; padding: 6px 10px; width: 100%; text-align: left; }
+
+/* ---------- terminal panel ---------- */
+#side { width: var(--side, 340px); flex: none; position: relative; }
+#sidegrip { position: absolute; left: -3px; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 5; }
+#sidegrip:hover, body.resizing #sidegrip { background: var(--accent2); }
+body.resizing { cursor: col-resize; user-select: none; }
+#card .role { font-size: 16px; }
+#term { display: flex; flex-direction: column; gap: 6px; padding-bottom: 12px; }
+#term[hidden] { display: none; }
+#term .termhead { display: flex; align-items: center; gap: 8px; padding: 2px 2px 4px; }
+#term .termhead b { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#term .termhead .st { font-size: 11px; font-weight: 700; color: var(--sub); }
+#term .termhead .st.working { color: var(--green); }
+#term .termhead .st.waiting { color: var(--warm-ink); }
+#term .termhead button { border: 1px solid var(--line); background: var(--card); border-radius: 8px; font-size: 12px; padding: 3px 9px; }
+#term .screen { flex: 1; min-height: 260px; background: #1e1e2e; border-radius: 12px; padding: 8px; overflow: hidden; }
+#term .screen .xterm { height: 100%; }
+#term .msgs { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; }
+#term .m { font-size: 12.5px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
+#term .m b { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: var(--dim); }
+#term .m.user { color: var(--sub); }
+#term .m.empty { color: var(--dim); font-style: italic; }
+#term .termacts { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+#term .termacts button { border: 1px solid var(--line); background: var(--card); border-radius: 10px; padding: 7px 12px; font-weight: 600; }
+#term .termacts button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+#term .termacts .how { font-size: 11.5px; color: var(--dim); }
+#term .empty { color: var(--dim); padding: 30px 8px; text-align: center; }
+.trayopts { display: flex; gap: 8px; margin: 2px 2px 2px; font-size: 11.5px; color: var(--dim); }
+.trayopts select { margin-left: 4px; border: 1px solid var(--line); background: var(--card); border-radius: 8px; font-size: 11.5px; padding: 2px 4px; color: var(--sub); }
+.member .side .pill.here { background: var(--accent2); border-color: var(--accent); color: var(--accent); }
+#side.termmode #card .snip, #side.termmode #card .move, #side.termmode #card .meta { display: none; }
+#term .termhead .st.here { color: var(--accent); }

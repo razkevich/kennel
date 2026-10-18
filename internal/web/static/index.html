@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>kennel</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐕</text></svg>">
+<link rel="stylesheet" href="vendor/xterm.css">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -12,7 +13,7 @@
   <div class="logo"><span class="face">▼•ᴥ•▼</span> kennel</div>
 
   <div id="counts"></div>
-  <select id="projectsel" title="Show one project; the rest of the map fades"><option value="">All projects</option></select>
+  <select id="projectsel" title="Switch space: each project has its own floors and kennels"><option value="">🌐 All projects</option></select>
   <button id="themebtn" type="button" title="Appearance">🖥 Auto</button>
   <div class="search">
     <input id="q" type="search" placeholder="Search names, prompts, transcripts…  ( / )" autocomplete="off" spellcheck="false">
@@ -47,7 +48,6 @@
     </div>
     <div id="zoom"><button id="zoomout" title="zoom out (-)">−</button><button id="zoomval" title="reset zoom">100%</button><button id="zoomin" title="zoom in (+)">+</button><button id="zoomfit" title="fit everything (Shift+1)">⤢</button></div>
     <div id="ctxmenu" hidden></div>
-    <div id="tell" hidden><div class="to"></div><div class="row"><input placeholder="One line, Enter to send · Esc to cancel"><button class="send">Send</button></div><button class="go" hidden>↗ Go to it</button><div class="how"></div></div>
     <div id="dock">
       <nav id="floors" aria-label="floors"></nav>
       <span class="sep"></span>
@@ -57,14 +57,17 @@
     </div>
   </div>
   <aside id="side">
+    <div id="sidegrip" title="drag to resize"></div>
     <div id="card" hidden></div>
     <div class="tabs">
-      <button data-tab="pack" class="on" title="Recent sessions: drag onto a kennel to file">🐾 Sessions</button>
+      <button data-tab="pack" class="on" title="Sessions from the last week: drag onto a kennel to file">🐾 Sessions</button>
+      <button data-tab="term" title="The selected pup's terminal">🖥</button>
       <button data-tab="ask" title="Ask">💬</button>
       <button data-tab="jobs" title="Jobs & things">⏰</button>
       <button data-tab="art" title="Shelf: artifacts, links, files, channels">📎</button>
     </div>
     <section id="pack"></section>
+    <section id="term" hidden></section>
     <section id="build" hidden></section>
     <section id="jobs" hidden></section>
     <section id="art" hidden></section>
@@ -89,6 +92,8 @@
 </div>
 <div id="toast" hidden></div>
 
+<script src="vendor/xterm.js"></script>
+<script src="vendor/addon-fit.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

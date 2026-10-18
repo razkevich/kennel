@@ -60,19 +60,6 @@ func TestHideArtifact(t *testing.T) {
 	}
 }
 
-func TestTellAsleepClaudeRunsHeadless(t *testing.T) {
-	a := demoApp(t)
-	a.Cfg.Demo = true
-	p := a.Find("RATE-LIMITS")
-	msg, err := a.Tell(p, "  add overrides  ")
-	if err != nil || !strings.Contains(msg, "claude --resume "+p.ID+" -p add overrides") {
-		t.Fatalf("%q %v", msg, err)
-	}
-	if _, err := a.Tell(p, " "); err == nil {
-		t.Fatal("empty message")
-	}
-}
-
 func TestSortIntoKennels(t *testing.T) {
 	a := demoApp(t)
 	a.Cfg.ThemeLLM = ask.Fake{}
@@ -88,7 +75,7 @@ func TestSortIntoKennels(t *testing.T) {
 			ids = append(ids, p.ID)
 		}
 	}
-	sugg, err := a.SuggestKennels(context.Background(), ids)
+	sugg, err := a.SuggestKennels(context.Background(), ids, "")
 	if err != nil || len(sugg) == 0 {
 		t.Fatalf("%v %v", sugg, err)
 	}
