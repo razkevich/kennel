@@ -9,6 +9,11 @@ test("web screenshots", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 860 });
   await page.goto("/?t=e2e");
   await page.waitForFunction(() => window.kennel && window.kennel.app.ents.size > 0);
+  for (const [name, value] of [["runbook", "~/docs/oncall-runbook.md"], ["", "#qa-alerts"], ["", "INF-2141"], ["design doc", "https://docs.acme.dev/checkout-v2"]]) {
+    await page.evaluate(([n, v]) => fetch("/api/treats", { method: "POST", headers: { "X-Kennel-Token": "e2e" }, body: JSON.stringify({ name: n, value: v }) }), [name, value]);
+  }
+  await page.reload();
+  await page.waitForFunction(() => window.kennel && window.kennel.app.ents.size > 0);
   await page.waitForTimeout(1200);
   await page.screenshot({ path: out("web-map") });
 

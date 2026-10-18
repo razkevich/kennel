@@ -497,3 +497,39 @@ func TestOtherAgents(t *testing.T) {
 		t.Fatalf("cursor open:\n%s", h.screen())
 	}
 }
+
+func TestFeedTreats(t *testing.T) {
+	h := newHarness(t, opener.Herdr)
+	flaky := h.pup("FLAKY-CI")
+	h.rec.agents = `{"result":{"agents":[{"agent":"claude","agent_status":"blocked","pane_id":"w3:p2","agent_session":{"value":"` + flaky.ID + `"}}]}}`
+	h.send(liveMsg{transitions: h.app.RefreshLive(true)})
+
+	// A live pup in herdr gets the treat as a prompt.
+	h.key("2", "/")
+	h.typeText("flaky-ci")
+	h.key("enter", "+")
+	h.contains("feed…", "type a path")
+	h.key("enter")
+	h.typeText("#qa-alerts")
+	h.key("enter")
+	calls := h.rec.Calls()
+	if last := calls[len(calls)-1]; !strings.HasPrefix(last, "herdr agent prompt w3:p2 Please read the Slack channel #qa-alerts") {
+		t.Fatalf("feed live: %s", last)
+	}
+
+	// Saved treats show up next time; an asleep pup is woken up with it.
+	if _, err := h.app.AddTreat("runbook", "/Users/demo/docs/runbook.md"); err != nil {
+		t.Fatal(err)
+	}
+	h.key("esc", "/")
+	h.typeText("rate-limits")
+	h.key("enter", "+")
+	h.contains("wake RATE-LIMITS with", "📄 runbook")
+	h.typeText("runbook")
+	h.key("enter")
+	all := strings.Join(h.rec.Calls(), "\n")
+	rl := h.pup("RATE-LIMITS")
+	if !strings.Contains(all, "-- --resume "+rl.ID+" Please read /Users/demo/docs/runbook.md") {
+		t.Fatalf("wake with treat:\n%s", all)
+	}
+}

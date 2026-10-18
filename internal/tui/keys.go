@@ -205,6 +205,9 @@ func (m Model) pupActions(key string, p *pack.Pup) (tea.Model, tea.Cmd, bool) {
 	case "c":
 		m.modal = m.convertModal(p)
 		return m, nil, true
+	case "+":
+		m.modal = m.feedModal(p)
+		return m, nil, true
 	case "E":
 		path, err := m.app.Export(p)
 		if err != nil {

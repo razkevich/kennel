@@ -65,7 +65,7 @@ func (t Target) ClaudeArgs() []string {
 	if t.Remote {
 		args = append(args, "--remote-control")
 	}
-	if t.New && t.Prompt != "" {
+	if t.Prompt != "" {
 		args = append(args, t.Prompt)
 	}
 	return args

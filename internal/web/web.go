@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"embed"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -31,6 +32,7 @@ import (
 	"github.com/razkevich/kennel/internal/pack"
 	"github.com/razkevich/kennel/internal/store"
 	"github.com/razkevich/kennel/internal/things"
+	"github.com/razkevich/kennel/internal/treats"
 )
 
 //go:embed static
@@ -165,6 +167,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/pup/{id}/{action}", s.guard(s.handlePupAction))
 	mux.HandleFunc("POST /api/thing/{action}", s.guard(s.handleThingAction))
 	mux.HandleFunc("GET /api/catalog", s.guard(s.handleCatalog))
+	mux.HandleFunc("GET /api/treats", s.guard(s.handleTreats))
+	mux.HandleFunc("POST /api/treats", s.guard(s.handleAddTreat))
+	mux.HandleFunc("POST /api/treats/{id}/delete", s.guard(s.handleDeleteTreat))
+	mux.HandleFunc("POST /api/drop", s.guard(s.handleDrop))
 	mux.HandleFunc("POST /api/room/{action}", s.guard(s.handleRoom))
 	return s.hostCheck(mux)
 }
@@ -478,6 +484,8 @@ func (s *Server) handlePupAction(w http.ResponseWriter, r *http.Request) {
 		Cwd   string   `json:"cwd"`
 		With  []string `json:"with"`
 		Agent string   `json:"agent"`
+		Treat int64    `json:"treat"`
+		Value string   `json:"value"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	var msg string
@@ -513,6 +521,39 @@ func (s *Server) handlePupAction(w http.ResponseWriter, r *http.Request) {
 				if opened, err = s.App.Opener().Open(s.App.Target(s.App.Pup(id), false, false)); err == nil {
 					msg += " · " + opened
 				}
+			}
+		}
+	case "feed":
+		var tr treats.Treat
+		if body.Treat != 0 {
+			for _, t := range s.App.Treats() {
+				if t.ID == body.Treat {
+					tr = t
+				}
+			}
+		} else if strings.TrimSpace(body.Value) != "" {
+			tr = treats.New(body.Title, app.ExpandHome(body.Value))
+		}
+		if tr.Value == "" {
+			err = errors.New("nothing to feed")
+			break
+		}
+		prompt := tr.Prompt("")
+		var live bool
+		if live, err = s.App.FeedLive(p, prompt); live {
+			msg = "🦴 fed " + p.Title() + " " + treats.Icon[tr.Kind] + " " + tr.Name
+			break
+		}
+		var files []string
+		if tr.Kind == treats.File {
+			files = []string{tr.Value}
+		}
+		t := s.App.FeedTarget(p, prompt, files)
+		if err = s.App.CheckCwd(t.Cwd); err == nil {
+			if opener.Resolve(s.App.Cfg.Opener) == opener.Inline && t.Agent != "cursor" {
+				msg = t.ShellCommand()
+			} else if msg, err = s.App.Opener().Open(t); err == nil {
+				msg = "🦴 woke " + p.Title() + ": " + msg
 			}
 		}
 	case "export":
@@ -603,6 +644,7 @@ func (s *Server) handleRoom(w http.ResponseWriter, r *http.Request) {
 		Style    store.Style `json:"style"`
 		Template string      `json:"template"`
 		Index    int         `json:"index"`
+		Prompt   string      `json:"prompt"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Key == "" {
 		fail(w, errors.New("missing room key"), http.StatusBadRequest)
@@ -634,6 +676,9 @@ func (s *Server) handleRoom(w http.ResponseWriter, r *http.Request) {
 		}
 		var t opener.Target
 		if t, err = floor.Spawn(s.App, room, doors[body.Index]); err == nil {
+			if p := strings.TrimSpace(body.Prompt); p != "" {
+				t.Prompt = p
+			}
 			if opener.Resolve(s.App.Cfg.Opener) == opener.Inline {
 				msg = t.ShellCommand()
 			} else {
@@ -650,4 +695,67 @@ func (s *Server) handleRoom(w http.ResponseWriter, r *http.Request) {
 	}
 	s.touch()
 	writeJSON(w, map[string]any{"ok": true, "message": msg})
+}
+
+func (s *Server) handleTreats(w http.ResponseWriter, r *http.Request) {
+	ts := s.App.Treats()
+	type tj struct {
+		treats.Treat
+		Icon string `json:"icon"`
+	}
+	out := []tj{}
+	for _, t := range ts {
+		out = append(out, tj{t, treats.Icon[t.Kind]})
+	}
+	writeJSON(w, out)
+}
+
+func (s *Server) handleAddTreat(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name  string `json:"name"`
+		Value string `json:"value"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	t, err := s.App.AddTreat(body.Name, body.Value)
+	if err != nil {
+		fail(w, err, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, t)
+}
+
+func (s *Server) handleDeleteTreat(w http.ResponseWriter, r *http.Request) {
+	var id int64
+	fmt.Sscan(r.PathValue("id"), &id)
+	if err := s.App.DeleteTreat(id); err != nil {
+		fail(w, err, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+const maxDrop = 25 << 20
+
+// handleDrop saves a file dropped from the desktop so an agent can read it by path.
+func (s *Server) handleDrop(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxDrop*2)
+	var body struct {
+		Name string `json:"name"`
+		Data string `json:"data"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		fail(w, fmt.Errorf("drop too large or malformed: %w", err), http.StatusBadRequest)
+		return
+	}
+	data, err := base64.StdEncoding.DecodeString(body.Data)
+	if err != nil || len(data) > maxDrop {
+		fail(w, errors.New("drop must be base64 and at most 25 MB"), http.StatusBadRequest)
+		return
+	}
+	path, err := s.App.SaveDrop(body.Name, data)
+	if err != nil {
+		fail(w, err, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]string{"path": path})
 }

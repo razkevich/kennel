@@ -32,6 +32,7 @@ Sessions are **pups** 🐕, in three breeds: Claude Code corgis ▼•ᴥ•▼,
 | 📺 **Things** | Non-agent terminals as objects in the rooms. Kennel finds them in herdr panes, and you can save your own commands to start, focus or stop. |
 | ⏰ **Jobs** | Background agents from the Claude daemon, and cron tasks scheduled inside sessions (`/loop`, CronCreate) with their last fire time. |
 | 🎨 **Artifacts** | Every artifact your sessions published, newest first, starrable, one key to open. |
+| 🦴 **Treats** | Feed sources to pups: drag a file from Finder, a link, a saved `#slack-channel`, a ticket or a note onto a pup in the map (or `+` in the TUI). Live pups get it as a prompt through herdr; asleep ones wake up with it. Drop on a 🚪 spawn door to start a fresh pup with it. |
 | 🐺 **Claude, Codex, Cursor** | Indexes Claude Code transcripts, Codex CLI rollouts (`~/.codex/sessions`) and Cursor's agent chats (read-only from its state database). Each opens in its own tool: `claude --resume`, `codex resume`, or Cursor on the folder. Filter with `agent:codex`. |
 | ↔ **Convert** | Continue any session in another agent (`c`): kennel exports the conversation to Markdown and starts Claude or Codex with a handoff brief, or opens Cursor on the folder with the handoff document. |
 | ⑂ **Fork · clone · merge** | Fork (`f`) a Claude session, clone it into another project (`C`), merge several sessions into a new pup seeded with a combined brief (`M`), or distill a huge one into a fresh start (`Z`). Export any conversation as Markdown (`E`). |
@@ -93,7 +94,7 @@ kennel -demo                # try it on synthetic sessions
 | `/` · `a` · `ctrl+k` | search · ask · jump anywhere |
 | `⏎` · `f` · `R` · `t` | open/focus · fork · remote control · quick reply |
 | `C` · `M` · `Z` · `c` · `E` | clone · merge · distill · convert to another agent · export Markdown |
-| `T` · `d` | suggest a name (via claude) · digest |
+| `T` · `d` · `+` | suggest a name (via claude) · digest · feed a treat |
 | `v` / `space` | read transcript (`/` to find, `n`/`N`) |
 | `s` `r` `m` `N` `x` `D` | star, rename, move to kennel, note, archive, trash |
 | `K` · `e` on a kennel | new kennel · edit name and rules |

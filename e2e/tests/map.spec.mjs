@@ -170,3 +170,32 @@ test("codex and cursor pups: breeds, convert and export", async ({ page }) => {
   await card.getByRole("button", { name: "⬇ Export" }).click();
   await expect(page.locator("#toast")).toContainText("exported to");
 });
+
+test("treats: drag a saved treat or a desktop file onto a pup", async ({ page }) => {
+  await open(page);
+  await page.evaluate(() => fetch("/api/treats", { method: "POST", headers: { "X-Kennel-Token": "e2e" }, body: JSON.stringify({ name: "runbook", value: "/Users/demo/docs/runbook.md" }) }));
+  await page.reload();
+  await page.waitForFunction(() => window.kennel && window.kennel.app.ents.size > 0);
+  const chip = page.locator("#treatlist .treat", { hasText: "runbook" });
+  await expect(chip).toBeVisible();
+
+  const id = await pupId(page, "RATE-LIMITS");
+  await page.evaluate((i) => window.kennel.reveal(i), id);
+  const pos = await page.evaluate((i) => window.kennel.screenPos(i), id);
+  const drop = (payload) => page.evaluate(({ x, y, payload }) => {
+    const dt = new DataTransfer();
+    if (payload.treat) dt.setData("application/x-kennel-treat", String(payload.treat));
+    if (payload.file) dt.items.add(new File([payload.file.body], payload.file.name, { type: "text/markdown" }));
+    const c = document.querySelector("#map");
+    for (const type of ["dragover", "drop"]) c.dispatchEvent(new DragEvent(type, { clientX: x, clientY: y, dataTransfer: dt, bubbles: true, cancelable: true }));
+  }, { x: pos.x, y: pos.y, payload });
+
+  const treatId = await chip.getAttribute("data-id");
+  await drop({ treat: Number(treatId) });
+  await expect(page.locator("#toast")).toContainText(`claude --resume ${id}`);
+  await expect(page.locator("#toast")).toContainText("Please read /Users/demo/docs/runbook.md");
+
+  await drop({ file: { name: "notes.md", body: "# notes\nremember the rollback plan" } });
+  await expect(page.locator("#toast")).toContainText("notes.md");
+  await expect(page.locator("#toast")).toContainText("Please read");
+});

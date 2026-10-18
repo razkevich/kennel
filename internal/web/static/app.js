@@ -493,6 +493,7 @@ for (const b of document.querySelectorAll("#side .tabs button")) {
     if (build.on) setBuild(false);
     for (const x of document.querySelectorAll("#side .tabs button")) x.classList.toggle("on", x === b);
     $("#pack").hidden = b.dataset.tab !== "pack";
+    $("#treats").hidden = b.dataset.tab !== "pack";
     $("#ask").hidden = b.dataset.tab !== "ask";
     if (b.dataset.tab === "ask") $("#askq").focus();
   };
@@ -984,7 +985,8 @@ function drawPup(e) {
   if (selected) { ctx.strokeStyle = "#f5a3c7"; ctx.lineWidth = 3; ctx.beginPath(); ctx.ellipse(px, py + 2, 24, 8, 0, 0, 7); ctx.stroke(); }
   // Status bubble.
   const top = py - h + dy - 6;
-  if (p.status === "waiting") bubble(px, top, Math.floor(app.t * 3) % 2 ? "!" : "!!", "#ffd66b", "#2b2205");
+  if (app.fed && app.fed[e.id] && app.t - app.fed[e.id] < 3) bubble(px, top, "🦴 nom", "#ffe9b8", "#3a2a10");
+  else if (p.status === "waiting") bubble(px, top, Math.floor(app.t * 3) % 2 ? "!" : "!!", "#ffd66b", "#2b2205");
   else if (p.status === "working") bubble(px, top, ["·", "··", "···"][frame % 3], "#a6e3a1", "#14381f");
   else if (p.status === "done") bubble(px, top, "✓", "#89b4fa", "#0d2347");
   else if (p.status === "offline") { ctx.fillStyle = "#6b6890"; ctx.font = "bold 12px system-ui"; ctx.fillText("z", px + 14, top + 4 - (app.t * 6 % 6)); ctx.fillText("Z", px + 20, top - 6 - (app.t * 4 % 6)); }
@@ -1072,6 +1074,7 @@ function render() {
     if (e.kind === "pup") drawPup(e); else drawThing(e);
   }
   if (!youDrawn) drawYou();
+  drawDropHover();
 
   const near = nearest();
   const hint = $("#hint");
@@ -1221,7 +1224,7 @@ function setBuild(on) {
   $("#stage").classList.toggle("building", on);
   if (!on) { build.carry = null; build.drag = null; }
   for (const x of document.querySelectorAll("#side .tabs button")) x.classList.toggle("on", x.dataset.tab === (on ? "build" : "pack"));
-  $("#pack").hidden = on; $("#ask").hidden = true; $("#build").hidden = !on;
+  $("#pack").hidden = on; $("#treats").hidden = on; $("#ask").hidden = true; $("#build").hidden = !on;
   renderBuilder();
 }
 
@@ -1344,6 +1347,109 @@ async function useFixture(f) {
   else toast(`${kindOf(b.kind).icon} ${kindOf(b.kind).blurb}`);
 }
 
+
+// ---------- treats: feed sources to pups by drag and drop ----------
+let treatList = [];
+async function loadTreats() {
+  try { treatList = await (await api("/api/treats")).json(); } catch (e) { treatList = []; }
+  renderTreats();
+}
+
+function renderTreats() {
+  const box = $("#treatlist");
+  if (!box) return;
+  box.innerHTML = "";
+  if (!treatList.length) box.appendChild(el("div", "empty", "Save files, links, #channels or tickets here, or drag files straight from Finder."));
+  for (const t of treatList) {
+    const c = el("div", "treat", `${t.icon} ${t.name}`);
+    c.title = `${t.value}\nright-click to remove`;
+    c.draggable = true;
+    c.dataset.id = t.id;
+    c.addEventListener("dragstart", (e) => { e.dataTransfer.setData("application/x-kennel-treat", String(t.id)); e.dataTransfer.effectAllowed = "copy"; });
+    c.addEventListener("contextmenu", async (e) => {
+      e.preventDefault();
+      if (!confirm(`Remove treat ${t.name}?`)) return;
+      await api(`/api/treats/${t.id}/delete`, { method: "POST" });
+      loadTreats();
+    });
+    box.appendChild(c);
+  }
+}
+
+$("#addtreat").onclick = async () => {
+  const value = prompt("A file path, link, #slack-channel, TICKET-123 or a note:");
+  if (!value) return;
+  try { await api("/api/treats", { method: "POST", body: JSON.stringify({ value }) }); } catch (e) { toast(e.message, true); }
+  loadTreats();
+};
+
+const dropTargetAt = (clientX, clientY) => {
+  const rc = canvas.getBoundingClientRect();
+  const px = clientX - rc.left, py = clientY - rc.top;
+  const ent = entityAt(px, py);
+  if (ent && ent.kind === "pup") return { kind: "pup", id: ent.id };
+  const w = screenToWorld(px, py);
+  const f = fixtureAt(w.x, w.y);
+  if (f && f.type === "block" && f.item.kind === "door") {
+    const idx = (f.room.style.blocks || []).filter((x) => x.kind === "door").indexOf(f.item);
+    return { kind: "door", room: f.room.key, index: idx, fixture: f };
+  }
+  return null;
+};
+
+canvas.addEventListener("dragover", (e) => {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "copy";
+  $("#stage").classList.add("dropping");
+  app.dropHover = dropTargetAt(e.clientX, e.clientY);
+});
+canvas.addEventListener("dragleave", () => { $("#stage").classList.remove("dropping"); app.dropHover = null; });
+canvas.addEventListener("drop", async (e) => {
+  e.preventDefault();
+  $("#stage").classList.remove("dropping");
+  const target = dropTargetAt(e.clientX, e.clientY);
+  app.dropHover = null;
+  if (!target) { toast("drop it right on a pup (or a spawn door)", true); return; }
+  let body = null;
+  const treatId = e.dataTransfer.getData("application/x-kennel-treat");
+  try {
+    if (treatId) body = { treat: Number(treatId) };
+    else if (e.dataTransfer.files && e.dataTransfer.files.length) {
+      const file = e.dataTransfer.files[0];
+      const data = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result.split(",")[1] || ""); r.onerror = rej; r.readAsDataURL(file); });
+      const saved = await (await api("/api/drop", { method: "POST", body: JSON.stringify({ name: file.name, data }) })).json();
+      body = { value: saved.path, title: file.name };
+    } else {
+      const text = (e.dataTransfer.getData("text/uri-list") || e.dataTransfer.getData("text/plain") || "").split("\n")[0].trim();
+      if (text) body = { value: text };
+    }
+    if (!body) return;
+    if (target.kind === "pup") {
+      const res = await api(`/api/pup/${target.id}/feed`, { method: "POST", body: JSON.stringify(body) });
+      toast((await res.json()).message);
+      app.fed = app.fed || {};
+      app.fed[target.id] = app.t;
+    } else {
+      let promptText = body.value;
+      if (body.treat) { const t = treatList.find((x) => x.id === body.treat); promptText = t ? t.value : ""; }
+      const res = await api("/api/room/door", { method: "POST", body: JSON.stringify({ key: target.room, index: target.index, prompt: "Start by looking at " + promptText }) });
+      toast("🚪 " + ((await res.json()).message || "opened"));
+    }
+  } catch (err) { toast(err.message, true); }
+});
+
+function drawDropHover() {
+  const h = app.dropHover;
+  if (!h) return;
+  let x, y;
+  if (h.kind === "pup") { const e = app.ents.get(h.id); if (!e) return; x = e.x * TILE; y = (e.y - 1.9) * TILE; }
+  else { x = h.fixture.x * TILE; y = (h.fixture.y - 2) * TILE; }
+  const bob = Math.sin(app.t * 8) * 4;
+  ctx.font = "26px system-ui"; ctx.textAlign = "center"; ctx.fillStyle = "#000";
+  ctx.fillText("🦴", x, y + bob);
+  ctx.textAlign = "left";
+}
+
 // Exposed for end-to-end tests: screen positions of entities.
 window.kennel = {
   app,
@@ -1382,4 +1488,4 @@ window.kennel = {
 
 setTimeout(() => $("#help").classList.add("faded"), 9000);
 resize();
-Promise.all([loadCatalog(), loadState()]).then(() => { listen(); requestAnimationFrame(frame); }).catch((e) => toast(e.message, true));
+Promise.all([loadCatalog(), loadState(), loadTreats()]).then(() => { listen(); requestAnimationFrame(frame); }).catch((e) => toast(e.message, true));

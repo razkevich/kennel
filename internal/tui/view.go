@@ -175,7 +175,7 @@ func (m Model) helpView() string {
 		keys  [][2]string
 	}{
 		{"getting around", [][2]string{{"1-6 / [ ]", "switch tabs"}, {"ctrl+k", "jump anywhere"}, {"u", "next pup that needs you"}, {"d", "digest: the last 24 hours"}, {"/", "search (names + transcripts)"}, {"a", "ask your pack (RAG)"}, {"F", "map floor: campus / projects / kennels"}}},
-		{"a pup", [][2]string{{"⏎", "open / focus in herdr or Ghostty"}, {"N", "new thing (monitor, server, logs…)"}, {"f", "fork session"}, {"C", "clone into another project"}, {"M", "merge with another pup"}, {"Z", "distill into a fresh pup"}, {"c", "continue in Claude/Codex/Cursor"}, {"E", "export as Markdown"}, {"R", "resume with remote control"}, {"t", "quick reply (herdr)"}, {"v / space", "read transcript"}, {"n", "new session here"}}},
+		{"a pup", [][2]string{{"⏎", "open / focus in herdr or Ghostty"}, {"N", "new thing (monitor, server, logs…)"}, {"f", "fork session"}, {"C", "clone into another project"}, {"M", "merge with another pup"}, {"Z", "distill into a fresh pup"}, {"c", "continue in Claude/Codex/Cursor"}, {"E", "export as Markdown"}, {"R", "resume with remote control"}, {"t", "quick reply (herdr)"}, {"+", "feed a treat: file, link, #channel"}, {"v / space", "read transcript"}, {"n", "new session here"}}},
 		{"organize", [][2]string{{"B", "build: shape, floor, walls, blocks"}, {"s", "star (Best in Show)"}, {"r", "rename"}, {"T", "suggest a name (claude)"}, {"m", "move to kennel"}, {"N", "note"}, {"x", "archive"}, {"D", "trash (recoverable)"}, {"K", "new kennel"}}},
 		{"handy", [][2]string{{"y / Y", "copy id / resume command"}, {"p / A", "open PR / artifact"}, {"search", "is:live repo:x agent:codex since:7d"}, {"q", "quit"}}},
 	}

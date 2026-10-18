@@ -14,6 +14,7 @@ import (
 	"github.com/razkevich/kennel/internal/pack"
 	"github.com/razkevich/kennel/internal/store"
 	"github.com/razkevich/kennel/internal/things"
+	"github.com/razkevich/kennel/internal/treats"
 	"github.com/sahilm/fuzzy"
 )
 
@@ -546,4 +547,78 @@ func (m *Model) convertModal(p *pack.Pup) *modal {
 			return openedMsg{text: "↔ " + text + " · handoff " + path, err: err}
 		}
 	})
+}
+
+func (m *Model) feedModal(p *pack.Pup) *modal {
+	choices := []choice{{label: "✎ type a path, link, #channel, ticket or note…", value: "type"}}
+	for _, t := range m.app.Treats() {
+		choices = append(choices, choice{label: treats.Icon[t.Kind] + " " + t.Name, detail: t.Value, value: fmt.Sprint(t.ID)})
+	}
+	choices = append(choices, choice{label: "＋ save a new treat for later…", value: "save"})
+	verb := "feed"
+	if !p.Status.Live() {
+		verb = "wake " + p.Title() + " with"
+	}
+	return pickerModal("🦴 "+verb+"…", choices, func(m *Model, _, value string) tea.Cmd {
+		switch value {
+		case "type":
+			m.modal = textModal("🦴 feed "+p.Title(), "a file path, URL, #slack-channel, TICKET-123, or plain words", "", "~/docs/runbook.md", func(m *Model, text, _ string) tea.Cmd {
+				if text == "" {
+					return nil
+				}
+				return m.feed(p, treats.New("", app.ExpandHome(text)))
+			})
+			return nil
+		case "save":
+			m.modal = textModal("🦴 new treat", "name | value   (value: path, URL, #channel, TICKET-123 or text)", "", "runbook | ~/docs/runbook.md", func(m *Model, text, _ string) tea.Cmd {
+				name, val, ok := strings.Cut(text, "|")
+				if !ok {
+					name, val = "", text
+				}
+				if _, err := m.app.AddTreat(name, val); err != nil {
+					return toast(err.Error(), true)
+				}
+				m.modal = m.feedModal(p)
+				return nil
+			})
+			return nil
+		}
+		for _, t := range m.app.Treats() {
+			if fmt.Sprint(t.ID) == value {
+				return m.feed(p, t)
+			}
+		}
+		return nil
+	})
+}
+
+func (m *Model) feed(p *pack.Pup, t treats.Treat) tea.Cmd {
+	msg := t.Prompt("")
+	a := m.app
+	if p.Status.Live() {
+		return func() tea.Msg {
+			if _, err := a.FeedLive(p, msg); err != nil {
+				return toastMsg{text: err.Error(), err: true}
+			}
+			return toastMsg{text: "🦴 fed " + p.Title() + " " + treats.Icon[t.Kind] + " " + t.Name}
+		}
+	}
+	var files []string
+	if t.Kind == treats.File {
+		files = []string{t.Value}
+	}
+	target := a.FeedTarget(p, msg, files)
+	if err := a.CheckCwd(target.Cwd); err != nil {
+		return toast(err.Error(), true)
+	}
+	if opener.Resolve(a.Cfg.Opener) == opener.Inline && target.Agent != "cursor" {
+		return tea.ExecProcess(opener.InlineCmd(target), func(err error) tea.Msg {
+			return openedMsg{text: "back in the kennel 🐾", err: err}
+		})
+	}
+	o := a.Opener()
+	return func() tea.Msg {
+		text, err := o.Open(target)
+		return openedMsg{text: "🦴 woke " + p.Title() + ": " + text, err: err}
+	}
 }
