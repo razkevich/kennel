@@ -1,0 +1,2 @@
+import KennelKit
+KennelApp.main()

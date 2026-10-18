@@ -55,6 +55,26 @@ type Server struct {
 	indexing atomic.Value
 	// themes reports the categorizer's progress.
 	themes atomic.Value
+
+	subMu sync.Mutex
+	subs  map[chan []byte]bool
+}
+
+// handoff broadcasts a launch to connected pages; the Mac app's page opens it as a tab.
+func (s *Server) handoff(r opener.Run) error {
+	b, _ := json.Marshal(r)
+	s.subMu.Lock()
+	defer s.subMu.Unlock()
+	if len(s.subs) == 0 {
+		return errors.New("the Kennel app isn't connected")
+	}
+	for ch := range s.subs {
+		select {
+		case ch <- b:
+		default:
+		}
+	}
+	return nil
 }
 
 type ThemeStatus struct {
@@ -82,6 +102,9 @@ func Serve(ctx context.Context, a *app.App, addr string, open bool, token string
 		token = NewToken()
 	}
 	s := &Server{App: a, Token: token, Herdr: !a.Cfg.Demo}
+	if a.Cfg.Opener == opener.App {
+		a.Cfg.Handoff = s.handoff
+	}
 	srv := &http.Server{Handler: s.Handler(), ReadHeaderTimeout: 5 * time.Second}
 	go s.pump(ctx)
 	url := fmt.Sprintf("http://%s/?t=%s", ln.Addr().String(), s.Token)
@@ -433,6 +456,18 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-store")
+	runs := make(chan []byte, 8)
+	s.subMu.Lock()
+	if s.subs == nil {
+		s.subs = map[chan []byte]bool{}
+	}
+	s.subs[runs] = true
+	s.subMu.Unlock()
+	defer func() {
+		s.subMu.Lock()
+		delete(s.subs, runs)
+		s.subMu.Unlock()
+	}()
 	last := int64(-1)
 	tick := time.NewTicker(500 * time.Millisecond)
 	defer tick.Stop()
@@ -445,6 +480,9 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-r.Context().Done():
 			return
+		case b := <-runs:
+			fmt.Fprintf(w, "event: run\ndata: %s\n\n", b)
+			fl.Flush()
 		case <-tick.C:
 		}
 	}

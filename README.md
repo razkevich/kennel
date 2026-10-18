@@ -2,170 +2,111 @@
 
 # ▼•ᴥ•▼ kennel
 
-**A cozy, Gather-style home for your Claude Code sessions.**
-Find any session by name, content or meaning, see which ones need you, and jump straight into them in herdr or Ghostty.
+**A cozy, Gather-style home for your Claude Code, Codex and Cursor sessions.**
+Find any session by name, content or meaning, file them into rooms, see who needs you, and open them as terminal tabs.
 
 [![CI](https://github.com/razkevich/kennel/actions/workflows/ci.yml/badge.svg)](https://github.com/razkevich/kennel/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/razkevich/kennel?include_prereleases)](https://github.com/razkevich/kennel/releases)
 
-<img src="docs/img/tui-map.png" alt="kennel map in the terminal" width="900">
+<img src="docs/img/app-kennel.png" alt="Kennel for Mac" width="900">
 
 </div>
 
-Running ten-plus Claude Code sessions a day means losing track of them: which one needs an approval, where you fixed that flaky test last week, what the session from Priya's Slack question concluded. Kennel indexes every transcript under `~/.claude`, watches which sessions are live, and gives you two views of the same pack:
+Running ten-plus agent sessions a day means losing track of them: which one needs an approval, where you fixed that flaky test last week, what came of a colleague's Slack question. Kennel indexes every transcript, watches which sessions are live, and puts them in a pixel-art office.
 
-- **a terminal app** (`kennel`), fast and keyboard-first, with a map, list, search, Ask, jobs, artifacts and gear;
-- **a pixel-art office in your browser** (`kennel map`), where sessions are pups that wander their rooms, sit at desks while working and bounce when they need you.
+- **Kennel for Mac** has a pinned 🐾 Kennel tab holding the office. Every session you open becomes a normal terminal tab next to it, rendered with your Ghostty font and colors, and a menu-bar pup shows who needs you.
+- **The same app in your browser:** `kennel` serves the identical UI, and sessions open in herdr or Ghostty instead.
 
-Sessions are **pups** 🐕, in three breeds: Claude Code corgis ▼•ᴥ•▼, Codex huskies ▲•ᴥ•▲ and Cursor dalmatians ◖•ᴥ•◗. Groups are **kennels** 🏠. Other terminals, such as monitors, dev servers, log tails and long jobs, are **things** 📺🔥📜⏳.
+Sessions are **pups**: Claude Code corgis ▼•ᴥ•▼, Codex huskies ▲•ᴥ•▲ and Cursor dalmatians ◖•ᴥ•◗. Rooms are **kennels**. Other terminals, such as monitors, dev servers, log tails and long jobs, are **things** 📺🔥📜⏳.
 
-## Highlights
+## What's in it
 
 | | |
 |---|---|
-| 🧭 **Map** | Rooms of pups, Gather style: The Yard (live), Firehouse, Helping Out, Courtroom, Yak Shaving, Under the Rug… Walk with arrows, open with ⏎, change floors with `F` (campus / one room per project / your kennels). |
-| 🔎 **Search** | As-you-type fuzzy matching on titles, branches, PRs and ids, plus full-text search over every prompt, reply and tool call (SQLite FTS5), with highlighted snippets. Filters: `is:live` `is:starred` `repo:x` `since:7d` `has:pr` `branch:x`. |
-| 💬 **Ask (RAG)** | "What did we decide about the Postgres upgrade?" Kennel turns the question into search terms, pulls the best excerpts across sessions, and your own `claude -p` answers with numbered citations you can jump to. |
-| ❗ **Needs you** | Live status from Claude Code's session registry and herdr: working / needs you / done / idle / asleep. `u` jumps to the next pup waiting on you. |
-| ↗ **Open anywhere** | ⏎ focuses the live herdr pane, or resumes in a new herdr tab, a Ghostty tab (AppleScript) or right in place. Also fork (`f`), resume with remote control (`R`) and quick reply (`t`) to a running session through herdr without switching. |
-| 🏠 **Organize** | Star, rename (written like `/rename`), notes, archive, recoverable trash, kennels with auto-adopt rules (`cwd=~/code/infra match=^INF-`). |
-| 📺 **Things** | Non-agent terminals as objects in the rooms. Kennel finds them in herdr panes, and you can save your own commands to start, focus or stop. |
-| ⏰ **Jobs** | Background agents from the Claude daemon, and cron tasks scheduled inside sessions (`/loop`, CronCreate) with their last fire time. |
-| 🎨 **Artifacts** | Every artifact your sessions published, newest first, starrable, one key to open. |
-| 🦴 **Treats** | Feed sources to pups: drag a file from Finder, a link, a saved `#slack-channel`, a ticket or a note onto a pup in the map (or `+` in the TUI). Live pups get it as a prompt through herdr; asleep ones wake up with it. Drop on a 🚪 spawn door to start a fresh pup with it. |
-| 🐺 **Claude, Codex, Cursor** | Indexes Claude Code transcripts, Codex CLI rollouts (`~/.codex/sessions`) and Cursor's agent chats (read-only from its state database). Each opens in its own tool: `claude --resume`, `codex resume`, or Cursor on the folder. Filter with `agent:codex`. |
-| ↔ **Convert** | Continue any session in another agent (`c`): kennel exports the conversation to Markdown and starts Claude or Codex with a handoff brief, or opens Cursor on the folder with the handoff document. |
-| ⑂ **Fork · clone · merge** | Fork (`f`) a Claude session, clone it into another project (`C`), merge several sessions into a new pup seeded with a combined brief (`M`), or distill a huge one into a fresh start (`Z`). Export any conversation as Markdown (`E`). |
-| 📰 **Digest** | `d` or `kennel digest`: what you touched, shipped and spent, what's waiting, and what slid under the rug. |
-| 🔨 **Build** | Shape any room: templates (on-call room, release train, research lab, lounge, one-on-one corner), size and shape, floor, walls and furniture. Add **purpose blocks**: 🚪 spawn door (new pup with a preset folder, name, prompt and model), 🧲 magnet (auto-adopt), 🔔 bell (desktop alert), 🌀 portal (open in a herdr workspace), 📌 pin board, 🧹 archive chute. In the browser: drag and drop. In the TUI: `B`. |
-| 🔩 **Gear** | MCP servers, skills, plugins, subagents, commands and hooks at user, project and plugin level. Toggle skills, plugins and project MCP servers safely. |
+| 🗺 **The office** | Floors: a campus of smart rooms, one room per project, and **your kennels**, which show only what you've filed. Pups wander, sit at desks while working, and bounce with `!` when they need you. Walk with WASD, interact with X, click to inspect, double-click to open. |
+| 📥 **Inbox** | The newest sessions that aren't filed yet, in a strip above the map. Drag one onto a kennel. |
+| 📚 **Library** | Every past session: filter by date, agent, kennel or theme, group by day, week, theme, kennel, repo or agent, sort, and move many at once. |
+| ✨ **Themes** | Automatic categories from an LLM, Cloudflare Workers AI or your `claude` haiku. Only titles, first asks and recaps are sent. |
+| 🔎 **Search** | Fuzzy titles, branches and PRs, plus full-text over every prompt, reply and tool call, with highlighted snippets. Filters: `is:live` `repo:x` `agent:codex` `since:7d` `has:pr`. |
+| 💬 **Ask** | "What did we decide about the Postgres upgrade?" Answered from your sessions with numbered citations you can jump to. |
+| ❗ **Live status** | Working, needs you, done, idle or asleep, from Claude Code's session registry and herdr. No hooks to install. |
+| 🗂 **Organize** | Star, rename (written like `/rename`), notes, archive, recoverable trash, rooms with auto-adopt magnets. **Undo** everything with ⌘Z. |
+| ⑂ **Fork, clone, merge, convert** | Fork; clone into another project; merge several sessions into a new pup from a brief; distill a long one; continue any session in another agent (Claude ↔ Codex ↔ Cursor) through a Markdown handoff. The original is never touched. |
+| 🦴 **Treats** | Drag a file, link, `#slack-channel`, ticket or note onto a pup. A live pup gets it as a prompt; an asleep one wakes up with it. |
+| 🔨 **Build** | Room templates, shapes, floors, walls and furniture, plus purpose blocks: 🚪 spawn door, 🧲 magnet, 🔔 bell, 🌀 portal to a herdr workspace, 📌 pin board, 🧹 archive chute. |
+| ⏰ 🎨 🔩 📰 | Jobs and things (background agents, in-session cron tasks, monitors and servers), artifacts, gear (MCP servers, skills, plugins and hooks, with safe toggles), and a digest. |
 
 ## Screens
 
 <table>
-<tr><td><img src="docs/img/web-map.png" alt="web map"></td><td><img src="docs/img/web-card.png" alt="pup card"></td></tr>
-<tr><td align="center"><code>kennel map</code>: the office</td><td align="center">click a pup for its card</td></tr>
-<tr><td><img src="docs/img/web-build.png" alt="build mode"></td><td><img src="docs/img/tui-build.png" alt="tui build menu"></td></tr>
-<tr><td align="center">build mode: templates, floors, walls, furniture, blocks</td><td align="center">the same blocks from the TUI (<code>B</code>)</td></tr>
-<tr><td><img src="docs/img/web-projects.png" alt="projects floor in the browser"></td><td><img src="docs/img/tui-pups.png" alt="pups list"></td></tr>
-<tr><td align="center">one room per project: corgis, huskies and dalmatians</td><td align="center">the list, with live status and previews</td></tr>
-<tr><td><img src="docs/img/web-ask.png" alt="ask"></td><td><img src="docs/img/web-search.png" alt="web search"></td></tr>
-<tr><td align="center">Ask with citations</td><td align="center">search across transcripts</td></tr>
-<tr><td><img src="docs/img/tui-search.png" alt="tui search"></td><td><img src="docs/img/tui-ask.png" alt="tui ask"></td></tr>
-<tr><td align="center">TUI: content search with matches</td><td align="center">TUI: Ask</td></tr>
-<tr><td><img src="docs/img/tui-jobs.png" alt="jobs and things"></td><td><img src="docs/img/tui-gear.png" alt="gear"></td></tr>
-<tr><td align="center">Jobs & things</td><td align="center">Gear: MCP, skills, plugins, hooks</td></tr>
-<tr><td><img src="docs/img/tui-projects.png" alt="projects floor"></td><td><img src="docs/img/tui-transcript.png" alt="transcript"></td></tr>
-<tr><td align="center">Projects floor: one room per repo</td><td align="center">read any transcript, find inside it</td></tr>
+<tr><td><img src="docs/img/web-map.png" alt="the office"></td><td><img src="docs/img/web-library.png" alt="library grouped by theme"></td></tr>
+<tr><td align="center">the office, with the inbox strip</td><td align="center">📚 library, grouped by ✨ theme</td></tr>
+<tr><td><img src="docs/img/web-card.png" alt="pup card"></td><td><img src="docs/img/web-build.png" alt="build mode"></td></tr>
+<tr><td align="center">a pup's card: state and every action</td><td align="center">🔨 build mode</td></tr>
+<tr><td><img src="docs/img/web-ask.png" alt="ask"></td><td><img src="docs/img/web-projects.png" alt="projects floor"></td></tr>
+<tr><td align="center">💬 Ask, with citations</td><td align="center">one room per project</td></tr>
+<tr><td><img src="docs/img/web-gear.png" alt="gear"></td><td><img src="docs/img/web-jobs.png" alt="jobs and things"></td></tr>
+<tr><td align="center">🔩 gear: MCP, skills, plugins, hooks</td><td align="center">⏰ jobs and things</td></tr>
 </table>
 
-Every screenshot is generated from built-in synthetic sessions (`kennel -demo`), not real ones.
+Every screenshot comes from built-in synthetic sessions (`kennel -demo`), not real ones.
 
 ## Install
 
-```sh
-# Homebrew-less: grab a binary from Releases, or
-go install github.com/razkevich/kennel/cmd/kennel@latest
-```
+**Mac app:** download `Kennel.app.zip` from [Releases](https://github.com/razkevich/kennel/releases), unzip it into Applications, and open it. The first time, right-click and choose Open, because the app is ad-hoc signed.
 
-Single static binary, no CGO. macOS and Linux, amd64 and arm64. Ask needs the `claude` CLI on your PATH (it already is, if you use Claude Code).
+**Browser only:**
+```sh
+go install github.com/razkevich/kennel/cmd/kennel@latest   # or grab a binary from Releases
+kennel                                                    # opens the office in your browser
+```
 
 ## Use
 
 ```sh
-kennel                      # the TUI
-kennel map                  # the Gather-style office in your browser
-kennel search "flaky login" # names + transcripts, scriptable (-json)
+kennel                              # the office (in your browser)
+kennel search "flaky login"         # names + transcripts (-json)
 kennel ask "why did checkout flicker on safari?"
-kennel open KALSHI          # resume by name or id prefix (-fork, -remote, -opener ghostty)
+kennel open KALSHI                  # resume by name or id (-fork, -remote, -opener herdr|ghostty|inline)
 kennel convert KALSHI -to codex     # continue in another agent
-kennel merge KALSHI C1VEGA -name RELOC   # one new pup with both histories' brief
-kennel clone KALSHI -to ~/code/other     # copy a session into another project
-kennel export KALSHI -o kalshi.md   # Markdown transcript
-kennel digest -since 168h           # the week in pups
-kennel -demo                # try it on synthetic sessions
+kennel merge KALSHI C1VEGA -name RELOC
+kennel clone KALSHI -to ~/code/other
+kennel export KALSHI -o kalshi.md
+kennel digest -since 168h
+kennel -demo                        # try it on synthetic sessions
 ```
 
-### Keys (TUI)
+**Keys in the office:** `/` search · `l` library · `b` build · `D` digest · `X` interact · `⌘Z` undo · `Esc` close.
+**Keys in the Mac app:** `⌘T` new shell tab · `⌘W` close tab (the Kennel tab is pinned) · `⌘0` Kennel · `⌘1–9` tabs · `⌘⇧[ ]` previous and next.
 
-| key | does |
-|---|---|
-| `1`–`6`, `[` `]` | tabs: Map, Pups, Ask, Jobs, Artifacts, Gear |
-| `/` · `a` · `ctrl+k` | search · ask · jump anywhere |
-| `⏎` · `f` · `R` · `t` | open/focus · fork · remote control · quick reply |
-| `C` · `M` · `Z` · `c` · `E` | clone · merge · distill · convert to another agent · export Markdown |
-| `T` · `d` · `+` | suggest a name (via claude) · digest · feed a treat |
-| `v` / `space` | read transcript (`/` to find, `n`/`N`) |
-| `s` `r` `m` `N` `x` `D` | star, rename, move to kennel, note, archive, trash |
-| `K` · `e` on a kennel | new kennel · edit name and rules |
-| `u` | next pup that needs you |
-| `B` | build the current room: template, shape, floor, walls, blocks |
-| `F` (map) · `N` (map/jobs) | change floor · new thing |
-| `y` `Y` `p` `A` | copy id, copy resume command, open PR, open artifact |
-| `?` | help |
-
-### Smart kennels
-
-Built in, derived from how people actually use Claude Code:
-
-| | room | who lives there |
-|---|---|---|
-| 🌳 | **The Yard** | everything running right now |
-| 🏆 | **Best in Show** | starred |
-| 🔥 | **Firehouse** | incidents, prod, alerts, crashes |
-| 🤝 | **Helping Out** | sessions started from a colleague's Slack message |
-| 🔍 | **Courtroom** | PR reviews |
-| 🐃 | **Yak Shaving** | tools, setup and dotfiles tinkering |
-| 💧 | **Water Bowl** | quick questions |
-| 🏃 | **Marathons** | huge, long-running sessions |
-| 🚀 | **Shipped** | opened a PR |
-| 🧹 | **Under the Rug** | real work, abandoned more than a week ago, no PR |
-| 🚮 | **Dumpster** | empty or archived |
+**Themes with Cloudflare:** put `CLOUDFLARE_AI_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` in the environment or in `~/cloudflare_ai_token.env`. Optionally set `KENNEL_CF_MODEL` (default `@cf/meta/llama-3.1-8b-instruct-fast`). Without them, kennel uses `claude` haiku.
 
 ## How it works
 
-- **Index.** Transcripts in `~/.claude/projects/*/*.jsonl` are append-only, so kennel remembers a byte offset per file and parses only new lines. The first run indexes in the background while the UI is already usable. On a 1.4 GB synthetic history: about 40s cold, 5 ms re-sync, about 160 ms for a full-text query.
-- **Live status** comes from `~/.claude/sessions/<pid>.json`, which Claude Code maintains, plus `herdr agent list` for blocked/done state and pane ids. No hooks to install.
-- **Ask** shells out to your `claude -p` with `--no-session-persistence`, no tools and no MCP servers. Nothing is sent anywhere else, and Ask never creates sessions of its own.
-- **Never destructive.** Rename appends the same record `/rename` writes, and only when the session isn't running. Trash moves a transcript to `~/.kennel/trash`. Archive is kennel-only metadata.
-- **The web map** listens on `127.0.0.1` only. It requires a per-run token and rejects non-loopback `Host` headers.
+- **Index.** Claude Code transcripts (`~/.claude/projects`), Codex rollouts (`~/.codex/sessions`) and Cursor composer chats, read-only from its state database, go into SQLite with FTS5. Kennel parses only the bytes appended since the last pass, and the first index runs in the background.
+- **Live status** comes from `~/.claude/sessions/<pid>.json` and `herdr agent list`.
+- **Opening.** In the Mac app, the page hands launches to the app over a WebKit message bridge and they become tabs. In a browser, kennel focuses the herdr pane or opens herdr or Ghostty tabs.
+- **Safety.** Everything kennel sends to a shell or terminal has control bytes removed. Only Claude transcripts are ever written to, and only by rename (the same record `/rename` writes). Trash moves files and never deletes them. The page listens on `127.0.0.1` with a per-run token and a Host check.
 
-Data lives in `~/.kennel/kennel.db`. Override paths with `KENNEL_CLAUDE_DIR` and `KENNEL_HOME`, and the opener with `KENNEL_OPENER=auto|herdr|ghostty|inline|print`.
+Kennel's own data lives in `~/.kennel`. Override paths with `KENNEL_CLAUDE_DIR`, `KENNEL_CODEX_DIR`, `KENNEL_CURSOR_DIR` and `KENNEL_HOME`.
 
 ## Develop
 
 ```sh
-go test -race ./...                       # unit tests + TUI tests (keys, clicks, rendering)
-cd e2e && npm ci && npx playwright test   # browser tests: click pups, search, ask, things
+go test -race ./...                         # core, store, indexer, search, agents, blocks, undo
+(cd e2e && npm ci && npx playwright test)   # browser UI: clicks, drags, build mode, library, panels
+(cd macos && ./test.sh)                     # Swift unit tests
+(cd macos && swift build) && node --test e2e/app   # Mac app UI: tabs, shortcuts, terminals, clicks, dialogs
+macos/build-app.sh                          # dist/Kennel.app
 ```
 
-Every test runs against synthetic sessions with a recorder standing in for herdr, osascript and the browser opener. Nothing touches your real sessions or terminals.
+The Mac app UI tests launch the real app on synthetic sessions with fake runs, so no real agent is started. They drive it through an automation port that is enabled only by `KENNEL_APP_AUTOMATION`: real menu shortcuts, real clicks in the page, typing into terminals, and reading terminal text. Every test uses synthetic data, with recorders standing in for herdr, osascript and the browser.
 
-Refresh the README screenshots:
+## Roadmap
 
-```sh
-KENNEL_SHOTS=/tmp/ans go test ./internal/tui -run TestShots && (cd e2e && node tui-shots.mjs /tmp/ans ../docs/img)
-(cd e2e && SHOTS=1 npx playwright test screenshots)
-```
-
-## Roadmap: ideas we're chewing on
-
-**More building blocks**
-- ⏲ **timer**: a recurring prompt for a room's pups ("every morning, summarize overnight alerts").
-- 📺 **screen**: pin a thing's live output (the last lines of a log tail) onto a wall.
-- 🧭 **signpost**: link rooms across floors; 🚦 **gate**: hold new pups for approval before they start.
-- 🏷 **label maker**: tag pups by the people, tickets or services they mention.
-- Shareable room templates (export or import JSON), multi-room "office kits", and furniture that does things (a coffee machine that pings the idle pups).
-
-**More cool stuff**
-- Semantic vectors through a local Ollama model, alongside BM25.
-- People view: who you helped this week (from Slack-paste sessions).
-- Session lineage: forks, clones, merges and `continued-in` chains drawn as leashes between pups.
-- More agents: Gemini CLI, Aider, opencode, and Cursor's CLI chats.
-- Cost and time per kennel, per week.
-- Worktree janitor: stale worktrees whose pups are asleep.
-- Remote machines: herdr `--machine` pups on other hosts in an "Annex".
-- Shareable read-only snapshot of a room for teammates.
+- More blocks: ⏲ timer (a recurring prompt per room), 📺 screen (a thing's live output on a wall), 🚦 gate, 🏷 label maker; shareable room templates.
+- Semantic vectors (local Ollama) alongside BM25; lineage leashes between forks, clones and merges.
+- More agents: Gemini CLI, Aider, opencode, Cursor's CLI chats; remote herdr machines in an "Annex".
 
 ## License
 

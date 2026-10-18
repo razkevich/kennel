@@ -25,7 +25,13 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .logo { font-weight: 800; font-size: 18px; letter-spacing: .3px; white-space: nowrap; }
 .logo .face { color: var(--pink); }
 #floors { display: flex; gap: 6px; }
-#floors button { background: transparent; border: 0; padding: 7px 12px; border-radius: 999px; color: var(--sub); font-weight: 600; }
+#floors button { background: transparent; border: 0; padding: 7px 12px; border-radius: 999px; color: var(--sub); font-weight: 600; white-space: nowrap; }
+.topbtn { white-space: nowrap; }
+@media (max-width: 1500px) {
+  #top { gap: 10px; }
+  #floors button { padding: 6px 9px; }
+  .search { width: min(320px, 26vw); }
+}
 #floors button:hover { background: var(--navy3); }
 #floors button.on { background: var(--pink); color: #2a1730; }
 #counts { display: flex; gap: 10px; font-weight: 700; font-size: 13px; white-space: nowrap; }

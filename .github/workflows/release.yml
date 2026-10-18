@@ -23,3 +23,20 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  mac-app:
+    needs: release
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Build Kennel.app
+        run: VERSION="${GITHUB_REF_NAME#v}" macos/build-app.sh
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ditto -c -k --keepParent dist/Kennel.app dist/Kennel.app.zip
+          gh release upload "$GITHUB_REF_NAME" dist/Kennel.app.zip --clobber

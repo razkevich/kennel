@@ -48,3 +48,21 @@ jobs:
         with:
           name: playwright-report
           path: e2e/playwright-report
+
+  mac-app:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Swift tests
+        working-directory: macos
+        run: ./test.sh
+      - name: Build the app
+        run: VERSION=ci macos/build-app.sh
+      - name: App UI tests
+        run: KENNEL_APP_BIN="$PWD/dist/Kennel.app/Contents/MacOS/Kennel" node --test e2e/app

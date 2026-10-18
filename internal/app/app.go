@@ -41,6 +41,8 @@ type Config struct {
 	Demo bool
 	// ThemeLLM overrides the categorizer's model (tests).
 	ThemeLLM ask.LLM
+	// Handoff receives launches when Opener is "app" (the web server wires it to the Mac app).
+	Handoff func(opener.Run) error
 }
 
 type App struct {
@@ -605,7 +607,7 @@ func (a *App) Target(p *pack.Pup, fork, remote bool) opener.Target {
 }
 
 func (a *App) Opener() opener.Opener {
-	return opener.Opener{Kind: a.Cfg.Opener, Runner: a.Cfg.Runner}
+	return opener.Opener{Kind: a.Cfg.Opener, Runner: a.Cfg.Runner, Handoff: a.Cfg.Handoff}
 }
 
 // Prompt sends text to a live pup through herdr.
@@ -730,7 +732,7 @@ func (a *App) DeleteThing(id int64) error {
 
 // StartOrFocus brings a running thing's pane forward, or starts it.
 func (a *App) StartOrFocus(t things.Thing) (string, error) {
-	if t.Running && t.Tab != "" {
+	if t.Running && t.Tab != "" && a.Cfg.Opener != opener.App {
 		if _, err := a.Cfg.Runner.Run("herdr", "tab", "focus", t.Tab); err != nil {
 			return "", err
 		}

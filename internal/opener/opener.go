@@ -137,7 +137,20 @@ const (
 	Ghostty Kind = "ghostty"
 	Inline  Kind = "inline"
 	Print   Kind = "print"
+	// App hands launches to the Kennel Mac app, which opens them as tabs.
+	App Kind = "app"
 )
+
+// Run is a launch handed to the Mac app: a command line to run in a new tab
+// (or the tab already showing Session, when it has one).
+type Run struct {
+	Cwd     string `json:"cwd"`
+	Title   string `json:"title"`
+	Command string `json:"command"`
+	Session string `json:"session,omitempty"`
+	Agent   string `json:"agent,omitempty"`
+	Focus   bool   `json:"focus,omitempty"`
+}
 
 // Resolve picks a concrete opener for auto, based on where kennel runs.
 func Resolve(k Kind) Kind {
@@ -156,6 +169,30 @@ func Resolve(k Kind) Kind {
 type Opener struct {
 	Kind   Kind
 	Runner Runner
+	// Handoff delivers launches in App mode.
+	Handoff func(Run) error
+}
+
+func commandLine(bin string, args []string) string {
+	parts := []string{bin}
+	for _, a := range args {
+		parts = append(parts, shellQuote(a))
+	}
+	return strings.Join(parts, " ")
+}
+
+func (o Opener) handoff(r Run) (string, error) {
+	if o.Handoff == nil {
+		return "", fmt.Errorf("no Kennel app is connected")
+	}
+	if err := o.Handoff(r); err != nil {
+		return "", err
+	}
+	if r.Focus {
+		// The app answers itself: it focuses the tab, or says the session runs elsewhere.
+		return "", nil
+	}
+	return "opened " + r.Title + " in a new tab", nil
 }
 
 // Open performs the action and returns a short human description.
@@ -173,6 +210,10 @@ func (o Opener) Open(t Target) (string, error) {
 		return "opened Cursor in " + t.Cwd, nil
 	}
 	switch Resolve(o.Kind) {
+	case App:
+		bin, args := t.Command()
+		return o.handoff(Run{Cwd: t.Cwd, Title: SafeArg(t.Title), Command: commandLine(bin, args), Session: t.SessionID, Agent: t.Agent,
+			Focus: t.Live && !t.Fork && !t.New && !t.Remote && t.Prompt == ""})
 	case Herdr:
 		return o.herdr(t)
 	case Ghostty:
@@ -325,6 +366,8 @@ func asQuote(s string) string {
 func (o Opener) RunCommand(cwd, title, command string) (string, error) {
 	title, command = SafeArg(title), SafeArg(command)
 	switch Resolve(o.Kind) {
+	case App:
+		return o.handoff(Run{Cwd: cwd, Title: title, Command: command})
 	case Herdr:
 		out, err := o.Runner.Run("herdr", "tab", "create", "--cwd", cwd, "--focus", "--label", title)
 		if err != nil {

@@ -221,6 +221,7 @@ async function loadState() {
   renderPack();
   renderBuilder();
   renderThemeStatus();
+  if (native) native.postMessage({ type: "counts", counts: app.state.counts });
   loadInbox();
   if (lib.open) refreshLibrary();
   if (app.tab === "jobs") renderJobs();
@@ -234,9 +235,13 @@ async function loadState() {
   }
 }
 
+// native is the Kennel Mac app's bridge (absent in a normal browser).
+const native = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.kennel;
+
 function listen() {
   const es = new EventSource(`/api/events?t=${TOKEN}`);
   es.addEventListener("change", () => loadState().catch(console.error));
+  es.addEventListener("run", (e) => { if (native) native.postMessage({ type: "run", run: JSON.parse(e.data) }); });
   es.onerror = () => { es.close(); setTimeout(listen, 2000); };
 }
 
@@ -1875,6 +1880,7 @@ $("#digest").addEventListener("click", (e) => { if (e.target.id === "digest") $(
 // Exposed for end-to-end tests: screen positions of entities.
 window.kennel = {
   app,
+  toast,
   lib,
   fileInto: (key, id) => fileInto(roomByKey(key), id),
   build,
