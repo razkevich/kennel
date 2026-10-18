@@ -35,9 +35,10 @@ Sessions are **pups**: Claude Code corgis ▼•ᴥ•▼, Codex huskies ▲•�
 | ❗ **Live status** | Working, needs you, done, idle or asleep, from Claude Code's session registry and herdr. No hooks to install. |
 | 🗂 **Organize** | Star, rename (written like `/rename`), notes, archive, recoverable trash, rooms with auto-adopt magnets. **Undo** everything with ⌘Z. |
 | ⑂ **Fork, clone, merge, convert** | Fork; clone into another project; merge several sessions into a new pup from a brief; distill a long one; continue any session in another agent (Claude ↔ Codex ↔ Cursor) through a Markdown handoff. The original is never touched. |
-| 🦴 **Treats** | Drag a file, link, `#slack-channel`, ticket or note onto a pup. A live pup gets it as a prompt; an asleep one wakes up with it. |
+| 📌 **Shelves** | Keep files, links, `#slack-channels`, tickets and your sessions' artifacts on a kennel: they sit on its back wall and its card, open in one click, and have a ⋯ menu to move or remove them. The 📎 panel lists everything, including artifacts from sessions (pin or hide them). Drag any item onto a kennel to pin it, or onto a pup to feed it: a live pup gets it as a prompt, an asleep one wakes up with it. |
+| 💬 **Quick tell** | Select a pup and press `t` (or right-click → Tell): type one line and stay on the map. It's typed into the pup's herdr pane or Kennel tab, or an asleep Claude session works on it in the background. |
 | 🔨 **Build** | Room templates, shapes, floors, walls and furniture, plus purpose blocks: 🚪 spawn door, 🧲 magnet, 🔔 bell, 🌀 portal to a herdr workspace, 📌 pin board, 🧹 archive chute. |
-| ⏰ 🎨 🔩 📰 | Jobs and things (background agents, in-session cron tasks, monitors and servers), artifacts, and a digest. |
+| ⏰ **Jobs** | Background agents, in-session cron tasks, monitors and servers. |
 
 ## Screens
 
@@ -77,11 +78,10 @@ kennel convert KALSHI -to codex     # continue in another agent
 kennel merge KALSHI C1VEGA -name RELOC
 kennel clone KALSHI -to ~/code/other
 kennel export KALSHI -o kalshi.md
-kennel digest -since 168h
 kennel -demo                        # try it on synthetic sessions
 ```
 
-**Keys in the office:** `/` search · `V` `H` `R` tools · Space-drag pan · `+` `-` `Shift+1` zoom · `Delete` remove from kennel (archive elsewhere) · `Shift+T` light/dark · `l` library · `b` build · `D` digest · `X` interact · `⌘Z` undo · `Esc` close.
+**Keys in the office:** `/` search · `V` `H` `R` tools · Space-drag pan · `+` `-` `Shift+1` zoom · `Delete` remove from kennel (archive elsewhere) · `Shift+T` light/dark · `t` tell · `Enter` open · arrows pan · `l` library · `b` build · `⌘Z` undo · `Esc` close.
 **Keys in the Mac app** follow Ghostty's defaults:
 
 | | |

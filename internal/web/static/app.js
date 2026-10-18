@@ -96,22 +96,6 @@ const DOG_SLEEP = [
   ".FFFFFFFFFFFF.",
   "..............",
 ];
-const HUMAN = [
-  "....HHHH....",
-  "...HHHHHH...",
-  "..HHSSSSHH..",
-  "...SESSES...",
-  "...SSSSSS...",
-  "....SMMS....",
-  "..CCCCCCCC..",
-  ".SCCCCCCCCS.",
-  ".SCCCCCCCCS.",
-  "..CCCCCCCC..",
-  "..PPPPPPPP..",
-  "..PP....PP..",
-  "..BB....BB..",
-];
-const HUMAN_WALK = HUMAN.slice(0, 11).concat(["..PP.....PP.", ".BB......BB."]);
 
 function drawPixels(ctx, grid, pal, x, y, s) {
   for (let r = 0; r < grid.length; r++) {
@@ -132,7 +116,6 @@ function dogPalette(fur, asleep, agent) {
   const dark = agent === "cursor" ? "#2a2a2a" : agent === "codex" ? "#4d5f78" : mixHex(f, "#3a2a1a", 0.35);
   return { F: f, D: dark, S: "#2a2a2a", R: f, E: "#1e1e2e", N: "#3b2f2f", W: "#fff4e0", T: "#ff8fa3", "-": "#45475a" };
 }
-const HUMAN_PAL = { H: "#5b3a29", S: "#f6c9a4", E: "#1e1e2e", M: "#d4776b", C: "#f5a3c7", P: "#4c5a9c", B: "#2a2840" };
 
 // ---------- state ----------
 const app = {
@@ -142,9 +125,7 @@ const app = {
   world: { w: 40, h: 30 },
   ents: new Map(), // id -> {kind, id, x, y, tx, ty, home, room, phase}
   sel: null,
-  cam: { x: 0, y: 0, z: 1, follow: false },
-  you: { x: 4, y: 4, dir: 1, moving: false, t: 0 },
-  keys: new Set(),
+  cam: { x: 0, y: 0, z: 1 },
   t: 0,
   lastClick: { id: null, at: 0 },
 };
@@ -259,6 +240,7 @@ async function loadState() {
   app.floor = app.state.floor;
   if ((app.state.appearance || "") !== appearance) applyAppearance(app.state.appearance);
   layout(app.state);
+  loadTreats();
   renderFloors();
   renderProjects();
   renderCounts();
@@ -269,11 +251,8 @@ async function loadState() {
   if (lib.open) refreshLibrary();
   if (app.tab === "jobs") renderJobs();
   if (app.sel) renderCard();
-  if (!app.placedYou && app.rooms.length) {
-    const r = app.rooms[0];
-    app.you.x = r.x + r.w / 2;
-    app.you.y = r.y + r.h + 0.8;
-    app.placedYou = true;
+  if (!app.framed && app.rooms.length) {
+    app.framed = true;
     frameWorld();
   }
 }
@@ -310,7 +289,7 @@ function goFloor(id) {
   if (id === app.state.floor) return;
   app.floor = id; app.sel = null; app.multi.clear();
   $("#card").hidden = true;
-  app.placedYou = false; app.ents.clear();
+  app.framed = false; app.ents.clear();
   loadState();
 }
 
@@ -475,7 +454,6 @@ function frameWorld() {
   app.cam.z = Math.max(0.75, Math.min(1.25, (vw - gutter) / W));
   app.cam.x = W * app.cam.z < vw - gutter ? -(vw / app.cam.z - W) / 2 : -gutter / app.cam.z;
   app.cam.y = H * app.cam.z < vh ? -(vh / app.cam.z - H) / 2 : 0;
-  app.cam.follow = false;
   app.flyTo = null;
 }
 
@@ -483,9 +461,7 @@ function select(id, fly) {
   app.sel = id;
   const e = app.ents.get(id);
   if (fly && e) {
-    app.cam.follow = false;
     app.flyTo = { x: e.x, y: e.y };
-    app.you.x = e.x; app.you.y = e.y + 1.2;
   }
   renderCard();
   for (const m of document.querySelectorAll(".member")) m.classList.toggle("on", m.dataset.id === id);
@@ -514,20 +490,23 @@ function renderCard() {
     const actions = el("div", "actions");
     const btn = (label, fn, primary) => { const b = el("button", primary ? "primary" : "", label); b.onclick = fn; actions.appendChild(b); };
     btn(p.status === "offline" ? "▶ Resume" : "↗ Go to", () => act("open", p.id), true);
-    btn("⑂ Fork", () => act("fork", p.id));
-    btn("⧉ Clone", () => { const cwd = prompt(`Clone ${p.title} into which folder?`, p.cwd); if (cwd) act("clone", p.id, { cwd }); });
-    btn("⇄ Merge", () => { const other = prompt(`Merge ${p.title} with which pup? (name or id)`); if (other) act("merge", p.id, { with: [other] }); });
-    btn("✨ Distill", () => act("distill", p.id));
-    btn("↔ Convert", () => {
-      const to = prompt(`Continue ${p.title} in which agent? (claude, codex, cursor)`, p.agent === "claude" ? "codex" : "claude");
-      if (to) act("convert", p.id, { agent: to.trim().toLowerCase() });
-    });
-    btn("⬇ Export", () => act("export", p.id));
-    btn("📜 Read", () => openTranscript(p.id));
+    btn("💬 Tell…", () => openTell(p.id));
     btn(p.starred ? "★ Unstar" : "☆ Star", () => act("star", p.id));
-    if (p.kennel) btn("✕ Remove from " + p.kennel, () => unfile([p.id]));
-    btn(p.archived ? "↩ Restore" : "🗑 Archive", () => act("archive", p.id));
-    if (p.pane) btn("💬 Reply", () => { const text = prompt(`Reply to ${p.title}`); if (text) act("reply", p.id, { text }); });
+    btn("📜 Read", () => openTranscript(p.id));
+    actions.appendChild(menuButton(() => [
+      ["⑂ Fork", () => act("fork", p.id)],
+      ["⧉ Clone into another folder…", () => { const cwd = prompt(`Clone ${p.title} into which folder?`, p.cwd); if (cwd) act("clone", p.id, { cwd }); }],
+      ["⇄ Merge with…", () => { const other = prompt(`Merge ${p.title} with which pup? (name or id)`); if (other) act("merge", p.id, { with: [other] }); }],
+      ["✨ Distill", () => act("distill", p.id)],
+      ["↔ Convert to another agent…", () => {
+        const to = prompt(`Continue ${p.title} in which agent? (claude, codex, cursor)`, p.agent === "claude" ? "codex" : "claude");
+        if (to) act("convert", p.id, { agent: to.trim().toLowerCase() });
+      }],
+      ["⬇ Export", () => act("export", p.id)],
+      ["—"],
+      ...(p.kennel ? [["✕ Remove from " + p.kennel, () => unfile([p.id])]] : []),
+      [p.archived ? "↩ Restore" : "🗑 Archive", () => act("archive", p.id)],
+    ]));
     const move = el("label", "move", "🏠 kennel");
     const sel = el("select");
     sel.appendChild(new Option("— none —", "0"));
@@ -587,6 +566,20 @@ function renderRoomCard(key) {
     actions.append(rn, del);
   }
   card.append(row, el("div", "snip", r.smart ? `Fills itself: ${r.blurb}.` : r.blurb && !r.blurb.startsWith("/") ? r.blurb : "Your kennel. Drag sessions in from the tray."), actions);
+  if (r.kennel) {
+    const shelf = el("div", "cardshelf");
+    const items = shelfOf(r.kennel);
+    shelf.appendChild(el("h5", "", `📌 Shelf · ${items.length}`));
+    for (const t of items) shelf.appendChild(itemRow(t));
+    const add = el("input");
+    add.placeholder = "＋ pin a link, file, #channel or ticket…";
+    add.onkeydown = async (e) => {
+      if (e.key !== "Enter" || !add.value.trim()) return;
+      try { await api("/api/treats", { method: "POST", body: JSON.stringify({ value: add.value.trim(), kennel: r.kennel }) }); await loadTreats(); toast("📌 pinned", false, true); } catch (err) { toast(err.message, true); }
+    };
+    shelf.appendChild(add);
+    card.appendChild(shelf);
+  }
   if (r.kennel && app.state.floors.length > 1) {
     const mv = el("label", "move", "🏢 floor");
     const sel = el("select");
@@ -735,7 +728,6 @@ function showTab(tab) {
   if (build.on) setBuild(false);
   for (const x of document.querySelectorAll("#side .tabs button")) x.classList.toggle("on", x.dataset.tab === tab);
   for (const p of PANELS) $("#" + p).hidden = p !== tab;
-  $("#treats").hidden = tab !== "pack";
   if (tab === "ask") $("#askq").focus();
   if (tab === "jobs") renderJobs();
   if (tab === "art") renderArt();
@@ -926,8 +918,7 @@ window.addEventListener("mousemove", (e) => {
   }
   if (!drag) { if (e.target === canvas) hover(w, sx, sy); return; }
   if (!drag.moved && Math.abs(e.clientX - drag.sx) + Math.abs(e.clientY - drag.sy) > 4) {
-    drag.moved = true;
-    app.cam.follow = false; app.flyTo = null;
+    drag.moved = true; app.flyTo = null;
     canvas.classList.add("dragging");
   }
   if (!drag.moved) return;
@@ -1015,6 +1006,12 @@ function click(sx, sy, w, e) {
     if (hit) { select(hit.id, false); return; }
     if (r && build.carry) placeIn(r, build.carry, w);
     else if (r) { build.room = r.key; app.sel = "room:" + r.key; renderBuilder(); renderCard(); }
+    return;
+  }
+  const shelfHit = shelfAt(w);
+  if (shelfHit) {
+    if (shelfHit.item) openItem(shelfHit.item);
+    else { app.sel = "room:" + shelfHit.room.key; renderCard(); }
     return;
   }
   const hit = entityAt(sx, sy);
@@ -1153,7 +1150,10 @@ function hover(w, sx, sy) {
     const sr = selectedRoom();
     const h = sr && handleAt(sr, w);
     const r = roomAt(w.x, w.y);
+    const sh = shelfAt(w);
+    canvas.title = sh ? (sh.item ? `${sh.item.name}: click to open` : "more on the shelf") : "";
     if (h) cur = CURSORS[h];
+    else if (sh) cur = "pointer";
     else if (entityAt(sx, sy)) cur = "grab";
     else if (r && (onWall(r, w) || sr === r)) cur = "move";
     app.hoverRoom = r ? r.key : null;
@@ -1191,7 +1191,7 @@ function pupMenu(ent) {
   const ids = app.multi.size > 1 && app.multi.has(ent.id) ? [...app.multi] : [ent.id];
   const items = [];
   if (ids.length === 1) {
-    items.push(["↗ Open", () => act("open", ent.id)], ["⑂ Fork", () => act("fork", ent.id)],
+    items.push(["💬 Tell…", () => openTell(ent.id)], ["↗ Open", () => act("open", ent.id)], ["⑂ Fork", () => act("fork", ent.id)],
       [p && p.starred ? "☆ Unstar" : "★ Star", () => act("star", ent.id)],
       ["✎ Rename…", () => { const t = prompt("Rename", p ? p.title : ""); if (t) act("rename", ent.id, { title: t }); }]);
   }
@@ -1221,6 +1221,57 @@ function roomMenu(r) {
   if (pos) items.push(["⌂ Back to auto layout", () => { delete st.pos[String(app.state.floor)]; saveStyle(r); }]);
   if (r.kennel) items.push(["—"], ["🗑 Delete kennel", () => deleteKennel(r)]);
   return items;
+}
+
+// Quick tell: one line to a pup without leaving the map. In the Mac app a pup open in
+// a Kennel tab gets it typed there; otherwise the server delivers it (herdr pane, or a
+// headless turn for an asleep Claude session).
+const tellWaits = new Map();
+let tellSeq = 0;
+function askNativeToTell(id, text) {
+  if (!native) return Promise.resolve(false);
+  const req = ++tellSeq;
+  return new Promise((res) => {
+    tellWaits.set(req, res);
+    native.postMessage({ type: "tell", req, session: id, text });
+    setTimeout(() => { if (tellWaits.delete(req)) res(false); }, 1500);
+  });
+}
+function toldByNative(req, ok) { const res = tellWaits.get(req); if (res) { tellWaits.delete(req); res(ok); } }
+
+function openTell(id) {
+  const p = pupOf(id);
+  if (!p) return;
+  const box = $("#tell");
+  box.hidden = false;
+  box.querySelector(".to").textContent = `💬 Tell ${p.title}`;
+  const reachable = p.status === "offline" ? p.agent === "claude" : !!(p.pane || native);
+  const how = p.status === "offline" ? (p.agent === "claude" ? "It works on it in the background; the reply lands in its transcript." : "Asleep and not a Claude session: open it to talk to it.")
+    : p.pane ? "Typed into its herdr pane." : native ? "Typed into its tab." : "It's running in a terminal kennel can't type into.";
+  box.querySelector(".how").textContent = how;
+  box.querySelector(".row").hidden = !reachable;
+  box.querySelector(".go").hidden = reachable;
+  box.querySelector(".go").onclick = () => { box.hidden = true; act("open", id); };
+  const e = app.ents.get(id);
+  const st = $("#stage").getBoundingClientRect();
+  if (e) {
+    const pos = window.kennel.screenPos(id);
+    box.style.left = Math.max(12, Math.min(st.width - 372, pos.x - st.left - 180)) + "px";
+    box.style.top = Math.max(12, Math.min(st.height - 120, pos.y - st.top + 30)) + "px";
+  } else { box.style.left = (st.width / 2 - 180) + "px"; box.style.top = "80px"; }
+  const inp = box.querySelector("input");
+  inp.value = "";
+  box.dataset.id = id;
+  (reachable ? inp : box.querySelector(".go")).focus();
+}
+
+async function sendTell() {
+  const box = $("#tell");
+  const id = box.dataset.id, text = box.querySelector("input").value.trim();
+  if (!text) return;
+  box.hidden = true;
+  if (await askNativeToTell(id, text)) { toast(`💬 told ${pupOf(id).title}`); return; }
+  act("tell", id, { text });
 }
 
 async function renameKennel(r) {
@@ -1271,7 +1322,6 @@ window.addEventListener("blur", hideMenu);
 canvas.addEventListener("wheel", (e) => {
   e.preventDefault();
   hideMenu();
-  app.cam.follow = false;
   app.flyTo = null;
   if (!e.ctrlKey && !e.metaKey) {
     app.cam.x += e.deltaX / app.cam.z;
@@ -1288,8 +1338,7 @@ function zoomAt(z, sx, sy) {
   app.cam.z = Math.max(0.4, Math.min(2.5, z));
   const after = screenToWorld(sx, sy);
   app.cam.x += (before.x - after.x) * TILE;
-  app.cam.y += (before.y - after.y) * TILE;
-  app.cam.follow = false; app.flyTo = null;
+  app.cam.y += (before.y - after.y) * TILE; app.flyTo = null;
   $("#zoomval").textContent = Math.round(app.cam.z * 100) + "%";
 }
 
@@ -1298,8 +1347,7 @@ function zoomFit() {
   const z = Math.max(0.4, Math.min(1.4, Math.min(vw / (app.world.w * TILE), vh / (app.world.h * TILE))));
   app.cam.z = z;
   app.cam.x = (app.world.w * TILE - vw / z) / 2;
-  app.cam.y = (app.world.h * TILE - vh / z) / 2 - 30 / z;
-  app.cam.follow = false; app.flyTo = null;
+  app.cam.y = (app.world.h * TILE - vh / z) / 2 - 30 / z; app.flyTo = null;
   $("#zoomval").textContent = Math.round(z * 100) + "%";
 }
 
@@ -1320,7 +1368,7 @@ window.addEventListener("keydown", (e) => {
   if ((e.key === "/" && !typing) || ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f")) { e.preventDefault(); $("#q").focus(); $("#q").select(); return; }
   if (typing) return;
   if (e.key === "Escape" && lib.open) { closeLibrary(); return; }
-  if (e.key === "Escape") { hideMenu(); app.multi.clear(); setTool("select"); $("#digest").hidden = true; $("#transcript").hidden = true; app.sel = null; $("#card").hidden = true; if (build.carry) { build.carry = null; renderBuilder(); } return; }
+  if (e.key === "Escape") { hideMenu(); app.multi.clear(); setTool("select"); $("#transcript").hidden = true; app.sel = null; $("#card").hidden = true; if (build.carry) { build.carry = null; renderBuilder(); } return; }
   if (e.key === " " && !e.repeat) { e.preventDefault(); spaceHeld = true; canvas.style.cursor = "grab"; return; }
   if (e.key === "v" || e.key === "1") { setTool("select"); return; }
   if (e.key === "h" || e.key === "2") { setTool("hand"); return; }
@@ -1334,50 +1382,25 @@ window.addEventListener("keydown", (e) => {
     return;
   }
   if (e.key === "T") { cycleAppearance(); return; }
+  if (e.key === "t" && app.sel && pupOf(app.sel)) { e.preventDefault(); openTell(app.sel); return; }
   if (e.key === "b") { setBuild(!build.on); return; }
   if (e.key === "l" || e.key === "L") { lib.open ? closeLibrary() : openLibrary(); return; }
-  if (e.key === "D") { openDigest(); return; }
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") { e.preventDefault(); undo(); return; }
-  const k = e.key.toLowerCase();
-  if (["arrowup", "arrowdown", "arrowleft", "arrowright", "w", "a", "s", "d"].includes(k)) {
+  const pan = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
+  if (pan) {
     e.preventDefault();
-    app.keys.add(k);
-    app.cam.follow = true;
     app.flyTo = null;
+    app.cam.x += pan[0] * 160 / app.cam.z;
+    app.cam.y += pan[1] * 160 / app.cam.z;
   }
-  if (k === "x" || k === "enter") {
-    const near = nearest();
-    if (near) { select(near.id, false); interact(near); }
-    else if (app.sel && app.ents.has(app.sel)) interact(app.ents.get(app.sel));
-  }
+  if (e.key === "Enter" && app.sel && app.ents.has(app.sel)) interact(app.ents.get(app.sel));
 });
-window.addEventListener("keyup", (e) => { app.keys.delete(e.key.toLowerCase()); if (e.key === " ") { spaceHeld = false; canvas.style.cursor = ""; } });
+window.addEventListener("keyup", (e) => { if (e.key === " ") { spaceHeld = false; canvas.style.cursor = ""; } });
 
-function nearest() {
-  let best = null, bd = 1.7;
-  for (const e of app.ents.values()) {
-    const d = Math.hypot(e.x - app.you.x, e.y - app.you.y);
-    if (d < bd) { bd = d; best = e; }
-  }
-  return best;
-}
 
 // ---------- simulation ----------
 function step(dt) {
   app.t += dt;
-  const you = app.you;
-  let vx = 0, vy = 0;
-  if (app.keys.has("arrowleft") || app.keys.has("a")) vx -= 1;
-  if (app.keys.has("arrowright") || app.keys.has("d")) vx += 1;
-  if (app.keys.has("arrowup") || app.keys.has("w")) vy -= 1;
-  if (app.keys.has("arrowdown") || app.keys.has("s")) vy += 1;
-  you.moving = !!(vx || vy);
-  if (you.moving) {
-    const len = Math.hypot(vx, vy);
-    you.x = Math.max(0.5, Math.min(app.world.w - 0.5, you.x + (vx / len) * 5 * dt));
-    you.y = Math.max(0.5, Math.min(app.world.h - 0.5, you.y + (vy / len) * 5 * dt));
-    if (vx) you.dir = vx;
-  }
 
   for (const e of app.ents.values()) {
     if (e.kind !== "pup") continue;
@@ -1399,9 +1422,7 @@ function step(dt) {
   }
 
   const vw = canvas.width / devicePixelRatio / app.cam.z, vh = canvas.height / devicePixelRatio / app.cam.z;
-  let target = null;
-  if (app.flyTo) target = app.flyTo;
-  else if (app.cam.follow) target = you;
+  const target = app.flyTo;
   if (target) {
     const gx = target.x * TILE - vw / 2, gy = target.y * TILE - vh / 2;
     app.cam.x += (gx - app.cam.x) * Math.min(1, dt * 4);
@@ -1589,6 +1610,7 @@ function drawRoomBody(r) {
     ctx.fillStyle = "#f2b01e"; roundRect(lx + tw + 6, ly + 2, 24, 20, 10); ctx.fill();
     ctx.fillStyle = "#fff"; ctx.textAlign = "center"; ctx.fillText(`${unread}`, lx + tw + 18, ly + 16); ctx.textAlign = "left";
   }
+  drawShelf(r, lx + tw + (unread ? 38 : 10), ly, x0 + W - 80);
   const n = r.pups.length + r.things.length;
   if (!n) {
     ctx.fillStyle = PAL.empty; ctx.font = "italic 13px Inter, system-ui";
@@ -1610,6 +1632,32 @@ function drawRoomBody(r) {
 }
 
 // Every room gets a little furniture so the office feels lived in; user decor comes on top.
+// A kennel's shelf: one little tile per saved item on its back wall.
+function drawShelf(r, x, y, maxX) {
+  r.shelf = [];
+  if (!r.kennel) return;
+  const items = shelfOf(r.kennel);
+  if (!items.length) return;
+  ctx.font = "13px system-ui";
+  const fit = Math.max(1, Math.floor((maxX - x) / 28));
+  items.slice(0, fit).forEach((t, i) => {
+    const bx = x + i * 28;
+    const last = i === fit - 1 && items.length > fit;
+    ctx.fillStyle = PAL.label; roundRect(bx, y, 24, 24, 6); ctx.fill();
+    ctx.strokeStyle = PAL.labelLine; ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = PAL.labelInk; ctx.textAlign = "center";
+    if (last) { ctx.font = "700 11px Inter, system-ui"; ctx.fillText(`+${items.length - fit + 1}`, bx + 12, y + 16); }
+    else ctx.fillText(t.icon || "📄", bx + 12, y + 17);
+    ctx.textAlign = "left";
+    r.shelf.push({ x: bx / TILE, y: y / TILE, w: 24 / TILE, h: 24 / TILE, item: last ? null : t });
+  });
+}
+
+const shelfAt = (w) => {
+  for (const r of app.rooms) for (const s of r.shelf || []) if (w.x >= s.x && w.x <= s.x + s.w && w.y >= s.y && w.y <= s.y + s.h) return { room: r, ...s };
+  return null;
+};
+
 function autoDecor(r, x0, y0, W, H) {
   if ((r.style && (r.style.decor || []).length) || build.on && build.room === r.key && false) return;
   const f = r.look.Floor || " ";
@@ -1780,18 +1828,6 @@ function drawThing(e) {
   if (selected) { ctx.strokeStyle = "#3d47db"; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.ellipse(x, y + 2, 28, 8, 0, 0, 7); ctx.stroke(); }
 }
 
-function drawYou() {
-  const you = app.you;
-  const x = you.x * TILE, y = you.y * TILE, s = 3;
-  const grid = you.moving && Math.floor(app.t * 8) % 2 ? HUMAN_WALK : HUMAN;
-  ctx.fillStyle = "#2b2f4a24"; ctx.beginPath(); ctx.ellipse(x, y + 2, 15, 5, 0, 0, 7); ctx.fill();
-  const w = grid[0].length * s, h = grid.length * s;
-  ctx.save();
-  if (you.dir < 0) { ctx.translate(x * 2, 0); ctx.scale(-1, 1); }
-  drawPixels(ctx, grid, HUMAN_PAL, x - w / 2, y - h, s);
-  ctx.restore();
-  nameTag(x, y - h - 24, "You", false, "#2fb36b");
-}
 
 // Selection boxes, handles, marquee and snap guides, drawn above everything else.
 function drawOverlays() {
@@ -1853,12 +1889,9 @@ function render() {
   drawHallway();
   for (const r of app.rooms) drawRoom(r);
   const ents = [...app.ents.values()].sort((a, b) => a.y - b.y);
-  let youDrawn = false;
   for (const e of ents) {
-    if (!youDrawn && e.y > app.you.y) { drawYou(); youDrawn = true; }
     if (e.kind === "pup") drawPup(e); else drawThing(e);
   }
-  if (!youDrawn) drawYou();
   drawDropHover();
   drawOverlays();
   if (!app.rooms.length) {
@@ -1872,15 +1905,6 @@ function render() {
   }
   if (app.shownZoom !== app.cam.z) { app.shownZoom = app.cam.z; $("#zoomval").textContent = Math.round(app.cam.z * 100) + "%"; }
 
-  const near = nearest();
-  const hint = $("#hint");
-  if (near) {
-    const sx = (near.x * TILE - app.cam.x) * app.cam.z, sy = ((near.y - 1.9) * TILE - app.cam.y) * app.cam.z;
-    hint.style.left = sx + "px"; hint.style.top = sy + "px";
-    const p = pupOf(near.id), t = thingOf(near.id);
-    hint.textContent = p ? `X  ${p.status === "offline" ? "wake " : "visit "}${p.title}` : `X  ${t.running ? "focus" : "start"} ${t.name}`;
-    hint.hidden = false;
-  } else hint.hidden = true;
 }
 
 let last = performance.now();
@@ -2018,11 +2042,11 @@ function drawFixtures(r) {
 
 function setBuild(on) {
   build.on = on;
+  $("#buildbtn").classList.toggle("on", on);
   $("#stage").classList.toggle("building", on);
   if (!on) { build.carry = null; build.drag = null; }
-  for (const x of document.querySelectorAll("#side .tabs button")) x.classList.toggle("on", x.dataset.tab === (on ? "build" : "pack"));
+  for (const x of document.querySelectorAll("#side .tabs button")) x.classList.toggle("on", !on && x.dataset.tab === "pack");
   for (const p of PANELS) $("#" + p).hidden = p !== (on ? "build" : "pack");
-  $("#treats").hidden = on;
   renderBuilder();
 }
 
@@ -2075,6 +2099,11 @@ function renderBuilder() {
   const box = $("#build");
   if (!box || box.hidden) return;
   box.innerHTML = "";
+  const head = el("div", "buildhead");
+  const done = el("button", "", "Done");
+  done.onclick = () => setBuild(false);
+  head.append(el("b", "", "🔨 Building"), el("span", "", "drag rooms by their wall · right-click furniture to remove"), done);
+  box.appendChild(head);
   const r = build.room && roomByKey(build.room);
   if (!r) {
     box.appendChild(el("div", "hint", "Add rooms to this floor, or click a room on the map to shape it."));
@@ -2194,40 +2223,96 @@ async function useFixture(f) {
 let treatList = [];
 async function loadTreats() {
   try { treatList = await (await api("/api/treats")).json(); } catch (e) { treatList = []; }
-  renderTreats();
+  if (app.tab === "art") renderArt();
+  if (app.sel && app.sel.startsWith("room:")) renderCard();
 }
 
-function renderTreats() {
-  const box = $("#treatlist");
-  if (!box) return;
-  box.innerHTML = "";
-  if (!treatList.length) box.appendChild(el("div", "empty", "Save files, links, #channels or tickets here, or drag files straight from Finder."));
-  for (const t of treatList) {
-    const c = el("div", "treat", `${t.icon} ${t.name}`);
-    c.title = `${t.value}\nright-click to remove`;
-    c.draggable = true;
-    c.dataset.id = t.id;
-    c.addEventListener("dragstart", (e) => { e.dataTransfer.setData("application/x-kennel-treat", String(t.id)); e.dataTransfer.effectAllowed = "copy"; });
-    c.addEventListener("contextmenu", async (e) => {
-      e.preventDefault();
-      if (!confirm(`Remove treat ${t.name}?`)) return;
-      await api(`/api/treats/${t.id}/delete`, { method: "POST" });
-      await loadTreats();
-      await loadState();
-      toast("removed " + t.name, false, true);
-    });
-    box.appendChild(c);
+// ---------- shelves: files, links, #channels, tickets and artifacts kept on kennels ----------
+const shelfOf = (kennelID) => treatList.filter((t) => t.kennel === kennelID);
+const isLink = (v) => /^https?:\/\//.test(v);
+
+async function openItem(t) {
+  const v = t.value || t.url;
+  if (isLink(v)) { window.open(v, "_blank", "noopener"); return; }
+  if (v.startsWith("/") || v.startsWith("~")) {
+    try { await api("/api/open", { method: "POST", body: JSON.stringify({ path: v }) }); } catch (e) { toast(e.message, true); }
+    return;
   }
+  try { await navigator.clipboard.writeText(v); toast(`📋 copied ${v}`); } catch (_) { toast(v); }
 }
 
-$("#addtreat").onclick = async () => {
-  const value = prompt("A file path, link, #slack-channel, TICKET-123 or a note:");
-  if (!value) return;
-  try { await api("/api/treats", { method: "POST", body: JSON.stringify({ value }) }); } catch (e) { toast(e.message, true); }
-  await loadTreats();
-  await loadState();
-  toast("🦴 treat saved", false, true);
-};
+async function pinTo(kennelID, item) {
+  try {
+    if (item.id) await api(`/api/treats/${item.id}/shelve`, { method: "POST", body: JSON.stringify({ kennel: kennelID }) });
+    else await api("/api/treats", { method: "POST", body: JSON.stringify({ name: item.title || item.name || "", value: item.url || item.value, kennel: kennelID }) });
+    await loadTreats();
+    const k = (app.state.kennels || []).find((x) => x.id === kennelID);
+    toast(kennelID ? `📌 pinned to ${k ? k.icon + " " + k.name : "the kennel"}` : "📌 unpinned", false, true);
+  } catch (e) { toast(e.message, true); }
+}
+
+async function removeItem(t) {
+  try {
+    await api(`/api/treats/${t.id}/delete`, { method: "POST", body: "{}" });
+    await loadTreats();
+    toast(`🗑 removed ${t.name}`, false, true);
+  } catch (e) { toast(e.message, true); }
+}
+
+async function hideArtifact(a) {
+  try {
+    await api("/api/artifacts/hide", { method: "POST", body: JSON.stringify({ url: a.url }) });
+    toast(`🙈 hid ${a.title || a.url}`, false, true);
+    renderArt();
+  } catch (e) { toast(e.message, true); }
+}
+
+// The ⋯ menu for anything on a shelf or in the artifacts list.
+function itemMenu(it) {
+  const items = [["↗ Open", () => openItem(it)]];
+  const here = it.kennel || 0;
+  const kennels = (app.state.kennels || []).filter((k) => k.id !== here);
+  if (kennels.length) items.push(["—"], ...kennels.slice(0, 14).map((k) => [`📌 Pin to ${k.icon || "🏠"} ${k.name}`, () => pinTo(k.id, it)]));
+  if (it.id && here) items.push(["📤 Take off the shelf", () => pinTo(0, it)]);
+  items.push(["—"], it.id ? ["🗑 Remove", () => removeItem(it)] : ["🙈 Hide", () => hideArtifact(it)]);
+  return items;
+}
+
+function menuButton(items) {
+  const b = el("button", "dots", "⋯");
+  b.title = "more";
+  b.onclick = (e) => {
+    e.stopPropagation();
+    const rc = b.getBoundingClientRect();
+    showMenu({ clientX: rc.left - 150, clientY: rc.bottom + 4 }, typeof items === "function" ? items() : items);
+  };
+  return b;
+}
+
+// Shelf items and artifacts drag onto a kennel to pin, or onto a pup to feed.
+function draggableItem(node, it) {
+  node.draggable = true;
+  node.addEventListener("dragstart", (e) => {
+    e.dataTransfer.setData("application/x-kennel-item", JSON.stringify(it));
+    e.dataTransfer.setData("text/plain", it.value || it.url);
+    e.dataTransfer.effectAllowed = "copy";
+  });
+}
+
+function itemRow(it, sub) {
+  const r = el("div", "item");
+  const icon = it.icon || (isLink(it.url || it.value) ? "🎨" : "📄");
+  const main = el("div", "w");
+  const name = it.name || it.title || it.url;
+  main.append(el("div", "n", `${icon} ${name}`));
+  const detail = sub || (it.value !== name ? it.value : "");
+  if (detail) main.append(el("div", "d", detail));
+  r.append(main, menuButton(() => itemMenu(it)));
+  r.title = `${it.value || it.url}\nclick to open · drag onto a kennel to pin, or onto a pup to feed`;
+  r.onclick = () => openItem(it);
+  draggableItem(r, it);
+  return r;
+}
 
 const dropTargetAt = (clientX, clientY) => {
   const rc = canvas.getBoundingClientRect();
@@ -2240,6 +2325,8 @@ const dropTargetAt = (clientX, clientY) => {
     const idx = (f.room.style.blocks || []).filter((x) => x.kind === "door").indexOf(f.item);
     return { kind: "door", room: f.room.key, index: idx, fixture: f };
   }
+  const r = roomAt(w.x, w.y);
+  if (r && r.kennel) return { kind: "kennel", room: r };
   return null;
 };
 
@@ -2287,11 +2374,13 @@ canvas.addEventListener("drop", async (e) => {
   }
   const target = dropTargetAt(e.clientX, e.clientY);
   app.dropHover = null;
-  if (!target) { toast("drop it right on a pup (or a spawn door)", true); return; }
+  if (!target) { toast("drop it on a kennel to keep it there, or on a pup to feed it", true); return; }
   let body = null;
-  const treatId = e.dataTransfer.getData("application/x-kennel-treat");
+  const raw = e.dataTransfer.getData("application/x-kennel-item");
+  const item = raw ? JSON.parse(raw) : null;
   try {
-    if (treatId) body = { treat: Number(treatId) };
+    if (item && target.kind === "kennel") { await pinTo(target.room.kennel, item); return; }
+    if (item) body = item.id ? { treat: item.id } : { value: item.url, title: item.title };
     else if (e.dataTransfer.files && e.dataTransfer.files.length) {
       const file = e.dataTransfer.files[0];
       const data = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result.split(",")[1] || ""); r.onerror = rej; r.readAsDataURL(file); });
@@ -2302,6 +2391,7 @@ canvas.addEventListener("drop", async (e) => {
       if (text) body = { value: text };
     }
     if (!body) return;
+    if (target.kind === "kennel") { await pinTo(target.room.kennel, { name: body.title, value: body.value }); return; }
     if (target.kind === "pup") {
       const res = await api(`/api/pup/${target.id}/feed`, { method: "POST", body: JSON.stringify(body) });
       toast((await res.json()).message);
@@ -2320,6 +2410,7 @@ function drawDropHover() {
   const h = app.dropHover;
   if (!h) return;
   let x, y;
+  if (h.kind === "kennel") { app.dropRoom = h.room.key; return; }
   if (h.kind === "pup") { const e = app.ents.get(h.id); if (!e) return; x = e.x * TILE; y = (e.y - 1.9) * TILE; }
   else { x = h.fixture.x * TILE; y = (h.fixture.y - 2) * TILE; }
   const bob = Math.sin(app.t * 8) * 4;
@@ -2529,36 +2620,55 @@ async function renderJobs() {
 
 async function renderArt() {
   const box = $("#art");
-  box.innerHTML = "";
-  box.className = "panel";
+  box.className = "panel shelf";
   let arts;
   try { arts = await (await api("/api/artifacts")).json(); } catch (e) { box.textContent = e.message; return; }
-  box.appendChild(el("h4", "", `Artifacts · ${arts.length}`));
-  for (const a of arts) {
-    const r = el("div", "prow");
-    r.append(el("b", "", "🎨 " + (a.title || a.url)), el("div", "m", `from ${a.pup} · ${relAge(a.at)} ago`));
-    r.onclick = () => window.open(a.url, "_blank", "noopener");
-    box.appendChild(r);
+  box.innerHTML = "";
+  const form = el("form", "addshelf");
+  const inp = el("input");
+  inp.placeholder = "Paste a link, file path, #channel or TICKET-1…";
+  const where = el("select");
+  where.appendChild(new Option("loose", "0"));
+  for (const k of app.state.kennels || []) where.appendChild(new Option(`${k.icon} ${k.name}`, String(k.id)));
+  const go = el("button", "", "Add");
+  form.append(inp, where, go);
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    if (!inp.value.trim()) return;
+    try {
+      await api("/api/treats", { method: "POST", body: JSON.stringify({ value: inp.value.trim(), kennel: Number(where.value) }) });
+      inp.value = "";
+      await loadTreats();
+      toast("📌 saved", false, true);
+    } catch (err) { toast(err.message, true); }
+  };
+  box.appendChild(form);
+  const byKennel = new Map();
+  for (const t of treatList) {
+    if (!byKennel.has(t.kennel)) byKennel.set(t.kennel, []);
+    byKennel.get(t.kennel).push(t);
   }
+  for (const k of app.state.kennels || []) {
+    const items = byKennel.get(k.id);
+    if (!items) continue;
+    box.appendChild(el("h4", "", `${k.icon} ${k.name} · ${items.length}`));
+    for (const t of items) box.appendChild(itemRow(t));
+  }
+  if (byKennel.get(0)) {
+    box.appendChild(el("h4", "", `Loose · ${byKennel.get(0).length}`));
+    for (const t of byKennel.get(0)) box.appendChild(itemRow(t));
+  }
+  box.appendChild(el("h4", "", `From your sessions · ${arts.length}`));
+  if (!arts.length) box.appendChild(el("div", "empty", "Artifacts your sessions publish show up here."));
+  for (const a of arts) box.appendChild(itemRow({ url: a.url, title: a.title, icon: "🎨" }, `from ${a.pup} · ${relAge(a.at)} ago`));
 }
 
 
-// ---------- digest ----------
-async function openDigest() {
-  $("#digest").hidden = false;
-  const d = await (await api(`/api/digest?days=${$("#digestdays").value}`)).json();
-  const body = $("#digestbody");
-  body.innerHTML = "";
-  for (const l of d.lines) body.appendChild(el("div", "", l));
-}
-$("#digestbtn").onclick = openDigest;
-$("#digestdays").onchange = openDigest;
-$("#digestclose").onclick = () => ($("#digest").hidden = true);
-$("#digest").addEventListener("click", (e) => { if (e.target.id === "digest") $("#digest").hidden = true; });
 
 // Exposed for end-to-end tests: screen positions of entities.
 window.kennel = {
   app,
+  toldByNative,
   setAppearance: async (a) => { applyAppearance(a); await api("/api/appearance", { method: "POST", body: JSON.stringify({ appearance: a }) }); },
   toast,
   lib,
@@ -2583,7 +2693,6 @@ window.kennel = {
     if (!e) return false;
     const st = $("#stage");
     app.flyTo = null;
-    app.cam.follow = false;
     app.cam.x = e.x * TILE - st.clientWidth / app.cam.z / 2;
     app.cam.y = e.y * TILE - st.clientHeight / app.cam.z / 2;
     return true;
@@ -2601,6 +2710,13 @@ window.kennel = {
 };
 
 $("#buildbtn").onclick = () => setBuild(!build.on);
+$("#tell input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); sendTell(); }
+  if (e.key === "Escape") { e.preventDefault(); $("#tell").hidden = true; }
+  e.stopPropagation();
+});
+$("#tell .send").onclick = sendTell;
+$("#tell .go").addEventListener("keydown", (e) => { if (e.key === "Escape") $("#tell").hidden = true; });
 try { app.project = localStorage.getItem("kennel.project") || ""; } catch (_) { app.project = ""; }
 $("#projectsel").onchange = () => {
   app.project = $("#projectsel").value;
@@ -2611,6 +2727,6 @@ $("#projectsel").onchange = () => {
 $("#themebtn").onclick = cycleAppearance;
 systemDark.addEventListener("change", () => applyAppearance(appearance));
 applyAppearance(appearance);
-$("#helpbtn").onclick = () => toast("drag pups to place or file them · drag a room’s wall to move it · select a room, drag handles to resize · right-click for actions · V/H/R tools · Space-drag pans · ⌘-scroll zooms · ⌘Z undo");
+$("#helpbtn").onclick = () => toast("drag sessions from the tray onto a kennel · drag a room’s wall to move it, its handles to resize · right-click anything · t tell · V/H/R tools · arrows or Space-drag pan · ⌘-scroll zoom · ⌘Z undo");
 resize();
 Promise.all([loadCatalog(), loadState(), loadTreats()]).then(() => { listen(); requestAnimationFrame(frame); }).catch((e) => toast(e.message, true));

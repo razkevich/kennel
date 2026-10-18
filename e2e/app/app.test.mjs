@@ -180,6 +180,27 @@ test("dark mode: the Kennel tab's window chrome follows the page", async () => {
   await call("POST", "/jsasync", { code: `await window.kennel.setAppearance(""); return true` });
 });
 
+test("quick tell types into a pup's open tab without leaving the Kennel tab", async () => {
+  await backToKennel();
+  const id = await pupId("RATE-LIMITS");
+  await call("POST", "/jsasync", { code: `await fetch("/api/pup/${id}/open", { method: "POST", headers: { "X-Kennel-Token": new URLSearchParams(location.search).get("t") }, body: "{}" }); return true` });
+  await waitFor(async () => (await tabs()).some((t) => t.session === id), "tab opened");
+  const tab = (await tabs()).find((t) => t.session === id).index;
+  await backToKennel();
+  await call("POST", "/jsasync", { code: `
+    window.kennel.app.sel = ${JSON.stringify(id)};
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "t" }));
+    const inp = document.querySelector("#tell input");
+    inp.value = "ping from the map";
+    inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    return true` });
+  await waitFor(async () => (await text(tab)).includes("ping from the map"), "typed into the tab");
+  assert.equal((await selected()).kind, "kennel", "stayed on the Kennel tab");
+  await call("POST", "/select", { index: tab });
+  await key("w", ["cmd", "alt"]);
+  await backToKennel();
+});
+
 test("in the Kennel tab, ⌘= / ⌘0 zoom the page and ⌘D does nothing", async () => {
   await backToKennel();
   await key("=");
@@ -261,7 +282,8 @@ test("things, spawn doors, convert and new pups all open as tabs", async () => {
   await backToKennel();
   await clickPup("IOS-CRASH");
   await call("POST", "/dialogs", { answers: ["codex"] });
-  assert.ok(await cardButton("Convert"));
+  assert.ok(await cardButton("⋯"));
+  assert.ok(await js(`(() => { const b = [...document.querySelectorAll("#ctxmenu button")].find(b => b.textContent.includes("Convert")); if (b) b.click(); return !!b })()`));
   await waitFor(async () => (await tabs()).length === count + 1, "convert tab");
   await waitFor(async () => /would run: codex .*continuing work that started in Claude Code/.test(await text((await selected()).index)), "codex handoff");
   count++;

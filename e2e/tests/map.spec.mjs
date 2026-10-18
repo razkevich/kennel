@@ -113,19 +113,6 @@ test("ask answers with clickable citations", async ({ page }) => {
   await expect(page.locator("#card")).toContainText("CHECKOUT-V2");
 });
 
-test("walking up to a pup and pressing X interacts", async ({ page }) => {
-  await open(page);
-  const id = await pupId(page, "FLAKY-CI");
-  await page.evaluate((i) => {
-    const e = window.kennel.app.ents.get(i);
-    window.kennel.app.you.x = e.x;
-    window.kennel.app.you.y = e.y + 0.8;
-  }, id);
-  await expect(page.locator("#hint")).toContainText("visit FLAKY-CI");
-  await page.keyboard.press("x");
-  await expect(page.locator("#toast")).toContainText(`claude --resume ${id}`);
-});
-
 test("things: running ones focus, stopped ones start", async ({ page }) => {
   await open(page);
   const dev = await thingKey(page, "atlas dev");
@@ -224,35 +211,122 @@ test("codex and cursor pups: breeds, convert and export", async ({ page }) => {
   const card = page.locator("#card");
   await expect(card).toContainText("Codex");
   page.once("dialog", (d) => d.accept("claude"));
-  await card.getByRole("button", { name: "↔ Convert" }).click();
+  await card.locator("button.dots").click();
+  await page.locator("#ctxmenu button", { hasText: "Convert" }).click();
   await expect(page.locator("#toast")).toContainText("claude -n");
-  await card.getByRole("button", { name: "⬇ Export" }).click();
+  await card.locator("button.dots").click();
+  await page.locator("#ctxmenu button", { hasText: "Export" }).click();
   await expect(page.locator("#toast")).toContainText("exported to");
 });
 
-test("treats: drag a saved treat or a desktop file onto a pup", async ({ page }) => {
+test("shelves: pin links to kennels from the panel, see them on the wall and the card, ⋯ to move or remove", async ({ page }) => {
   await open(page);
-  await page.evaluate(() => fetch("/api/treats", { method: "POST", headers: { "X-Kennel-Token": "e2e" }, body: JSON.stringify({ name: "runbook", value: "/Users/demo/docs/runbook.md" }) }));
-  await open(page);
-  const chip = page.locator("#treatlist .treat", { hasText: "runbook" });
-  await expect(chip).toBeVisible();
+  await page.locator("#side .tabs button[data-tab=art]").click();
+  const panel = page.locator("#art");
+  const payments = await page.evaluate(() => window.kennel.app.state.kennels.find((k) => k.name === "Payments"));
+  await panel.locator(".addshelf input").fill("https://docs.acme.dev/checkout-v2");
+  await panel.locator(".addshelf select").selectOption(String(payments.id));
+  await panel.locator(".addshelf button").click();
+  await expect(panel.locator("h4", { hasText: "Payments · 1" })).toBeVisible();
+  const row = panel.locator(".item", { hasText: "docs.acme.dev" }).first();
+  await expect(row).toBeVisible();
 
+  // It sits on the kennel's back wall; clicking the room lists it on the card.
+  const key = "kennel:" + payments.id;
+  await page.evaluate((k) => {
+    const app = window.kennel.app, st = document.querySelector("#stage"), r = app.rooms.find((x) => x.key === k);
+    app.cam.x = (r.x + r.w / 2) * 32 - st.clientWidth / app.cam.z / 2;
+    app.cam.y = (r.y + r.h / 2) * 32 - st.clientHeight / app.cam.z / 2;
+  }, key);
+  await expect.poll(() => page.evaluate((k) => (window.kennel.app.rooms.find((r) => r.key === k).shelf || []).length, key)).toBe(1);
+  const spot = await page.evaluate((k) => window.kennel.roomPos(k, 0.9, 0.9), key);
+  await page.mouse.click(spot.x, spot.y);
+  await expect(page.locator("#card .cardshelf")).toContainText("docs.acme.dev");
+
+  // Pin from the card too, then ⋯ → take it off the shelf, and remove with undo.
+  await page.locator("#card .cardshelf input").fill("#payments-oncall");
+  await page.locator("#card .cardshelf input").press("Enter");
+  await expect(page.locator("#card .cardshelf .item")).toHaveCount(2);
+  await page.locator("#card .cardshelf .item", { hasText: "payments-oncall" }).locator("button.dots").click();
+  await page.locator("#ctxmenu button", { hasText: "Take off the shelf" }).click();
+  await expect(page.locator("#card .cardshelf .item")).toHaveCount(1);
+  await expect(panel.locator("h4", { hasText: "Loose" })).toBeVisible();
+  await panel.locator(".item", { hasText: "payments-oncall" }).locator("button.dots").click();
+  await page.locator("#ctxmenu button", { hasText: "Remove" }).click();
+  await expect(panel.locator(".item", { hasText: "payments-oncall" })).toHaveCount(0);
+  await page.keyboard.press("Meta+z");
+  await expect(panel.locator(".item", { hasText: "payments-oncall" })).toHaveCount(1);
+});
+
+test("artifacts from sessions: pin to a kennel with ⋯, or hide them (undoable)", async ({ page }) => {
+  await open(page);
+  await page.locator("#side .tabs button[data-tab=art]").click();
+  const panel = page.locator("#art");
+  const art = panel.locator(".item", { hasText: "PG16 cutover runbook" });
+  await expect(art).toHaveCount(1);
+  await art.locator("button.dots").click();
+  await page.locator("#ctxmenu button", { hasText: "Pin to 💳 Payments" }).click();
+  await expect(page.locator("#toast")).toContainText("pinned to 💳 Payments");
+  await expect(panel.locator(".item", { hasText: "PG16 cutover runbook" })).toHaveCount(2);
+  await panel.locator(".item", { hasText: "PG16 cutover runbook" }).last().locator("button.dots").click();
+  await page.locator("#ctxmenu button", { hasText: "Hide" }).click();
+  await expect(panel.locator(".item", { hasText: "PG16 cutover runbook" })).toHaveCount(1);
+  await page.keyboard.press("Meta+z");
+  await page.locator("#side .tabs button[data-tab=art]").click();
+  await expect(panel.locator(".item", { hasText: "PG16 cutover runbook" })).toHaveCount(2);
+});
+
+test("feeding: drag a shelf item or a desktop file onto a pup", async ({ page }) => {
+  await open(page);
+  await post(page, "/api/treats", { name: "runbook", value: "/Users/demo/docs/runbook.md" });
+  await page.locator("#side .tabs button[data-tab=art]").click();
+  const item = page.locator("#art .item", { hasText: "runbook" }).first();
+  await expect(item).toBeVisible();
   const id = await pupId(page, "PG-UPGRADE");
   await page.evaluate((i) => window.kennel.reveal(i), id);
   const pos = await page.evaluate((i) => window.kennel.screenPos(i), id);
-  const drop = (payload) => page.evaluate(({ x, y, payload }) => {
-    const dt = new DataTransfer();
-    if (payload.treat) dt.setData("application/x-kennel-treat", String(payload.treat));
-    if (payload.file) dt.items.add(new File([payload.file.body], payload.file.name, { type: "text/markdown" }));
-    const c = document.querySelector("#map");
-    for (const type of ["dragover", "drop"]) c.dispatchEvent(new DragEvent(type, { clientX: x, clientY: y, dataTransfer: dt, bubbles: true, cancelable: true }));
-  }, { x: pos.x, y: pos.y, payload });
-
-  const treatId = await chip.getAttribute("data-id");
-  await drop({ treat: Number(treatId) });
+  const box = await page.locator("#map").boundingBox();
+  await item.dragTo(page.locator("#map"), { targetPosition: { x: pos.x - box.x, y: pos.y - box.y } });
   await expect(page.locator("#toast")).toContainText("runbook");
 
-  await drop({ file: { name: "notes.md", body: "# notes\nremember the rollback plan" } });
+  await page.evaluate(({ x, y }) => {
+    const dt = new DataTransfer();
+    dt.items.add(new File(["# notes\nremember the rollback plan"], "notes.md", { type: "text/markdown" }));
+    const c = document.querySelector("#map");
+    for (const type of ["dragover", "drop"]) c.dispatchEvent(new DragEvent(type, { clientX: x, clientY: y, dataTransfer: dt, bubbles: true, cancelable: true }));
+  }, pos);
   await expect(page.locator("#toast")).toContainText("notes.md");
-  await expect(page.locator("#toast")).toContainText("Please read");
+});
+
+test("quick tell: one line to a pup without leaving the map", async ({ page }) => {
+  await open(page);
+  const id = await pupId(page, "RATE-LIMITS");
+  await clickEntity(page, id);
+  await page.keyboard.press("t");
+  const tell = page.locator("#tell");
+  await expect(tell).toBeVisible();
+  await expect(tell).toContainText("Tell RATE-LIMITS");
+  await expect(tell).toContainText("in the background");
+  await tell.locator("input").fill("add per-tenant overrides to the limiter");
+  await tell.locator("input").press("Enter");
+  await expect(tell).toBeHidden();
+  await expect(page.locator("#toast")).toContainText(`claude --resume ${id} -p`);
+  await expect(page.locator("#toast")).toContainText("per-tenant overrides");
+  // From the right-click menu, and Esc cancels.
+  const pos = await page.evaluate((i) => window.kennel.screenPos(i), id);
+  await page.mouse.click(pos.x, pos.y, { button: "right" });
+  await page.locator("#ctxmenu button", { hasText: "Tell" }).click();
+  await expect(tell).toBeVisible();
+  await tell.locator("input").press("Escape");
+  await expect(tell).toBeHidden();
+  // A live pup kennel can't type into gets a way to go there instead of a dead input.
+  const far = await page.evaluate(() => Object.values(window.kennel.app.state.pups).find((p) => p.status !== "offline" && !p.pane)?.id);
+  expect(far).toBeTruthy();
+  await page.evaluate((i) => { window.kennel.app.sel = i; }, far);
+  await page.keyboard.press("t");
+  await expect(tell.locator(".row")).toBeHidden();
+  await expect(tell.locator("button.go")).toBeVisible();
+  await expect(tell).toContainText("can't type into");
+  await tell.locator("button.go").click();
+  await expect(tell).toBeHidden();
 });

@@ -81,6 +81,7 @@ CREATE TABLE IF NOT EXISTS treats(
 	value TEXT NOT NULL,
 	created INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS hidden_artifacts(url TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS room_style(
 	key TEXT PRIMARY KEY,
 	style TEXT NOT NULL DEFAULT '{}'
@@ -124,6 +125,7 @@ func (s *Store) migrate() error {
 		{"pup_meta", "unfiled", "INTEGER NOT NULL DEFAULT 0"},
 		{"kennels", "floor_id", "INTEGER NOT NULL DEFAULT 0"},
 		{"kennels", "smart", "TEXT NOT NULL DEFAULT ''"},
+		{"treats", "kennel_id", "INTEGER REFERENCES kennels(id) ON DELETE SET NULL"},
 	} {
 		var n int
 		_ = s.DB.QueryRow(`SELECT count(*) FROM pragma_table_info(?) WHERE name=?`, col.table, col.name).Scan(&n)

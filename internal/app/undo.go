@@ -74,4 +74,3 @@ func (a *App) untrash(trashed, original string) error {
 	_, err := a.Sync(context.Background(), nil)
 	return err
 }
-

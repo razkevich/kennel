@@ -459,6 +459,16 @@ public final class AppController: NSObject, NSApplicationDelegate, NSWindowDeleg
                 return
             }
             openTab(launch)
+        case "tell":
+            // Quick tell: a pup open in one of our tabs gets the line typed there.
+            let req = body["req"] as? Int ?? 0
+            var ok = false
+            if let session = body["session"] as? String, let text = body["text"] as? String,
+               let p = tabs.lazy.compactMap({ $0.pane(session: session) }).first {
+                p.view.send(txt: text.replacingOccurrences(of: "\n", with: " ") + "\r")
+                ok = true
+            }
+            web.evaluateJavaScript("window.kennel && window.kennel.toldByNative(\(req), \(ok))")
         case "appearance":
             setKennelAppearance(dark: body["dark"] as? Bool ?? false)
         case "counts":

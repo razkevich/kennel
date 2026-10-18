@@ -16,6 +16,7 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"os"
 	"os/exec"
 	"runtime"
 	"sort"
@@ -28,7 +29,6 @@ import (
 	"github.com/razkevich/kennel/internal/ask"
 	"github.com/razkevich/kennel/internal/blocks"
 	"github.com/razkevich/kennel/internal/claude"
-	"github.com/razkevich/kennel/internal/digest"
 	"github.com/razkevich/kennel/internal/floor"
 	"github.com/razkevich/kennel/internal/indexer"
 	"github.com/razkevich/kennel/internal/opener"
@@ -192,6 +192,11 @@ func (s *Server) fingerprint() uint64 {
 	for _, f := range s.App.Floors() {
 		fmt.Fprintf(h, "f%d|%s|%s;", f.ID, f.Name, f.Icon)
 	}
+	for _, t := range s.App.Treats() {
+		fmt.Fprintf(h, "t%d|%d|%s;", t.ID, t.Kennel, t.Name)
+	}
+	hidden, _ := s.App.Store.HiddenArtifacts()
+	fmt.Fprintf(h, "ha%d;", len(hidden))
 	styles := s.App.Styles()
 	keys := make([]string, 0, len(styles))
 	for k := range styles {
@@ -227,6 +232,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/treats", s.guard(s.handleTreats))
 	mux.HandleFunc("POST /api/treats", s.guard(s.handleAddTreat))
 	mux.HandleFunc("POST /api/treats/{id}/delete", s.guard(s.handleDeleteTreat))
+	mux.HandleFunc("POST /api/treats/{id}/shelve", s.guard(s.handleShelveTreat))
+	mux.HandleFunc("POST /api/artifacts/hide", s.guard(s.handleHideArtifact))
+	mux.HandleFunc("POST /api/open", s.guard(s.handleOpenFile))
 	mux.HandleFunc("POST /api/drop", s.guard(s.handleDrop))
 	mux.HandleFunc("POST /api/undo", s.guard(s.handleUndo))
 	mux.HandleFunc("POST /api/kennels", s.guard(s.handleAddKennel))
@@ -237,7 +245,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/themes/run", s.guard(s.handleThemes))
 	mux.HandleFunc("GET /api/jobs", s.guard(s.handleJobs))
 	mux.HandleFunc("GET /api/artifacts", s.guard(s.handleArtifacts))
-	mux.HandleFunc("GET /api/digest", s.guard(s.handleDigest))
 	mux.HandleFunc("POST /api/room/{action}", s.guard(s.handleRoom))
 	mux.HandleFunc("POST /api/appearance", s.guard(s.handleAppearance))
 	return s.hostCheck(mux)
@@ -681,9 +688,8 @@ func (s *Server) handlePupAction(w http.ResponseWriter, r *http.Request) {
 		err = s.App.ToggleArchive(p.ID)
 	case "rename":
 		err = s.App.Rename(p.ID, strings.TrimSpace(body.Title))
-	case "reply":
-		err = s.App.Prompt(p, body.Text)
-		msg = "sent"
+	case "tell":
+		msg, err = s.App.Tell(p, body.Text)
 	case "clone":
 		if p.AgentKind() != "claude" {
 			err = errors.New("clone works on Claude sessions; use Convert for other agents")
@@ -913,16 +919,71 @@ func (s *Server) handleTreats(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAddTreat(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name  string `json:"name"`
-		Value string `json:"value"`
+		Name   string `json:"name"`
+		Value  string `json:"value"`
+		Kennel int64  `json:"kennel"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
-	t, err := s.App.AddTreat(body.Name, body.Value)
+	t, err := s.App.AddTreat(body.Name, body.Value, body.Kennel)
 	if err != nil {
 		fail(w, err, http.StatusBadRequest)
 		return
 	}
+	s.touch()
 	writeJSON(w, t)
+}
+
+func (s *Server) handleShelveTreat(w http.ResponseWriter, r *http.Request) {
+	var id int64
+	fmt.Sscan(r.PathValue("id"), &id)
+	var body struct {
+		Kennel int64 `json:"kennel"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	if err := s.App.ShelveTreat(id, body.Kennel); err != nil {
+		fail(w, err, http.StatusBadRequest)
+		return
+	}
+	s.touch()
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleHideArtifact(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		URL string `json:"url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.URL == "" {
+		fail(w, errors.New("which artifact?"), http.StatusBadRequest)
+		return
+	}
+	if err := s.App.HideArtifact(body.URL); err != nil {
+		fail(w, err, http.StatusBadRequest)
+		return
+	}
+	s.touch()
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// handleOpenFile opens a saved file with the Mac's default app; links open in the page.
+func (s *Server) handleOpenFile(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Path string `json:"path"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	path := app.ExpandHome(strings.TrimSpace(body.Path))
+	if !strings.HasPrefix(path, "/") {
+		fail(w, errors.New("only files can be opened this way"), http.StatusBadRequest)
+		return
+	}
+	if _, err := os.Stat(path); err != nil {
+		fail(w, fmt.Errorf("%s isn't there any more", path), http.StatusNotFound)
+		return
+	}
+	if _, err := s.App.Cfg.Runner.Run("open", "--", path); err != nil {
+		fail(w, err, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
 }
 
 func (s *Server) handleDeleteTreat(w http.ResponseWriter, r *http.Request) {
@@ -932,6 +993,7 @@ func (s *Server) handleDeleteTreat(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, http.StatusBadRequest)
 		return
 	}
+	s.touch()
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
@@ -1102,13 +1164,6 @@ func (s *Server) handleArtifacts(w http.ResponseWriter, r *http.Request) {
 		out = append(out, artJSON{a.URL, a.Title, a.At.UnixMilli(), a.Pup.ID, a.Pup.Title()})
 	}
 	writeJSON(w, out)
-}
-
-func (s *Server) handleDigest(w http.ResponseWriter, r *http.Request) {
-	days := 1
-	fmt.Sscan(r.URL.Query().Get("days"), &days)
-	d := digest.Build(s.App.Pups(), s.App.Now(), time.Duration(max(days, 1))*24*time.Hour)
-	writeJSON(w, map[string]any{"days": days, "lines": d.Lines()})
 }
 
 func (s *Server) kennelNamed(name string) bool {

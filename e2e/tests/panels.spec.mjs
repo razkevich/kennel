@@ -64,12 +64,3 @@ test("jobs and artifacts panels", async ({ page }) => {
   await expect(page.locator("#art")).toContainText("PG16 cutover runbook");
 });
 
-test("digest modal", async ({ page }) => {
-  await open(page);
-  await page.locator("#digestbtn").click();
-  await expect(page.locator("#digestbody")).toContainText("pups touched");
-  await page.locator("#digestdays").selectOption("7");
-  await expect(page.locator("#digestbody")).toContainText("busiest");
-  await page.keyboard.press("Escape");
-  await expect(page.locator("#digest")).toBeHidden();
-});

@@ -15,7 +15,6 @@ import (
 	"github.com/razkevich/kennel/internal/app"
 	"github.com/razkevich/kennel/internal/ask"
 	"github.com/razkevich/kennel/internal/demo"
-	"github.com/razkevich/kennel/internal/digest"
 	"github.com/razkevich/kennel/internal/indexer"
 	"github.com/razkevich/kennel/internal/opener"
 	"github.com/razkevich/kennel/internal/web"
@@ -30,7 +29,6 @@ usage:
   kennel search <query>       search names and transcripts  (-json)
   kennel ask <question>       answer from past sessions, with sources
   kennel ls [query]           list sessions                 (-json)
-  kennel digest [-since 24h]  what happened: touched, shipped, waiting, under the rug
   kennel open <id|name>       resume a session              (-fork, -remote, -opener herdr|ghostty|inline|print)
   kennel clone <ref> [-to dir] copy a session (optionally into another project) and resume it
   kennel merge <ref> <ref>... start a new pup seeded with a brief of several sessions (-name, -cwd)
@@ -119,8 +117,6 @@ func run(args []string) error {
 		return runAsk(cfg, args)
 	case "open":
 		return runOpen(cfg, args)
-	case "digest":
-		return runDigest(cfg, args)
 	case "clone":
 		return runClone(cfg, args)
 	case "merge", "distill":
@@ -328,27 +324,6 @@ func runMap(cfg app.Config, args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	return web.Serve(ctx, a, fmt.Sprintf("127.0.0.1:%d", *port), !*noOpen, *token)
-}
-
-func runDigest(cfg app.Config, args []string) error {
-	fs := flag.NewFlagSet("digest", flag.ExitOnError)
-	since := fs.Duration("since", 24*time.Hour, "window to summarize")
-	parseArgs(fs, args)
-	a, err := openApp(cfg, true)
-	if err != nil {
-		return err
-	}
-	defer a.Close()
-	d := digest.Build(a.Pups(), a.Now(), *since)
-	window := strings.TrimSuffix(strings.TrimSuffix(since.String(), "0s"), "0m")
-	if *since%(24*time.Hour) == 0 {
-		window = fmt.Sprintf("%d day(s)", *since/(24*time.Hour))
-	}
-	fmt.Printf("▼•ᴥ•▼ kennel digest — last %s\n\n", window)
-	for _, l := range d.Lines() {
-		fmt.Println("  " + l)
-	}
-	return nil
 }
 
 func runClone(cfg app.Config, args []string) error {

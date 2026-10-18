@@ -17,17 +17,43 @@ func (a *App) Treats() []treats.Treat {
 	return ts
 }
 
-func (a *App) AddTreat(name, value string) (treats.Treat, error) {
+// AddTreat saves a source, on a kennel's shelf when kennel isn't 0.
+func (a *App) AddTreat(name, value string, kennel int64) (treats.Treat, error) {
 	if strings.TrimSpace(value) == "" {
-		return treats.Treat{}, fmt.Errorf("a treat needs a value: a path, link, #channel, ticket or note")
+		return treats.Treat{}, fmt.Errorf("add a path, link, #channel, ticket or note")
 	}
 	t := treats.New(name, ExpandHome(strings.TrimSpace(value)))
+	t.Kennel = kennel
 	if err := a.Store.SaveTreat(&t); err != nil {
 		return t, err
 	}
 	id := t.ID
 	a.remember("add treat "+t.Name, func() error { return a.Store.DeleteTreat(id) })
 	return t, nil
+}
+
+// ShelveTreat moves a saved source onto another kennel's shelf (0 = loose).
+func (a *App) ShelveTreat(id, kennel int64) error {
+	for _, t := range a.Treats() {
+		if t.ID == id {
+			prev := t.Kennel
+			if err := a.Store.ShelveTreat(id, kennel); err != nil {
+				return err
+			}
+			a.remember("move "+t.Name, func() error { return a.Store.ShelveTreat(id, prev) })
+			return nil
+		}
+	}
+	return fmt.Errorf("no saved item %d", id)
+}
+
+// HideArtifact takes a session's artifact out of the artifacts list; undo shows it again.
+func (a *App) HideArtifact(url string) error {
+	if err := a.Store.HideArtifact(url, true); err != nil {
+		return err
+	}
+	a.remember("hide artifact", func() error { return a.Store.HideArtifact(url, false) })
+	return nil
 }
 
 func (a *App) DeleteTreat(id int64) error {

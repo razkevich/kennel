@@ -102,16 +102,11 @@ main { display: flex; height: calc(100% - 60px); }
 #stage { flex: 1; position: relative; overflow: hidden; background: var(--stage); }
 #map { position: absolute; inset: 0; width: 100%; height: 100%; image-rendering: pixelated; cursor: default; }
 #map.dragging { cursor: grabbing; }
-#hint { position: absolute; transform: translate(-50%, -100%); background: var(--tip-bg); color: var(--tip-ink); font-weight: 700; font-size: 12px;
-  padding: 5px 9px; border-radius: 8px; pointer-events: none; box-shadow: var(--shadow); }
 
 /* ---- bottom dock (like Gather's toolbar) ---- */
 #dock { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 5; display: flex; align-items: center; gap: 6px;
   background: var(--card); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); padding: 6px 8px; white-space: nowrap; }
 #dock .sep { width: 1px; height: 24px; background: var(--line); margin: 0 4px; }
-#dock .you { display: flex; align-items: center; gap: 6px; padding: 2px 8px 2px 2px; font-weight: 700; }
-#dock .you .avatar { width: 28px; height: 28px; border-radius: 9px; background: var(--pink-bg); display: grid; place-items: center; font-size: 16px; position: relative; }
-#dock .you .avatar::after { content: ""; position: absolute; right: -2px; bottom: -2px; width: 9px; height: 9px; border-radius: 50%; background: var(--green); border: 2px solid var(--card); }
 #floors { display: flex; gap: 2px; background: var(--card2); border: 1px solid var(--line); padding: 3px; border-radius: 11px; }
 #floors button { background: transparent; border: 0; padding: 5px 11px; border-radius: 8px; color: var(--sub); font-weight: 600; font-size: 13px; white-space: nowrap; }
 #floors button:hover { color: var(--ink); }
@@ -164,16 +159,6 @@ main { display: flex; height: calc(100% - 60px); }
 .member .what { font-size: 12px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 
-/* ---- treats ---- */
-#treats { flex: none !important; padding-bottom: 8px !important; border-bottom: 1px solid var(--line); }
-.treathead { display: flex; align-items: center; gap: 8px; margin: 2px 4px 8px; }
-.treathead span { color: var(--dim); font-size: 12px; }
-.treathead button { margin-left: auto; background: var(--card); border: 1px solid var(--line); border-radius: 8px; width: 26px; height: 24px; font-weight: 800; color: var(--accent); }
-#treatlist { display: flex; flex-wrap: wrap; gap: 6px; max-height: 92px; overflow: auto; }
-.treat { background: var(--warm-bg); color: var(--warm-ink); border: 1px solid var(--warm-line); border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 600; cursor: grab;
-  max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.treat:active { cursor: grabbing; }
-#treatlist .empty { color: var(--dim); font-size: 12px; margin: 0 4px; }
 #stage.dropping::before, #stage.pupdrag::before { position: absolute; top: 64px; left: 50%; transform: translateX(-50%); background: var(--tip-bg); color: var(--tip-ink);
   font-weight: 700; font-size: 12px; padding: 7px 12px; border-radius: 999px; pointer-events: none; z-index: 6; box-shadow: var(--shadow); }
 #stage.dropping::before { content: "🦴 drop on a pup to feed it, or on a 🚪 door to start a new one"; }
@@ -193,18 +178,15 @@ main { display: flex; height: calc(100% - 60px); }
 .source b { color: var(--accent); }
 .source .ex { color: var(--sub); margin-top: 3px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 
-/* ---- transcript / digest sheets ---- */
-#transcript, #digest { position: fixed; inset: 0; background: var(--scrim); display: flex; align-items: center; justify-content: center; z-index: 20; backdrop-filter: blur(2px); }
-#transcript .sheet, #digest .sheet { background: var(--card); color: var(--ink); border-radius: 18px; border: 1px solid var(--line); box-shadow: 0 30px 80px #2b2f4a40; overflow: hidden; display: flex; flex-direction: column; }
+/* ---- transcript sheet ---- */
+#transcript { position: fixed; inset: 0; background: var(--scrim); display: flex; align-items: center; justify-content: center; z-index: 20; backdrop-filter: blur(2px); }
+#transcript .sheet { background: var(--card); color: var(--ink); border-radius: 18px; border: 1px solid var(--line); box-shadow: 0 30px 80px #2b2f4a40; overflow: hidden; display: flex; flex-direction: column; }
 #transcript .sheet { width: min(900px, 94vw); height: 86vh; }
-#digest .sheet { width: min(620px, 94vw); }
-#transcript .bar, #digest .bar { display: flex; gap: 10px; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--line); }
-#transcript .bar b, #digest .bar b { font-size: 16px; }
+#transcript .bar { display: flex; gap: 10px; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+#transcript .bar b { font-size: 16px; }
 #tr-find { margin-left: auto; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line2); }
-#tr-close, #digest .bar button { border: 0; background: none; font-size: 18px; color: var(--dim); }
-#digest .bar select { margin-left: auto; border: 1px solid var(--line2); border-radius: 8px; padding: 3px 6px; background: var(--card); }
+#tr-close { border: 0; background: none; font-size: 18px; color: var(--dim); }
 #tr-body { overflow: auto; padding: 8px 22px 30px; }
-#digestbody { padding: 16px 20px 22px; line-height: 2; font-size: 14px; }
 .msg { margin: 16px 0; }
 .msg .who { font-weight: 700; font-size: 12px; padding: 2px 9px; border-radius: 999px; display: inline-block; }
 .msg.user .who { background: var(--pink-bg); color: var(--pink-ink); }
@@ -256,8 +238,6 @@ main { display: flex; height: calc(100% - 60px); }
 
 /* ---- build mode ---- */
 #stage.building #map { cursor: crosshair; }
-#stage.building::after { content: "🔨 build mode — drag rooms by their wall, drag furniture, right-click to remove"; position: absolute; top: 64px; left: 50%;
-  transform: translateX(-50%); background: var(--warm-bg); color: var(--warm-ink); border: 1px solid var(--warm-line); font-weight: 700; font-size: 12px; padding: 6px 12px; border-radius: 999px; pointer-events: none; }
 #build h3 { margin: 16px 4px 8px; font-size: 11px; letter-spacing: .6px; color: var(--dim); text-transform: uppercase; }
 #build .roomname { font-weight: 800; font-size: 16px; margin: 8px 4px; }
 #build .hint { color: var(--sub); font-size: 12.5px; margin: 8px 4px; }
@@ -287,7 +267,7 @@ main { display: flex; height: calc(100% - 60px); }
   #side { display: none; }
   #counts { display: none; }
   .search { width: 50vw; }
-  #dock .you, #dock .sep { display: none; }
+  #dock .sep { display: none; }
 }
 
 /* ---------- canvas tools (after Excalidraw) ---------- */
@@ -359,3 +339,37 @@ main { display: flex; height: calc(100% - 60px); }
 .smartgrid .smart b { font-size: 12.5px; }
 .smartgrid .smart span { font-size: 11px; color: var(--dim); line-height: 1.3; }
 #build .chips button[draggable="true"] { cursor: grab; }
+
+/* ---------- shelves ---------- */
+.item { display: flex; align-items: center; gap: 6px; padding: 6px 6px 6px 9px; border-radius: 10px; cursor: pointer; }
+.item:hover { background: var(--card); }
+.item .w { min-width: 0; flex: 1; }
+.item .n { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.item .d { font-size: 11.5px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+button.dots { border: 0; background: none; color: var(--dim); font-size: 16px; line-height: 1; width: 26px; height: 26px; border-radius: 8px; flex: none; }
+button.dots:hover { background: var(--card2); color: var(--ink); }
+.addshelf { display: flex; gap: 6px; margin: 4px 0 6px; }
+.addshelf input { flex: 1; min-width: 0; padding: 7px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); }
+.addshelf select { max-width: 110px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); }
+.addshelf button { border: 0; border-radius: 10px; background: var(--accent); color: #fff; font-weight: 700; padding: 0 12px; }
+.shelf .empty { color: var(--dim); padding: 8px; font-size: 12.5px; }
+.cardshelf { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
+.cardshelf h5 { margin: 0 0 4px; font-size: 11px; letter-spacing: .5px; color: var(--dim); text-transform: uppercase; }
+.cardshelf input { width: 100%; margin-top: 4px; padding: 6px 9px; border-radius: 9px; border: 1px solid var(--line); background: var(--card2); }
+
+/* ---------- quick tell ---------- */
+#tell { position: absolute; z-index: 25; width: 360px; background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+  box-shadow: 0 16px 40px #282d4f33; padding: 10px 12px; }
+#tell .to { font-weight: 700; font-size: 13px; margin-bottom: 6px; }
+#tell .row { display: flex; gap: 6px; }
+#tell input { flex: 1; min-width: 0; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--accent); background: var(--card2); }
+#tell input:focus { outline: none; box-shadow: 0 0 0 3px var(--accent2); }
+#tell .send { border: 0; border-radius: 10px; background: var(--accent); color: #fff; font-weight: 700; padding: 0 12px; }
+#tell .how { margin-top: 6px; font-size: 11.5px; color: var(--dim); }
+
+.buildhead { display: flex; align-items: center; gap: 8px; margin: 2px 0 8px; padding: 8px 10px; border-radius: 12px; background: var(--warm-bg); border: 1px solid var(--warm-line); color: var(--warm-ink); }
+.buildhead span { flex: 1; font-size: 11.5px; }
+.buildhead button { border: 0; border-radius: 9px; background: var(--accent); color: #fff; font-weight: 700; padding: 5px 12px; }
+#buildbtn.on { background: var(--accent2); color: var(--accent); }
+#card .actions button.dots { border: 1px solid var(--line); width: auto; padding: 0 10px; height: auto; }
+#tell .go { border: 0; border-radius: 10px; background: var(--accent); color: #fff; font-weight: 700; padding: 8px 14px; }

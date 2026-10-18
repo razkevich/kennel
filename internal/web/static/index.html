@@ -40,7 +40,6 @@
       <div class="libsel" id="libsel" hidden><span id="libselcount"></span><select id="libmove"></select><button id="libdo">move</button><button id="libclear">clear</button></div>
       <div id="libbody"></div>
     </div>
-    <div id="hint" hidden></div>
     <div id="tools" role="toolbar" aria-label="tools">
       <button data-tool="select" title="Select: drag pups, move and resize rooms (V)">↖<i>1</i></button>
       <button data-tool="hand" title="Hand: pan the map (H, or hold Space)">✋<i>2</i></button>
@@ -48,14 +47,12 @@
     </div>
     <div id="zoom"><button id="zoomout" title="zoom out (-)">−</button><button id="zoomval" title="reset zoom">100%</button><button id="zoomin" title="zoom in (+)">+</button><button id="zoomfit" title="fit everything (Shift+1)">⤢</button></div>
     <div id="ctxmenu" hidden></div>
+    <div id="tell" hidden><div class="to"></div><div class="row"><input placeholder="One line, Enter to send · Esc to cancel"><button class="send">Send</button></div><button class="go" hidden>↗ Go to it</button><div class="how"></div></div>
     <div id="dock">
-      <div class="you"><span class="avatar">🧑</span><span class="yname">You</span></div>
-      <span class="sep"></span>
       <nav id="floors" aria-label="floors"></nav>
       <span class="sep"></span>
       <button id="libbtn" class="dockbtn" title="all sessions (L)"><span>📚</span>Library</button>
       <button id="buildbtn" class="dockbtn" title="build mode (B)"><span>🔨</span>Build</button>
-      <button id="digestbtn" class="dockbtn" title="what happened (D)"><span>📰</span>Digest</button>
       <button id="helpbtn" class="dockbtn icon" title="help">?</button>
     </div>
   </div>
@@ -65,12 +62,8 @@
       <button data-tab="pack" class="on" title="Recent sessions: drag onto a kennel to file">🐾 Sessions</button>
       <button data-tab="ask" title="Ask">💬</button>
       <button data-tab="jobs" title="Jobs & things">⏰</button>
-      <button data-tab="art" title="Artifacts">🎨</button>
+      <button data-tab="art" title="Shelf: artifacts, links, files, channels">📎</button>
     </div>
-    <section id="treats">
-      <div class="treathead"><b>🦴 Treats</b><span>drag onto a pup</span><button id="addtreat" title="save a treat">＋</button></div>
-      <div id="treatlist"></div>
-    </section>
     <section id="pack"></section>
     <section id="build" hidden></section>
     <section id="jobs" hidden></section>
@@ -94,7 +87,7 @@
   </div>
 </div>
 <div id="toast" hidden></div>
-<div id="digest" hidden><div class="sheet"><div class="bar"><b>📰 What happened</b><select id="digestdays"><option value="1">last day</option><option value="7">last week</option><option value="14">2 weeks</option></select><button id="digestclose">✕</button></div><div id="digestbody"></div></div></div>
+
 <script src="app.js"></script>
 </body>
 </html>

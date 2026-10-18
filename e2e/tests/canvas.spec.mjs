@@ -168,7 +168,8 @@ test("remove pups from a kennel: right-click, Delete, drag out, card button; und
   // The card's button.
   p = await at(ids[3]);
   await page.mouse.click(p.x, p.y);
-  await page.locator("#card button", { hasText: "Remove from Removal yard" }).click();
+  await page.locator("#card button.dots").click();
+  await page.locator("#ctxmenu button", { hasText: "Remove from Removal yard" }).click();
   await expect.poll(members).toBe(1);
   await expect(page.locator("#pack .group", { hasText: "New" }).locator(`.member[data-id="${ids[3]}"]`)).toHaveCount(1);
 });

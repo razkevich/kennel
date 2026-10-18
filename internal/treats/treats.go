@@ -4,6 +4,7 @@ package treats
 
 import (
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 )
@@ -20,11 +21,13 @@ const (
 
 var Icon = map[Kind]string{File: "📄", URL: "🔗", Slack: "💬", Ticket: "🎫", Text: "📝"}
 
+// Treat is a source saved on a kennel's shelf (Kennel set) or kept loose.
 type Treat struct {
-	ID    int64  `json:"id"`
-	Name  string `json:"name"`
-	Kind  Kind   `json:"kind"`
-	Value string `json:"value"`
+	ID     int64  `json:"id"`
+	Name   string `json:"name"`
+	Kind   Kind   `json:"kind"`
+	Value  string `json:"value"`
+	Kennel int64  `json:"kennel"`
 }
 
 var ticketRe = regexp.MustCompile(`^[A-Z][A-Z0-9]{1,9}-\d+$`)
@@ -54,10 +57,13 @@ func New(name, value string) Treat {
 	t := Treat{Name: strings.TrimSpace(name), Kind: Infer(value), Value: value}
 	if t.Name == "" {
 		t.Name = value
-		if t.Kind == File {
+		switch t.Kind {
+		case File:
 			if i := strings.LastIndex(value, "/"); i >= 0 && i < len(value)-1 {
 				t.Name = value[i+1:]
 			}
+		case URL:
+			t.Name = shortURL(value)
 		}
 		if len([]rune(t.Name)) > 40 {
 			t.Name = string([]rune(t.Name)[:39]) + "…"
@@ -85,4 +91,18 @@ func (t Treat) Prompt(note string) string {
 		msg += " " + note
 	}
 	return msg
+}
+
+// shortURL names a link by its host and last path part: docs.acme.dev/checkout-v2.
+func shortURL(v string) string {
+	u, err := url.Parse(v)
+	if err != nil || u.Host == "" {
+		return v
+	}
+	host := strings.TrimPrefix(u.Host, "www.")
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if last := parts[len(parts)-1]; last != "" {
+		return host + "/" + last
+	}
+	return host
 }

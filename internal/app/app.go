@@ -586,6 +586,12 @@ func (a *App) DeleteKennel(id int64) error {
 			members = append(members, p.ID)
 		}
 	}
+	var shelf []int64
+	for _, t := range a.Treats() {
+		if t.Kennel == id {
+			shelf = append(shelf, t.ID)
+		}
+	}
 	if err := a.Store.DeleteKennel(id); err != nil {
 		return err
 	}
@@ -596,6 +602,11 @@ func (a *App) DeleteKennel(id int64) error {
 			}
 			for _, pid := range members {
 				if err := a.Store.SetMetaField(pid, "kennel_id", id); err != nil {
+					return err
+				}
+			}
+			for _, tid := range shelf {
+				if err := a.Store.ShelveTreat(tid, id); err != nil {
 					return err
 				}
 			}
@@ -629,19 +640,15 @@ func (a *App) Opener() opener.Opener {
 	return opener.Opener{Kind: a.Cfg.Opener, Runner: a.Cfg.Runner, Handoff: a.Cfg.Handoff}
 }
 
-// Prompt sends text to a live pup through herdr.
-func (a *App) Prompt(p *pack.Pup, text string) error {
-	if p.Pane == "" {
-		return fmt.Errorf("%s isn't in a herdr pane kennel can reach", p.Title())
-	}
-	return opener.Prompt(a.Cfg.Runner, p.Pane, text)
-}
-
 // Artifacts across all sessions, newest first.
 func (a *App) Artifacts() []ArtifactRef {
 	var out []ArtifactRef
+	hidden, _ := a.Store.HiddenArtifacts()
 	for _, p := range a.Pups() {
 		for _, art := range p.Artifacts {
+			if hidden[art.URL] {
+				continue
+			}
 			out = append(out, ArtifactRef{Artifact: art, Pup: p})
 		}
 	}
