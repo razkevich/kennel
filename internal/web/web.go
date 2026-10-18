@@ -235,6 +235,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/treats/{id}/shelve", s.guard(s.handleShelveTreat))
 	mux.HandleFunc("POST /api/artifacts/hide", s.guard(s.handleHideArtifact))
 	mux.HandleFunc("POST /api/open", s.guard(s.handleOpenFile))
+	mux.HandleFunc("POST /api/sort", s.guard(s.handleSort))
+	mux.HandleFunc("POST /api/sort/apply", s.guard(s.handleSortApply))
 	mux.HandleFunc("POST /api/drop", s.guard(s.handleDrop))
 	mux.HandleFunc("POST /api/undo", s.guard(s.handleUndo))
 	mux.HandleFunc("POST /api/kennels", s.guard(s.handleAddKennel))
@@ -354,6 +356,7 @@ type RoomJSON struct {
 	Blurb   string      `json:"blurb"`
 	Pups    []string    `json:"pups"`
 	Things  []string    `json:"things"`
+	Older   int         `json:"older"`
 }
 
 type StateJSON struct {
@@ -438,9 +441,6 @@ func furColor(id, c string) string {
 	return furs[h.Sum32()%uint32(len(furs))]
 }
 
-// trayWindow is how far back the session tray reaches; live pups always show.
-const trayWindow = 14 * 24 * time.Hour
-
 // State is one floor of the map plus everything the side panel needs.
 func (s *Server) State(fl int64) StateJSON {
 	st := StateJSON{Version: s.Version(), Now: s.App.Now().UnixMilli(), Pups: map[string]PupJSON{}, Things: map[string]ThingJSON{},
@@ -457,7 +457,7 @@ func (s *Server) State(fl int64) StateJSON {
 	now := s.App.Now()
 	for _, p := range s.App.Pups() {
 		st.Counts[statusNames[p.Status]]++
-		if !p.Meta.Archived && !p.Empty() && (p.Status.Live() || now.Sub(p.Updated) < trayWindow) {
+		if !p.Meta.Archived && !p.Empty() && (p.Status.Live() || now.Sub(p.Updated) < floor.Recent) {
 			st.Tray = append(st.Tray, p.ID)
 			st.Pups[p.ID] = pupJSON(p)
 		}
@@ -476,7 +476,7 @@ func (s *Server) State(fl int64) StateJSON {
 		st.Kennels = append(st.Kennels, KennelJSON{k.ID, k.Name, k.Icon, s.App.FloorOf(k), k.Smart})
 	}
 	for _, r := range floor.Rooms(s.App, st.Floor) {
-		rj := RoomJSON{Key: r.Key, Kennel: r.KennelID, Smart: r.Smart, Style: r.Style, MinCols: r.MinCols, MinRows: r.MinRows, Title: r.Title, Icon: r.Icon, Color: r.Color, Look: r.Look, Blurb: r.Blurb, Pups: []string{}, Things: []string{}}
+		rj := RoomJSON{Key: r.Key, Kennel: r.KennelID, Smart: r.Smart, Older: r.Older, Style: r.Style, MinCols: r.MinCols, MinRows: r.MinRows, Title: r.Title, Icon: r.Icon, Color: r.Color, Look: r.Look, Blurb: r.Blurb, Pups: []string{}, Things: []string{}}
 		for _, p := range r.Pups {
 			rj.Pups = append(rj.Pups, p.ID)
 			st.Pups[p.ID] = pupJSON(p)
@@ -1279,4 +1279,36 @@ func (s *Server) handleFloor(w http.ResponseWriter, r *http.Request) {
 	}
 	s.touch()
 	writeJSON(w, map[string]any{"ok": true})
+}
+
+// handleSort suggests a kennel for each session; nothing is filed until apply.
+func (s *Server) handleSort(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		IDs []string `json:"ids"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	out, err := s.App.SuggestKennels(r.Context(), body.IDs)
+	if err != nil {
+		fail(w, err, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, out)
+}
+
+func (s *Server) handleSortApply(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Moves []app.Suggestion `json:"moves"`
+		Floor int64            `json:"floor"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		fail(w, err, http.StatusBadRequest)
+		return
+	}
+	n, err := s.App.FileAll(body.Moves, body.Floor)
+	if err != nil {
+		fail(w, err, http.StatusBadRequest)
+		return
+	}
+	s.touch()
+	writeJSON(w, map[string]any{"ok": true, "message": fmt.Sprintf("🗂 filed %d sessions", n)})
 }

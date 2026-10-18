@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 
-import { open, post } from "./helpers.mjs";
+import { open, post, center } from "./helpers.mjs";
 
 test("library: filter, group, sort, bulk move and themes", async ({ page }) => {
   await open(page);
@@ -64,3 +64,54 @@ test("jobs and artifacts panels", async ({ page }) => {
   await expect(page.locator("#art")).toContainText("PG16 cutover runbook");
 });
 
+
+test("sort new sessions into kennels: suggestions, adjust, file all, one undo", async ({ page }) => {
+  await open(page);
+  const newCount = async () => Number((await page.locator("#pack h4", { hasText: "New, not in a kennel" }).textContent()).match(/· (\d+)/)[1]);
+  const before = await newCount();
+  const kennelsBefore = await page.evaluate(() => window.kennel.app.state.kennels.length);
+  await page.locator("#pack .sortbtn").click();
+  const sheet = page.locator("#sort");
+  await expect(sheet).toBeVisible();
+  await expect(sheet.locator(".sortrow").first()).toBeVisible();
+  const rows = await sheet.locator(".sortrow").count();
+  expect(rows).toBe(before);
+  // Suggestions reuse existing kennels and propose new ones.
+  const values = await sheet.locator(".sortrow select").evaluateAll((l) => l.map((x) => x.value));
+  expect(values.some((v) => v.startsWith("k:"))).toBe(true);
+  expect(values.some((v) => v.startsWith("n:"))).toBe(true);
+  // Keep one where it is.
+  await sheet.locator(".sortrow select").first().selectOption("");
+  await expect(sheet.locator(".apply")).toHaveText(`File ${rows - 1}`);
+  await sheet.locator(".apply").click();
+  await expect(sheet).toBeHidden();
+  await expect(page.locator("#toast")).toContainText(`filed ${rows - 1} sessions`);
+  await expect.poll(newCount).toBe(1);
+  expect(await page.evaluate(() => window.kennel.app.state.kennels.length)).toBeGreaterThan(kennelsBefore);
+  await page.keyboard.press("Meta+z");
+  await expect.poll(newCount).toBe(before);
+  await expect.poll(() => page.evaluate(() => window.kennel.app.state.kennels.length)).toBe(kennelsBefore);
+});
+
+test("kennels show the last two weeks; older filed sessions are one click away", async ({ page }) => {
+  await open(page);
+  const old = await page.evaluate(async () => {
+    const lib = await (await fetch("/api/library", { headers: { "X-Kennel-Token": "e2e" } })).json();
+    return lib.find((p) => Date.now() - p.updated > 15 * 86400e3 && p.status === "offline");
+  });
+  expect(old).toBeTruthy();
+  const payments = await page.evaluate(() => window.kennel.app.rooms.find((r) => r.title === "Payments"));
+  await post(page, `/api/pup/${old.id}/move`, { kennel: payments.kennel });
+  await expect.poll(() => page.evaluate(() => window.kennel.app.rooms.find((r) => r.title === "Payments").older)).toBe(1);
+  expect(await page.evaluate((i) => window.kennel.app.rooms.some((r) => r.pups.includes(i)), old.id)).toBe(false);
+
+  await center(page, payments.key);
+  const wall = await page.evaluate((k) => window.kennel.wallPos(k), payments.key);
+  await page.mouse.click(wall.x, wall.y);
+  await page.locator("#card button.older").click();
+  await expect(page.locator("#library")).toBeVisible();
+  await expect(page.locator("#libkennel")).toHaveValue("Payments");
+  await expect(page.locator("#library .librow", { hasText: old.title })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await post(page, `/api/pup/${old.id}/move`, { kennel: 0 });
+});

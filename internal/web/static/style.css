@@ -373,3 +373,22 @@ button.dots:hover { background: var(--card2); color: var(--ink); }
 #buildbtn.on { background: var(--accent2); color: var(--accent); }
 #card .actions button.dots { border: 1px solid var(--line); width: auto; padding: 0 10px; height: auto; }
 #tell .go { border: 0; border-radius: 10px; background: var(--accent); color: #fff; font-weight: 700; padding: 8px 14px; }
+
+/* ---------- sorting into kennels ---------- */
+.group h4 .sortbtn { float: right; margin-top: -3px; border: 1px solid var(--accent); background: var(--accent2); color: var(--accent); border-radius: 999px; padding: 2px 9px; font-size: 10.5px; font-weight: 700; letter-spacing: 0; text-transform: none; }
+#sort { position: fixed; inset: 0; background: var(--scrim); display: flex; align-items: center; justify-content: center; z-index: 22; }
+#sort[hidden] { display: none; }
+#sort .sheet { width: min(640px, 92vw); max-height: 80vh; background: var(--card); color: var(--ink); border-radius: 18px; border: 1px solid var(--line); box-shadow: 0 30px 80px #2b2f4a40; display: flex; flex-direction: column; overflow: hidden; }
+#sort .bar { display: flex; flex-direction: column; gap: 2px; padding: 14px 18px; border-bottom: 1px solid var(--line); }
+#sort .bar span { color: var(--dim); font-size: 12.5px; }
+#sort .body { overflow: auto; padding: 8px 12px; }
+#sort .sortrow { display: flex; align-items: center; gap: 10px; padding: 5px 4px; }
+#sort .sortrow canvas { width: 28px; height: 24px; image-rendering: pixelated; }
+#sort .sortrow .t { flex: 1; min-width: 0; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#sort .sortrow select { width: 220px; border-radius: 9px; border: 1px solid var(--line); background: var(--card2); padding: 4px 6px; }
+#sort .foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--line); }
+#sort .foot button { border-radius: 10px; padding: 7px 16px; font-weight: 700; border: 1px solid var(--line); background: var(--card2); }
+#sort .foot .apply { background: var(--accent); border-color: var(--accent); color: #fff; }
+#sort .foot .apply:disabled { opacity: .5; }
+#sort .empty { color: var(--dim); padding: 24px; text-align: center; }
+#card button.older { margin-top: 8px; border: 1px dashed var(--line2); background: none; color: var(--sub); border-radius: 10px; padding: 6px 10px; width: 100%; text-align: left; }

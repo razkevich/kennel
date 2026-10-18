@@ -29,6 +29,8 @@ type Room struct {
 	Blurb   string
 	Pups    []*pack.Pup
 	Things  []things.Thing
+	// Older counts pups filed here that haven't been touched within Recent.
+	Older int
 }
 
 // SmartKind is a kind of room that fills itself; you place one on a floor from Build.
@@ -69,8 +71,9 @@ func SmartKindByKey(key string) (SmartKind, bool) {
 	return SmartKind{}, false
 }
 
-// Smart rooms only show recent pups (except the ones about old work).
-const recentWindow = 21 * 24 * time.Hour
+// Recent is how far back the map and the session tray reach: kennels show what you
+// worked on in this window (plus anything live) and count the rest as older.
+const Recent = 14 * 24 * time.Hour
 
 var keepsOld = map[string]bool{"rug": true, "dumpster": true, "best": true, "shipped": true}
 
@@ -131,10 +134,15 @@ func Rooms(a *app.App, floorID int64) []Room {
 			smart = append(smart, len(rooms))
 		} else {
 			for _, p := range pups {
-				if p.Kennel != nil && p.Kennel.ID == k.ID && !p.Meta.Archived {
-					r.Pups = append(r.Pups, p)
-					placed[p.ID] = true
+				if p.Kennel == nil || p.Kennel.ID != k.ID || p.Meta.Archived {
+					continue
 				}
+				if !p.Status.Live() && now.Sub(p.Updated) > Recent {
+					r.Older++
+					continue
+				}
+				r.Pups = append(r.Pups, p)
+				placed[p.ID] = true
 			}
 			for _, t := range allThings {
 				if t.KennelID == k.ID {
@@ -171,7 +179,7 @@ func Rooms(a *app.App, floorID int64) []Room {
 			}
 		case Lobby:
 			for _, p := range pups {
-				if !placed[p.ID] && !p.Meta.Archived && !p.Empty() && now.Sub(p.Updated) < recentWindow {
+				if !placed[p.ID] && !p.Meta.Archived && !p.Empty() && now.Sub(p.Updated) < Recent {
 					r.Pups = append(r.Pups, p)
 					placed[p.ID] = true
 				}
@@ -185,7 +193,7 @@ func Rooms(a *app.App, floorID int64) []Room {
 				if placed[p.ID] || !sm.Match(p, now) {
 					continue
 				}
-				if !keepsOld[r.Smart] && !p.Status.Live() && now.Sub(p.Updated) > recentWindow {
+				if !keepsOld[r.Smart] && !p.Status.Live() && now.Sub(p.Updated) > Recent {
 					continue
 				}
 				r.Pups = append(r.Pups, p)

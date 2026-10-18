@@ -403,6 +403,12 @@ function renderTray() {
     const g = el("div", "group" + (tray.closed[key] ? " closed" : ""));
     const h = el("h4", "", `${label} · ${items.length}`);
     h.onclick = () => { tray.closed[key] = !tray.closed[key]; renderTray(); };
+    if (key === "new") {
+      const sort = el("button", "sortbtn", "✨ Sort into kennels");
+      sort.title = "Suggest a kennel for each new session; you review before anything moves";
+      sort.onclick = (e) => { e.stopPropagation(); openSort(items.map((p) => p.id)); };
+      h.appendChild(sort);
+    }
     g.appendChild(h);
     if (!tray.closed[key]) {
       const limit = tray.more[key] ? items.length : 25;
@@ -566,6 +572,11 @@ function renderRoomCard(key) {
     actions.append(rn, del);
   }
   card.append(row, el("div", "snip", r.smart ? `Fills itself: ${r.blurb}.` : r.blurb && !r.blurb.startsWith("/") ? r.blurb : "Your kennel. Drag sessions in from the tray."), actions);
+  if (r.older) {
+    const older = el("button", "older", `📦 ${r.older} older sessions → Library`);
+    older.onclick = () => openLibraryFor(r.title);
+    card.appendChild(older);
+  }
   if (r.kennel) {
     const shelf = el("div", "cardshelf");
     const items = shelfOf(r.kennel);
@@ -1251,7 +1262,7 @@ function openTell(id) {
   box.querySelector(".how").textContent = how;
   box.querySelector(".row").hidden = !reachable;
   box.querySelector(".go").hidden = reachable;
-  box.querySelector(".go").onclick = () => { box.hidden = true; act("open", id); };
+  box.querySelector(".go").onclick = () => { closeTell(); act("open", id); };
   const e = app.ents.get(id);
   const st = $("#stage").getBoundingClientRect();
   if (e) {
@@ -1265,13 +1276,66 @@ function openTell(id) {
   (reachable ? inp : box.querySelector(".go")).focus();
 }
 
+function closeTell() {
+  $("#tell").hidden = true;
+  if ($("#tell").contains(document.activeElement)) document.activeElement.blur();
+}
+
 async function sendTell() {
   const box = $("#tell");
   const id = box.dataset.id, text = box.querySelector("input").value.trim();
   if (!text) return;
-  box.hidden = true;
+  closeTell();
   if (await askNativeToTell(id, text)) { toast(`💬 told ${pupOf(id).title}`); return; }
   act("tell", id, { text });
+}
+
+// Sorting new sessions: the model suggests a kennel for each; you adjust, then file them all.
+async function openSort(ids) {
+  const sheet = $("#sort");
+  const body = sheet.querySelector(".body");
+  sheet.hidden = false;
+  body.innerHTML = "";
+  body.appendChild(el("div", "empty", `✨ Reading ${ids.length} sessions…`));
+  sheet.querySelector(".apply").disabled = true;
+  let sugg;
+  try { sugg = await (await api("/api/sort", { method: "POST", body: JSON.stringify({ ids }) })).json(); }
+  catch (e) { body.innerHTML = ""; body.appendChild(el("div", "empty", e.message)); return; }
+  const fresh = [...new Set(sugg.filter((x) => !x.kennelId).map((x) => x.kennel))];
+  const byId = new Map(sugg.map((x) => [x.id, x]));
+  body.innerHTML = "";
+  for (const id of ids) {
+    const p = pupOf(id);
+    if (!p) continue;
+    const row = el("div", "sortrow");
+    const sel = el("select");
+    sel.dataset.id = id;
+    sel.appendChild(new Option("— leave in New —", ""));
+    for (const k of ownKennels()) sel.appendChild(new Option(`${k.icon} ${k.name}`, "k:" + k.id));
+    for (const n of fresh) sel.appendChild(new Option(`＋ ${n} (new)`, "n:" + n));
+    const s = byId.get(id);
+    if (s) sel.value = s.kennelId ? "k:" + s.kennelId : "n:" + s.kennel;
+    row.append(miniDog(p.fur, p.status, p.agent), el("span", "t", p.title), sel);
+    body.appendChild(row);
+  }
+  const apply = sheet.querySelector(".apply");
+  const count = () => { const n = [...body.querySelectorAll("select")].filter((x) => x.value).length; apply.textContent = `File ${n}`; apply.disabled = !n; };
+  body.onchange = count;
+  count();
+}
+
+async function applySort() {
+  const sheet = $("#sort");
+  const moves = [...sheet.querySelectorAll(".body select")].filter((x) => x.value).map((x) => {
+    const [kind, v] = [x.value.slice(0, 1), x.value.slice(2)];
+    return kind === "k" ? { id: x.dataset.id, kennelId: Number(v) } : { id: x.dataset.id, kennel: v };
+  });
+  try {
+    const res = await (await api("/api/sort/apply", { method: "POST", body: JSON.stringify({ moves, floor: app.state.floor }) })).json();
+    sheet.hidden = true;
+    await loadState();
+    toast(res.message, false, true);
+  } catch (e) { toast(e.message, true); }
 }
 
 async function renameKennel(r) {
@@ -1368,7 +1432,7 @@ window.addEventListener("keydown", (e) => {
   if ((e.key === "/" && !typing) || ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f")) { e.preventDefault(); $("#q").focus(); $("#q").select(); return; }
   if (typing) return;
   if (e.key === "Escape" && lib.open) { closeLibrary(); return; }
-  if (e.key === "Escape") { hideMenu(); app.multi.clear(); setTool("select"); $("#transcript").hidden = true; app.sel = null; $("#card").hidden = true; if (build.carry) { build.carry = null; renderBuilder(); } return; }
+  if (e.key === "Escape") { $("#sort").hidden = true; hideMenu(); app.multi.clear(); setTool("select"); $("#transcript").hidden = true; app.sel = null; $("#card").hidden = true; if (build.carry) { build.carry = null; renderBuilder(); } return; }
   if (e.key === " " && !e.repeat) { e.preventDefault(); spaceHeld = true; canvas.style.cursor = "grab"; return; }
   if (e.key === "v" || e.key === "1") { setTool("select"); return; }
   if (e.key === "h" || e.key === "2") { setTool("hand"); return; }
@@ -1611,6 +1675,11 @@ function drawRoomBody(r) {
     ctx.fillStyle = "#fff"; ctx.textAlign = "center"; ctx.fillText(`${unread}`, lx + tw + 18, ly + 16); ctx.textAlign = "left";
   }
   drawShelf(r, lx + tw + (unread ? 38 : 10), ly, x0 + W - 80);
+  if (r.older) {
+    ctx.font = "600 11px Inter, system-ui"; ctx.fillStyle = PAL.empty; ctx.textAlign = "right";
+    ctx.fillText(`+${r.older} older`, x0 + W - 12, y0 + H - 10);
+    ctx.textAlign = "left";
+  }
   const n = r.pups.length + r.things.length;
   if (!n) {
     ctx.fillStyle = PAL.empty; ctx.font = "italic 13px Inter, system-ui";
@@ -2468,6 +2537,13 @@ async function openLibrary() {
   $("#libq").focus();
 }
 let libFetch = null;
+async function openLibraryFor(kennelName) {
+  await openLibrary();
+  $("#libwhen").value = "0";
+  $("#libkennel").value = kennelName;
+  renderLibrary();
+}
+
 function refreshLibrary() {
   if (libFetch) return;
   libFetch = api("/api/library").then((r) => r.json()).then((l) => { library = l; fillLibFilters(); renderLibrary(); })
@@ -2712,11 +2788,14 @@ window.kennel = {
 $("#buildbtn").onclick = () => setBuild(!build.on);
 $("#tell input").addEventListener("keydown", (e) => {
   if (e.key === "Enter") { e.preventDefault(); sendTell(); }
-  if (e.key === "Escape") { e.preventDefault(); $("#tell").hidden = true; }
+  if (e.key === "Escape") { e.preventDefault(); closeTell(); }
   e.stopPropagation();
 });
 $("#tell .send").onclick = sendTell;
-$("#tell .go").addEventListener("keydown", (e) => { if (e.key === "Escape") $("#tell").hidden = true; });
+$("#sort .apply").onclick = applySort;
+$("#sort .cancel").onclick = () => ($("#sort").hidden = true);
+$("#sort").addEventListener("click", (e) => { if (e.target.id === "sort") $("#sort").hidden = true; });
+$("#tell .go").addEventListener("keydown", (e) => { if (e.key === "Escape") closeTell(); });
 try { app.project = localStorage.getItem("kennel.project") || ""; } catch (_) { app.project = ""; }
 $("#projectsel").onchange = () => {
   app.project = $("#projectsel").value;
