@@ -59,6 +59,8 @@ type block struct {
 
 // Session is the accumulated, index-friendly view of one transcript.
 type Session struct {
+	// Agent is "claude" (default), "codex" or "cursor".
+	Agent       string
 	ID          string
 	Project     string
 	Path        string
@@ -128,6 +130,8 @@ type Parser struct {
 	S      *Session
 	Seq    int
 	Chunks []Chunk
+	// Codex switches the line format to Codex CLI rollouts.
+	Codex bool
 }
 
 func NewParser(s *Session, seq int) *Parser {
@@ -157,6 +161,10 @@ func (p *Parser) Feed(r io.Reader) (int64, error) {
 func (p *Parser) line(b []byte) {
 	b = bytes.TrimSpace(b)
 	if len(b) == 0 || b[0] != '{' {
+		return
+	}
+	if p.Codex {
+		p.codexLine(b)
 		return
 	}
 	var r record
@@ -440,6 +448,14 @@ func ParseFile(path string) (*Session, []Chunk, error) {
 		p.S.ID = strings.TrimSuffix(filepath.Base(path), ".jsonl")
 	}
 	return p.S, p.Chunks, nil
+}
+
+// AgentKind is the session's agent, defaulting to Claude Code.
+func (s *Session) AgentKind() string {
+	if s.Agent == "" {
+		return "claude"
+	}
+	return s.Agent
 }
 
 // DisplayTitle picks the most human-chosen name available.

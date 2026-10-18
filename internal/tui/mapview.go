@@ -368,7 +368,7 @@ func (m Model) hoverCard(w int, sel string) string {
 	}
 	now := m.app.Now()
 	st := statusColor(p.Status)
-	title := lipgloss.NewStyle().Foreground(furColor(p.ID, p.Color)).Bold(true).Render(p.Title())
+	title := lipgloss.NewStyle().Foreground(furColorFor(p.ID, p.Color, p.AgentKind())).Bold(true).Render(p.Title())
 	status := lipgloss.NewStyle().Foreground(st).Render("● " + statusLabel(p.Status))
 	if p.Status.Live() && !p.Live.Since.IsZero() {
 		status += sDim.Render(" for " + strings.TrimSuffix(ago(now, p.Live.Since), "now"))

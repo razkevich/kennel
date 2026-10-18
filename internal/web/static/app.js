@@ -48,6 +48,37 @@ const DOG = [
   ".FFFFFFFFFFFF.",
   ".FF.FF..FF.FF.",
 ];
+const HUSKY = [
+  "..D........D..",
+  ".DFD......DFD.",
+  ".DFFFFFFFFFFD.",
+  "..FWWFFFFWWF..",
+  "..FWEWFFWEWF..",
+  "..FWWWNNWWWF..",
+  "..FFWWWWWWFF..",
+  "...FFWTTWFF...",
+  "..FFFFFFFFFF..",
+  ".FFFFWWWWFFFFR",
+  ".FFFWWWWWWFFF.",
+  ".FF.FF..FF.FF.",
+];
+const DALMATIAN = [
+  "..DD......DD..",
+  ".DDDD....DDDD.",
+  ".DFFFFFSFFFFD.",
+  "..FFSFFFFFFF..",
+  "..FFEFFFFEFF..",
+  "..FFFFNNFFSF..",
+  "..FFFWWWWFFF..",
+  "...FFFTTFFF...",
+  "..FSFFFFFSFF..",
+  ".FFFFFSFFFFFFR",
+  ".FFSFFFFFFSFF.",
+  ".FF.FF..FF.FF.",
+];
+const BREEDS = { claude: DOG, codex: HUSKY, cursor: DALMATIAN };
+const walkOf = (g) => g.slice(0, 11).concat([".F.FF....FF.F."]);
+const wagOf = (g) => g.slice(0, 8).concat(["..FFFFFFFFFF.R", g[9].slice(0, 13) + ".", g[10], ".FF.FF..FF.FF."]);
 const DOG_WALK = DOG.slice(0, 11).concat([".F.FF....FF.F."]);
 const DOG_WAG = DOG.slice(0, 8).concat(["..FFFFFFFFFF.R", ".FFFFFFFFFFFF.", ".FFFFFFFFFFFF.", ".FF.FF..FF.FF."]);
 const DOG_SLEEP = [
@@ -93,9 +124,12 @@ function drawPixels(ctx, grid, pal, x, y, s) {
   }
 }
 
-function dogPalette(fur, asleep) {
+function dogPalette(fur, asleep, agent) {
+  if (agent === "codex") fur = "#9db4cf";
+  if (agent === "cursor") fur = "#f6f6f2";
   const f = asleep ? mixHex(fur, "#6f6c8f", 0.35) : fur;
-  return { F: f, D: mixHex(f, "#3a2a1a", 0.35), R: f, E: "#1e1e2e", N: "#3b2f2f", W: "#fff4e0", T: "#ff8fa3", "-": "#45475a" };
+  const dark = agent === "cursor" ? "#2a2a2a" : agent === "codex" ? "#4d5f78" : mixHex(f, "#3a2a1a", 0.35);
+  return { F: f, D: dark, S: "#2a2a2a", R: f, E: "#1e1e2e", N: "#3b2f2f", W: "#fff4e0", T: "#ff8fa3", "-": "#45475a" };
 }
 const HUMAN_PAL = { H: "#5b3a29", S: "#f6c9a4", E: "#1e1e2e", M: "#d4776b", C: "#f5a3c7", P: "#4c5a9c", B: "#2a2840" };
 
@@ -223,11 +257,11 @@ function renderCounts() {
   add("idle", `• ${c.idle} idle`);
 }
 
-function miniDog(fur, status) {
+function miniDog(fur, status, agent) {
   const cv = document.createElement("canvas");
   cv.width = 28; cv.height = 24;
   const ctx = cv.getContext("2d");
-  drawPixels(ctx, status === "offline" ? DOG_SLEEP : DOG, dogPalette(fur, status === "offline"), 0, 0, 2);
+  drawPixels(ctx, status === "offline" ? DOG_SLEEP : BREEDS[agent] || DOG, dogPalette(fur, status === "offline", agent), 0, 0, 2);
   return cv;
 }
 
@@ -275,7 +309,7 @@ function memberRow(p) {
   who.appendChild(el("div", "what", p.snippet || p.repo));
   const dot = el("span", "dot");
   dot.style.background = STATUS[p.status].color;
-  row.append(miniDog(p.fur, p.status), who, dot);
+  row.append(miniDog(p.fur, p.status, p.agent), who, dot);
   row.onclick = () => select(p.id, true);
   row.ondblclick = () => act("open", p.id);
   return row;
@@ -324,12 +358,12 @@ function renderCard() {
   if (p) {
     const st = STATUS[p.status];
     const row = el("div", "row");
-    row.appendChild(miniDog(p.fur, p.status));
+    row.appendChild(miniDog(p.fur, p.status, p.agent));
     row.appendChild(el("span", "title", p.title));
     const pill = el("span", "status", st.label);
     pill.style.background = st.color;
     row.append(pill, close);
-    const meta = [p.repo, p.branch, `${p.messages} msgs`, ago(p.updated)];
+    const meta = [{ claude: "Claude Code", codex: "Codex", cursor: "Cursor" }[p.agent] || "Claude Code", p.repo, p.branch, `${p.messages} msgs`, ago(p.updated)];
     if (p.prs.length) meta.push("PR #" + p.prs[p.prs.length - 1].split("/").pop());
     if (p.kennel) meta.push("🏠 " + p.kennel);
     const actions = el("div", "actions");
@@ -339,6 +373,11 @@ function renderCard() {
     btn("⧉ Clone", () => { const cwd = prompt(`Clone ${p.title} into which folder?`, p.cwd); if (cwd) act("clone", p.id, { cwd }); });
     btn("⇄ Merge", () => { const other = prompt(`Merge ${p.title} with which pup? (name or id)`); if (other) act("merge", p.id, { with: [other] }); });
     btn("✨ Distill", () => act("distill", p.id));
+    btn("↔ Convert", () => {
+      const to = prompt(`Continue ${p.title} in which agent? (claude, codex, cursor)`, p.agent === "claude" ? "codex" : "claude");
+      if (to) act("convert", p.id, { agent: to.trim().toLowerCase() });
+    });
+    btn("⬇ Export", () => act("export", p.id));
     btn("📜 Read", () => openTranscript(p.id));
     btn(p.starred ? "★ Unstar" : "☆ Star", () => act("star", p.id));
     btn(p.archived ? "↩ Restore" : "🗑 Archive", () => act("archive", p.id));
@@ -433,7 +472,7 @@ async function runSearch() {
     const p = it.pup;
     const r = el("div", "result" + (i === 0 ? " on" : ""));
     const t = el("div", "t");
-    t.append(miniDog(p.fur, p.status), el("span", "", p.title));
+    t.append(miniDog(p.fur, p.status, p.agent), el("span", "", p.title));
     const dot = el("span", "dot"); dot.style.background = STATUS[p.status].color; t.appendChild(dot);
     r.appendChild(t);
     r.appendChild(el("div", "m", [p.repo, p.branch, ago(p.updated)].filter(Boolean).join(" · ")));
@@ -845,7 +884,7 @@ function drawRoom(r) {
     ctx.fillRect(x0, y0, W, 8);
     if (style === "thick") { // bricks
       ctx.fillStyle = mixHex(r.color, "#2a2840", 0.6);
-      for (let y = 12; y < wallH; y += 10) for (let x = (y / 10) % 2 ? 0 : 12; x < W; x += 24) ctx.fillRect(x0 + x, y0 + y, 20, 2);
+      for (let y = 12; y < wallH; y += 10) for (let x = (y / 10) % 2 ? 0 : 12; x < W; x += 24) ctx.fillRect(x0 + x, y0 + y, Math.min(20, W - x), 2);
     } else if (style === "double") { // wainscot with a gold stripe
       ctx.fillStyle = "#e6c35c"; ctx.fillRect(x0, y0 + wallH - 18, W, 4);
     } else if (style === "rounded") { // wood panels
@@ -930,16 +969,17 @@ function drawPup(e) {
   }
   // Shadow.
   ctx.fillStyle = "#0002"; ctx.beginPath(); ctx.ellipse(px, py + 2, 18, 5, 0, 0, 7); ctx.fill();
-  let grid = DOG, dy = 0;
+  const breed = BREEDS[p.agent] || DOG;
+  let grid = breed, dy = 0;
   const frame = Math.floor(app.t * 6 + e.phase);
   if (p.status === "offline") grid = DOG_SLEEP;
-  else if (e.moving) grid = frame % 2 ? DOG_WALK : DOG;
-  else if (p.status === "working" || p.status === "done") grid = frame % 2 ? DOG_WAG : DOG;
+  else if (e.moving) grid = frame % 2 ? walkOf(breed) : breed;
+  else if (p.status === "working" || p.status === "done") grid = frame % 2 ? wagOf(breed) : breed;
   if (p.status === "waiting") dy = -Math.abs(Math.sin(app.t * 7 + e.phase)) * 8;
   const w = grid[0].length * s, h = grid.length * s;
   ctx.save();
   if (e.dir < 0) { ctx.translate(px * 2, 0); ctx.scale(-1, 1); }
-  drawPixels(ctx, grid, dogPalette(p.fur, p.status === "offline"), px - w / 2, py - h + dy, s);
+  drawPixels(ctx, grid, dogPalette(p.fur, p.status === "offline", p.agent), px - w / 2, py - h + dy, s);
   ctx.restore();
   if (selected) { ctx.strokeStyle = "#f5a3c7"; ctx.lineWidth = 3; ctx.beginPath(); ctx.ellipse(px, py + 2, 24, 8, 0, 0, 7); ctx.stroke(); }
   // Status bubble.

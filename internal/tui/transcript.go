@@ -123,7 +123,7 @@ func (m Model) updateTranscript(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (t *transcriptView) view(w, h int) string {
 	inner := w - 6
-	title := lipgloss.NewStyle().Foreground(furColor(t.pup.ID, t.pup.Color)).Bold(true).Render("📜 " + t.pup.Title())
+	title := lipgloss.NewStyle().Foreground(furColorFor(t.pup.ID, t.pup.Color, t.pup.AgentKind())).Bold(true).Render("📜 " + t.pup.Title())
 	info := sDim.Render("  " + t.pup.Repo() + " · " + t.pup.ID)
 	if len(t.matches) > 0 {
 		info += lipgloss.NewStyle().Foreground(cYellow).Render("  match " + itoa(t.cur+1) + "/" + itoa(len(t.matches)))
@@ -148,7 +148,7 @@ func (t *transcriptView) view(w, h int) string {
 			label = lipgloss.NewStyle().Foreground(cBase).Background(cPink).Bold(true).Render(" you ")
 			body = lipgloss.NewStyle().Foreground(cText)
 		case claude.RoleAssistant:
-			label = lipgloss.NewStyle().Foreground(cBase).Background(furColor(t.pup.ID, t.pup.Color)).Bold(true).Render(" ▼•ᴥ•▼ ")
+			label = lipgloss.NewStyle().Foreground(cBase).Background(furColorFor(t.pup.ID, t.pup.Color, t.pup.AgentKind())).Bold(true).Render(" ▼•ᴥ•▼ ")
 			body = lipgloss.NewStyle().Foreground(cSub)
 		case claude.RoleTool:
 			label = sDim.Render(" ⚙ ")

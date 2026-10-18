@@ -516,3 +516,34 @@ func (m *Model) startMerged(ids []string, name string) tea.Cmd {
 		return openedMsg{text: "⇄ " + text, err: err}
 	}
 }
+
+func (m *Model) convertModal(p *pack.Pup) *modal {
+	var choices []choice
+	for _, ag := range []string{"claude", "codex", "cursor"} {
+		if ag == p.AgentKind() {
+			continue
+		}
+		detail := map[string]string{"claude": "new Claude Code session with a handoff brief", "codex": "new Codex session with a handoff brief",
+			"cursor": "opens Cursor on the folder with the handoff document"}[ag]
+		choices = append(choices, choice{label: "↔ " + app.AgentNames[ag], detail: detail, value: ag})
+	}
+	return pickerModal("↔ continue "+p.Title()+" in…", choices, func(m *Model, _, agent string) tea.Cmd {
+		t, path, err := m.app.ConvertTarget(p.ID, agent, "")
+		if err != nil {
+			return toast(err.Error(), true)
+		}
+		if err := m.app.CheckCwd(t.Cwd); err != nil {
+			return toast(err.Error(), true)
+		}
+		if opener.Resolve(m.app.Cfg.Opener) == opener.Inline && agent != "cursor" {
+			return tea.ExecProcess(opener.InlineCmd(t), func(err error) tea.Msg {
+				return openedMsg{text: "back in the kennel 🐾", err: err}
+			})
+		}
+		o := m.app.Opener()
+		return func() tea.Msg {
+			text, err := o.Open(t)
+			return openedMsg{text: "↔ " + text + " · handoff " + path, err: err}
+		}
+	})
+}

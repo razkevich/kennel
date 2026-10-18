@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	zone "github.com/lrstanley/bubblezone"
+	"github.com/razkevich/kennel/internal/app"
 	"github.com/razkevich/kennel/internal/claude"
 	"github.com/razkevich/kennel/internal/pack"
 	"github.com/razkevich/kennel/internal/search"
@@ -157,6 +158,9 @@ func (m Model) row(r search.Result, selected bool, w int) string {
 	if p.Remote != "" {
 		badges += " 📡"
 	}
+	if a := p.AgentKind(); a != "claude" {
+		badges += lipgloss.NewStyle().Foreground(cSky).Render(" " + a)
+	}
 	if len(p.Crons) > 0 {
 		badges += " ⏰"
 	}
@@ -267,7 +271,7 @@ func (m Model) preview(w, h int) string {
 	now := m.app.Now()
 	inner := w - 6
 	sprite := pupSprite(p, m.frame, false)
-	title := lipgloss.NewStyle().Foreground(furColor(p.ID, p.Color)).Bold(true).Render(truncate(p.Title(), inner-14))
+	title := lipgloss.NewStyle().Foreground(furColorFor(p.ID, p.Color, p.AgentKind())).Bold(true).Render(truncate(p.Title(), inner-14))
 	st := lipgloss.NewStyle().Foreground(statusColor(p.Status)).Render("● " + statusLabel(p.Status))
 	if p.Pane != "" {
 		st += sDim.Render("  herdr " + p.Pane)
@@ -288,6 +292,7 @@ func (m Model) preview(w, h int) string {
 			details = append(details, s)
 		}
 	}
+	add(kv("agent", app.AgentNames[p.AgentKind()]))
 	add(kv("project", shortPath(p.Cwd)))
 	if p.Worktree != "" {
 		add(kv("worktree", p.Worktree))

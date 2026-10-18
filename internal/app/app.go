@@ -14,6 +14,7 @@ import (
 
 	"github.com/razkevich/kennel/internal/ask"
 	"github.com/razkevich/kennel/internal/claude"
+	"github.com/razkevich/kennel/internal/cursor"
 	"github.com/razkevich/kennel/internal/demo"
 	"github.com/razkevich/kennel/internal/indexer"
 	"github.com/razkevich/kennel/internal/opener"
@@ -25,6 +26,10 @@ import (
 
 type Config struct {
 	ClaudeDir string
+	// CodexDir is Codex CLI's home (~/.codex); empty disables Codex.
+	CodexDir string
+	// CursorDir is Cursor's User folder; empty disables Cursor.
+	CursorDir string
 	Home      string
 	Opener    opener.Kind
 	Runner    opener.Runner
@@ -56,6 +61,8 @@ type App struct {
 func DefaultConfig() Config {
 	cfg := Config{
 		ClaudeDir: claude.Dir(),
+		CodexDir:  claude.CodexDir(),
+		CursorDir: cursor.Dir(),
 		Home:      store.Home(),
 		Opener:    opener.Kind(os.Getenv("KENNEL_OPENER")),
 		Runner:    opener.ExecRunner{},
@@ -82,13 +89,14 @@ func New(cfg Config) (*App, error) {
 		if _, err := os.Stat(filepath.Join(cfg.ClaudeDir, demo.Marker)); err == nil {
 			cfg.Alive = func(int) bool { return true }
 			cfg.Demo = true
+			cfg.CodexDir, cfg.CursorDir = demo.CodexDir(cfg.ClaudeDir), demo.CursorDir(cfg.ClaudeDir)
 		}
 	}
 	st, err := store.Open(filepath.Join(cfg.Home, "kennel.db"))
 	if err != nil {
 		return nil, err
 	}
-	a := &App{Cfg: cfg, Store: st, Indexer: &indexer.Indexer{Store: st, ClaudeDir: cfg.ClaudeDir}}
+	a := &App{Cfg: cfg, Store: st, Indexer: &indexer.Indexer{Store: st, ClaudeDir: cfg.ClaudeDir, CodexDir: cfg.CodexDir, CursorDir: cfg.CursorDir}}
 	if cfg.Demo {
 		if err := a.seedDemoThings(); err != nil {
 			st.Close()
@@ -453,7 +461,7 @@ func (a *App) Target(p *pack.Pup, fork, remote bool) opener.Target {
 	if _, err := os.Stat(cwd); err != nil && p.LastCwd != "" {
 		cwd = p.LastCwd
 	}
-	return opener.Target{SessionID: p.ID, Cwd: cwd, Title: p.Title(), Fork: fork, Pane: p.Pane, Live: p.Status.Live(), Remote: remote}
+	return opener.Target{Agent: p.AgentKind(), SessionID: p.ID, Cwd: cwd, Title: p.Title(), Fork: fork, Pane: p.Pane, Live: p.Status.Live(), Remote: remote}
 }
 
 func (a *App) Opener() opener.Opener {

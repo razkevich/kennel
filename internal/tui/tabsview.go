@@ -221,7 +221,7 @@ func (m Model) artView(w, h int) string {
 		}
 		title := orDefault(a.Title, a.URL)
 		l1 := bar + star + "🎨 " + sText.Bold(true).Render(truncate(title, inner/2)) + sDim.Render("  from ") +
-			lipgloss.NewStyle().Foreground(furColor(a.Pup.ID, a.Pup.Color)).Render(a.Pup.Title()) + sDim.Render("  "+ago(now, a.At))
+			lipgloss.NewStyle().Foreground(furColorFor(a.Pup.ID, a.Pup.Color, a.Pup.AgentKind())).Render(a.Pup.Title()) + sDim.Render("  "+ago(now, a.At))
 		l2 := "       " + sDim.Render(truncate(a.URL, inner-8))
 		block := l1 + "\n" + l2
 		if sel {

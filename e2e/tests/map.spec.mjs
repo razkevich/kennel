@@ -153,3 +153,20 @@ test("renders without console errors and draws the map", async ({ page }) => {
   expect(painted).toBeGreaterThan(3);
   expect(errors).toEqual([]);
 });
+
+test("codex and cursor pups: breeds, convert and export", async ({ page }) => {
+  await open(page);
+  const pups = await page.evaluate(() => Object.values(window.kennel.app.state.pups).map((p) => p.agent));
+  expect(pups).toEqual(expect.arrayContaining(["claude", "codex", "cursor"]));
+  await page.keyboard.press("/");
+  await page.keyboard.type("agent:codex csv");
+  await expect(page.locator("#results .result").first()).toContainText("speed up the CSV export");
+  await page.keyboard.press("Enter");
+  const card = page.locator("#card");
+  await expect(card).toContainText("Codex");
+  page.once("dialog", (d) => d.accept("claude"));
+  await card.getByRole("button", { name: "↔ Convert" }).click();
+  await expect(page.locator("#toast")).toContainText("claude -n");
+  await card.getByRole("button", { name: "⬇ Export" }).click();
+  await expect(page.locator("#toast")).toContainText("exported to");
+});

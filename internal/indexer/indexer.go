@@ -4,6 +4,7 @@ package indexer
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"sync"
 
 	"github.com/razkevich/kennel/internal/claude"
+	"github.com/razkevich/kennel/internal/cursor"
 	"github.com/razkevich/kennel/internal/store"
 )
 
@@ -24,6 +26,10 @@ type Progress struct {
 type Indexer struct {
 	Store     *store.Store
 	ClaudeDir string
+	// CodexDir, when set, also indexes Codex CLI rollouts.
+	CodexDir string
+	// CursorDir, when set, also indexes Cursor composer chats.
+	CursorDir string
 }
 
 type job struct {
@@ -48,6 +54,9 @@ func (ix *Indexer) Sync(ctx context.Context, progress func(Progress)) (Progress,
 	if err != nil {
 		return Progress{}, err
 	}
+	if ix.CodexDir != "" {
+		files = append(files, claude.CodexFiles(ix.CodexDir)...)
+	}
 	states, err := ix.Store.FileStates()
 	if err != nil {
 		return Progress{}, err
@@ -67,14 +76,15 @@ func (ix *Indexer) Sync(ctx context.Context, progress func(Progress)) (Progress,
 		jobs = append(jobs, job{path: f, info: info, prev: prev, known: known})
 	}
 	for path := range states {
-		if !seen[path] {
+		if !seen[path] && !strings.HasPrefix(path, "cursor:") {
 			_ = ix.Store.RemovePath(path)
 		}
 	}
+	cursorChanged := ix.syncCursor(states)
 	// Big files first so the pool stays busy until the end.
 	sortBySizeDesc(jobs)
 
-	p := Progress{Total: len(jobs)}
+	p := Progress{Total: len(jobs), Changed: cursorChanged}
 	if len(jobs) == 0 {
 		return p, nil
 	}
@@ -167,12 +177,20 @@ func parse(j job) result {
 	sess.Path = j.path
 	sess.Project = filepath.Base(filepath.Dir(j.path))
 	p := claude.NewParser(sess, seq)
+	if strings.HasPrefix(filepath.Base(j.path), "rollout-") {
+		p.Codex = true
+		sess.Agent = "codex"
+		sess.Project = "codex"
+	}
 	n, err := p.Feed(f)
 	if err != nil {
 		return result{err: err}
 	}
 	if sess.ID == "" {
 		sess.ID = strings.TrimSuffix(filepath.Base(j.path), ".jsonl")
+		if p.Codex && len(sess.ID) > 36 {
+			sess.ID = sess.ID[len(sess.ID)-36:]
+		}
 	}
 	return result{
 		sess:   sess,
@@ -184,4 +202,48 @@ func parse(j job) result {
 
 func sortBySizeDesc(js []job) {
 	sort.Slice(js, func(a, b int) bool { return js[a].info.Size() > js[b].info.Size() })
+}
+
+// syncCursor indexes Cursor composer chats whose lastUpdatedAt moved. Cursor
+// isn't file-per-session, so the database mtime gates the (cheap) scan.
+func (ix *Indexer) syncCursor(states map[string]store.FileState) int {
+	if ix.CursorDir == "" {
+		return 0
+	}
+	db := cursor.GlobalDB(ix.CursorDir)
+	info, err := os.Stat(db)
+	if err != nil {
+		return 0
+	}
+	mt := fmt.Sprint(info.ModTime().UnixNano())
+	if ix.Store.Get("cursor_mtime") == mt {
+		return 0
+	}
+	since := map[string]int64{}
+	for path, fs := range states {
+		if id, ok := strings.CutPrefix(path, "cursor:"); ok {
+			since[id] = fs.Mtime
+		}
+	}
+	convs, all, err := cursor.Read(ix.CursorDir, since)
+	if err != nil {
+		return 0
+	}
+	var batch []store.SaveItem
+	for _, c := range convs {
+		ms := c.Session.Updated.UnixMilli()
+		batch = append(batch, store.SaveItem{Session: c.Session, File: store.FileState{Size: ms, Mtime: ms, Offset: ms, Seq: len(c.Chunks)}, Chunks: c.Chunks, Reset: true})
+	}
+	if len(batch) > 0 {
+		if err := ix.Store.SaveBatch(batch); err != nil {
+			return 0
+		}
+	}
+	for path := range states {
+		if id, ok := strings.CutPrefix(path, "cursor:"); ok && !all[id] {
+			_ = ix.Store.RemovePath(path)
+		}
+	}
+	_ = ix.Store.Set("cursor_mtime", mt)
+	return len(batch)
 }

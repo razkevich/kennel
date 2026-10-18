@@ -452,3 +452,48 @@ func TestCloneMergeDistill(t *testing.T) {
 		t.Fatalf("distill:\n%s", h.screen())
 	}
 }
+
+func TestOtherAgents(t *testing.T) {
+	h := newHarness(t, opener.Print)
+	h.key("2", "/")
+	h.typeText("agent:codex")
+	got := map[string]bool{}
+	for _, r := range h.model().results {
+		got[r.Pup.AgentKind()] = true
+	}
+	if len(h.model().results) != 2 || !got["codex"] || len(got) != 1 {
+		t.Fatalf("agent filter: %d results %v", len(h.model().results), got)
+	}
+	h.contains("▲-ᴥ-▲", "codex")
+	h.key("enter", "enter")
+	m := h.model()
+	codex := m.selected()
+	if !strings.Contains(h.screen(), "codex resume "+codex.ID) {
+		t.Fatalf("codex resume:\n%s", h.screen())
+	}
+
+	h.key("c")
+	h.contains("continue", "Claude Code", "Cursor")
+	h.typeText("claude")
+	h.key("enter")
+	s := h.screen()
+	if !strings.Contains(s, "claude -n") || !strings.Contains(s, "continuing work that started in Codex") {
+		t.Fatalf("convert to claude:\n%s", s)
+	}
+	path, _ := h.app.Export(codex)
+	md := readFile(t, path)
+	for _, want := range []string{"# " + codex.Title(), "agent: Codex", "### 🧑 You", "### 🤖 Codex", "> ⚙ `shell:"} {
+		if !strings.Contains(md, want) {
+			t.Errorf("markdown missing %q:\n%s", want, md)
+		}
+	}
+
+	h.key("esc", "/")
+	h.typeText("agent:cursor polish")
+	h.key("enter")
+	h.contains("◖-ᴥ-◗")
+	h.key("enter")
+	if !strings.Contains(h.screen(), "open -a Cursor /Users/demo/code/atlas") && !strings.Contains(h.screen(), "cursor /Users/demo/code/atlas") {
+		t.Fatalf("cursor open:\n%s", h.screen())
+	}
+}

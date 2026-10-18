@@ -53,9 +53,27 @@ func bubble(s claude.Status, frame int) string {
 	return [...]string{" z ", " zZ", "  Z", "   "}[(frame/2)%4]
 }
 
+// ears tell agents apart at a glance: Claude corgis, Codex huskies, Cursor dalmatians.
+func ears(agent string) (string, string) {
+	switch agent {
+	case "codex":
+		return "▲", "▲"
+	case "cursor":
+		return "◖", "◗"
+	}
+	return "▼", "▼"
+}
+
+func belly(agent string) string {
+	if agent == "cursor" {
+		return " ▕▚▞▏"
+	}
+	return " ▕▁▁▏"
+}
+
 // pupSprite draws a 4-line cartoon pup: speech bubble, head, body, name tag.
 func pupSprite(p *pack.Pup, frame int, selected bool) string {
-	fur := furColor(p.ID, p.Color)
+	fur := furColorFor(p.ID, p.Color, p.AgentKind())
 	st := statusColor(p.Status)
 	dim := !p.Status.Live()
 
@@ -66,11 +84,9 @@ func pupSprite(p *pack.Pup, frame int, selected bool) string {
 		faceStyle = faceStyle.Foreground(cDim)
 	}
 	bub := lipgloss.NewStyle().Foreground(st).Bold(true).Render(bubble(p.Status, frame))
-	head := furStyle.Render("▼") + faceStyle.Render(face(p.Status, frame)) + furStyle.Render("▼")
-	body := furStyle.Render(" ▕▁▁▏") + lipgloss.NewStyle().Foreground(fur).Render(tail(p.Status, frame))
-	if p.Status == claude.Working && frame%2 == 1 {
-		body = furStyle.Render(" ▕▁▁▏") + lipgloss.NewStyle().Foreground(fur).Render(tail(p.Status, frame))
-	}
+	l, r := ears(p.AgentKind())
+	head := furStyle.Render(l) + faceStyle.Render(face(p.Status, frame)) + furStyle.Render(r)
+	body := furStyle.Render(belly(p.AgentKind())) + lipgloss.NewStyle().Foreground(fur).Render(tail(p.Status, frame))
 
 	badge := ""
 	switch {
@@ -107,13 +123,14 @@ func badgeOr(b string) string {
 
 // miniFace is the one-cell-row status marker used in lists.
 func miniFace(p *pack.Pup, frame int) string {
-	fur := furColor(p.ID, p.Color)
+	fur := furColorFor(p.ID, p.Color, p.AgentKind())
 	fs := lipgloss.NewStyle().Foreground(fur)
 	inner := lipgloss.NewStyle().Foreground(statusColor(p.Status)).Bold(p.Status.Live())
 	if !p.Status.Live() {
 		fs = fs.Faint(true)
 	}
-	return fs.Render("▼") + inner.Render(face(p.Status, frame)) + fs.Render("▼")
+	l, r := ears(p.AgentKind())
+	return fs.Render(l) + inner.Render(face(p.Status, frame)) + fs.Render(r)
 }
 
 func truncate(s string, w int) string {

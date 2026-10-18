@@ -21,6 +21,7 @@ type Query struct {
 	Repo    string
 	Kennel  string
 	Branch  string
+	Agent   string
 	HasPR   bool
 	Since   time.Duration
 	SinceAt time.Time
@@ -46,6 +47,9 @@ func Parse(raw string) Query {
 				continue
 			case "branch", "b":
 				q.Branch = strings.ToLower(val)
+				continue
+			case "agent":
+				q.Agent = strings.ToLower(val)
 				continue
 			case "has":
 				if strings.EqualFold(val, "pr") {
@@ -97,7 +101,7 @@ func splitFields(s string) []string {
 func (q Query) Text() string { return strings.Join(q.Terms, " ") }
 
 func (q Query) Empty() bool {
-	return len(q.Terms) == 0 && len(q.Is) == 0 && q.Repo == "" && q.Kennel == "" && q.Branch == "" && !q.HasPR && q.Since == 0 && q.SinceAt.IsZero()
+	return len(q.Terms) == 0 && len(q.Is) == 0 && q.Repo == "" && q.Kennel == "" && q.Branch == "" && q.Agent == "" && !q.HasPR && q.Since == 0 && q.SinceAt.IsZero()
 }
 
 // Filter applies the non-text constraints.
@@ -144,6 +148,9 @@ func (q Query) Filter(p *pack.Pup, now time.Time) bool {
 		return false
 	}
 	if q.HasPR && len(p.PRs) == 0 {
+		return false
+	}
+	if q.Agent != "" && p.AgentKind() != q.Agent {
 		return false
 	}
 	if q.Since > 0 && now.Sub(p.Updated) > q.Since {

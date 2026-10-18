@@ -48,7 +48,7 @@ func HerdrAgents(r Runner) []HerdrAgent {
 	}
 	var agents []HerdrAgent
 	for _, a := range resp.Result.Agents {
-		if a.Agent != "claude" {
+		if a.Agent != "claude" && a.Agent != "codex" && a.Agent != "cursor" {
 			continue
 		}
 		h := HerdrAgent{Pane: a.PaneID, Title: a.Title, Cwd: a.Cwd, Focused: a.Focused}

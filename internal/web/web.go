@@ -217,6 +217,7 @@ func fail(w http.ResponseWriter, err error, code int) {
 
 type PupJSON struct {
 	ID          string   `json:"id"`
+	Agent       string   `json:"agent"`
 	Title       string   `json:"title"`
 	Status      string   `json:"status"`
 	Repo        string   `json:"repo"`
@@ -284,7 +285,7 @@ type StateJSON struct {
 var statusNames = map[claude.Status]string{claude.Offline: "offline", claude.Idle: "idle", claude.Done: "done", claude.Working: "working", claude.Waiting: "waiting"}
 
 func pupJSON(p *pack.Pup) PupJSON {
-	j := PupJSON{ID: p.ID, Title: p.Title(), Status: statusNames[p.Status], Repo: p.Repo(), Branch: p.Branch(), Snippet: p.Snippet(),
+	j := PupJSON{ID: p.ID, Agent: p.AgentKind(), Title: p.Title(), Status: statusNames[p.Status], Repo: p.Repo(), Branch: p.Branch(), Snippet: p.Snippet(),
 		FirstPrompt: p.FirstPrompt, Recap: p.Recap, Updated: p.Updated.UnixMilli(), Started: p.Started.UnixMilli(), Fur: furColor(p.ID, p.Color),
 		Starred: p.Meta.Starred, Archived: p.Meta.Archived, Remote: p.Remote != "", Crons: len(p.Crons), PRs: p.PRs, Artifacts: len(p.Artifacts),
 		Unread: p.Unread(), Messages: p.NUser, Cost: p.Cost, Pane: p.Pane, Cwd: p.Cwd, Note: p.Meta.Note}
@@ -476,6 +477,7 @@ func (s *Server) handlePupAction(w http.ResponseWriter, r *http.Request) {
 		Text  string   `json:"text"`
 		Cwd   string   `json:"cwd"`
 		With  []string `json:"with"`
+		Agent string   `json:"agent"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	var msg string
@@ -511,6 +513,21 @@ func (s *Server) handlePupAction(w http.ResponseWriter, r *http.Request) {
 				if opened, err = s.App.Opener().Open(s.App.Target(s.App.Pup(id), false, false)); err == nil {
 					msg += " · " + opened
 				}
+			}
+		}
+	case "export":
+		msg, err = s.App.Export(p)
+		if err == nil {
+			msg = "⬇ exported to " + msg
+		}
+	case "convert":
+		var t opener.Target
+		var path string
+		if t, path, err = s.App.ConvertTarget(p.ID, body.Agent, ""); err == nil {
+			if opener.Resolve(s.App.Cfg.Opener) == opener.Inline && t.Agent != "cursor" {
+				msg = t.ShellCommand()
+			} else if msg, err = s.App.Opener().Open(t); err == nil {
+				msg = "↔ " + msg + " · handoff " + path
 			}
 		}
 	case "merge", "distill":

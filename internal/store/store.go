@@ -15,7 +15,7 @@ import (
 
 // indexVersion bumps whenever parsing changes; index tables are then rebuilt
 // while user metadata (kennels, pup_meta) is kept.
-const indexVersion = "5"
+const indexVersion = "6"
 
 type Store struct {
 	DB *sql.DB
@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS pup_meta(
 const indexSchema = `
 CREATE TABLE IF NOT EXISTS sessions(
 	id TEXT PRIMARY KEY,
+	agent TEXT,
 	project TEXT, path TEXT UNIQUE, cwd TEXT, last_cwd TEXT,
 	custom_title TEXT, agent_name TEXT, ai_title TEXT,
 	first_prompt TEXT, last_prompt TEXT, recap TEXT,
@@ -144,7 +145,7 @@ func (s *Store) FileStates() (map[string]FileState, error) {
 	return out, rows.Err()
 }
 
-const sessionCols = `id, project, path, cwd, last_cwd, custom_title, agent_name, ai_title,
+const sessionCols = `id, agent, project, path, cwd, last_cwd, custom_title, agent_name, ai_title,
 	first_prompt, last_prompt, recap, color, continued_in, worktree, version, remote,
 	branches, prs, artifacts, crons, models, started, updated, n_user, n_asst, n_tools, cost`
 
@@ -152,7 +153,7 @@ func scanSession(r interface{ Scan(...any) error }, extra ...any) (*claude.Sessi
 	var s claude.Session
 	var branches, prs, artifacts, crons, models string
 	var started, updated int64
-	dest := []any{&s.ID, &s.Project, &s.Path, &s.Cwd, &s.LastCwd, &s.CustomTitle, &s.AgentName, &s.AITitle,
+	dest := []any{&s.ID, &s.Agent, &s.Project, &s.Path, &s.Cwd, &s.LastCwd, &s.CustomTitle, &s.AgentName, &s.AITitle,
 		&s.FirstPrompt, &s.LastPrompt, &s.Recap, &s.Color, &s.ContinuedIn, &s.Worktree, &s.Version, &s.Remote,
 		&branches, &prs, &artifacts, &crons, &models, &started, &updated, &s.NUser, &s.NAssistant, &s.NTools, &s.Cost}
 	if err := r.Scan(append(dest, extra...)...); err != nil {
@@ -233,8 +234,8 @@ func (s *Store) SaveBatch(items []SaveItem) error {
 			}
 		}
 		_, err = tx.Exec(`INSERT INTO sessions(`+sessionCols+`, file_size, file_mtime, file_offset, chunk_seq)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-		ON CONFLICT(id) DO UPDATE SET project=excluded.project, path=excluded.path, cwd=excluded.cwd, last_cwd=excluded.last_cwd,
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(id) DO UPDATE SET agent=excluded.agent, project=excluded.project, path=excluded.path, cwd=excluded.cwd, last_cwd=excluded.last_cwd,
 		custom_title=excluded.custom_title, agent_name=excluded.agent_name, ai_title=excluded.ai_title,
 		first_prompt=excluded.first_prompt, last_prompt=excluded.last_prompt, recap=excluded.recap, color=excluded.color,
 		continued_in=excluded.continued_in, worktree=excluded.worktree, version=excluded.version, remote=excluded.remote,
@@ -242,7 +243,7 @@ func (s *Store) SaveBatch(items []SaveItem) error {
 		started=excluded.started, updated=excluded.updated, n_user=excluded.n_user, n_asst=excluded.n_asst,
 		n_tools=excluded.n_tools, cost=excluded.cost, file_size=excluded.file_size, file_mtime=excluded.file_mtime,
 		file_offset=excluded.file_offset, chunk_seq=excluded.chunk_seq`,
-			sess.ID, sess.Project, sess.Path, sess.Cwd, sess.LastCwd, sess.CustomTitle, sess.AgentName, sess.AITitle,
+			sess.ID, sess.Agent, sess.Project, sess.Path, sess.Cwd, sess.LastCwd, sess.CustomTitle, sess.AgentName, sess.AITitle,
 			sess.FirstPrompt, sess.LastPrompt, sess.Recap, sess.Color, sess.ContinuedIn, sess.Worktree, sess.Version, sess.Remote,
 			js(sess.Branches), js(sess.PRs), jsonOf(sess.Artifacts), jsonOf(sess.Crons), js(sess.Models), ms(sess.Started), ms(sess.Updated),
 			sess.NUser, sess.NAssistant, sess.NTools, sess.Cost, fs.Size, fs.Mtime, fs.Offset, fs.Seq)

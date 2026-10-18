@@ -12,6 +12,14 @@ test("web screenshots", async ({ page }) => {
   await page.waitForTimeout(1200);
   await page.screenshot({ path: out("web-map") });
 
+  await page.locator("#floors button", { hasText: "Projects" }).click();
+  await page.waitForFunction(() => window.kennel.app.state.floor === 1);
+  await page.waitForTimeout(1200);
+  await page.screenshot({ path: out("web-projects") });
+  await page.locator("#floors button", { hasText: "Campus" }).click();
+  await page.waitForFunction(() => window.kennel.app.state.floor === 0);
+  await page.waitForTimeout(800);
+
   const id = await page.evaluate(() => Object.values(window.kennel.app.state.pups).find((p) => p.title === "FLAKY-CI").id);
   const pos = await page.evaluate((i) => window.kennel.screenPos(i), id);
   await page.mouse.click(pos.x, pos.y);

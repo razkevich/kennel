@@ -39,6 +39,8 @@ usage:
   kennel clone <ref> [-to dir] copy a session (optionally into another project) and resume it
   kennel merge <ref> <ref>... start a new pup seeded with a brief of several sessions (-name, -cwd)
   kennel distill <ref>        start a fresh pup from a brief of one long session
+  kennel convert <ref> -to codex|claude|cursor   continue a session in another agent
+  kennel export <ref> [-o file]                  conversation as Markdown
   kennel index                (re)index transcripts now     (-rebuild)
   kennel demo [dir]           write synthetic sessions to dir and print env to use them
   kennel version
@@ -129,6 +131,10 @@ func run(args []string) error {
 		return runClone(cfg, args)
 	case "merge", "distill":
 		return runMerge(cfg, args)
+	case "convert":
+		return runConvert(cfg, args)
+	case "export":
+		return runExport(cfg, args)
 	}
 	return fmt.Errorf("unknown command %q\n\n%s", cmd, usage)
 }
@@ -167,7 +173,7 @@ func runTUI(cfg app.Config, demoMode bool) error {
 func runIndex(cfg app.Config, args []string) error {
 	fs := flag.NewFlagSet("index", flag.ExitOnError)
 	rebuild := fs.Bool("rebuild", false, "drop the index and parse everything again")
-	fs.Parse(args)
+	parseArgs(fs, args)
 	if *rebuild {
 		if err := os.Remove(filepath.Join(cfg.Home, "kennel.db")); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
@@ -192,13 +198,13 @@ func runSearch(cfg app.Config, cmd string, args []string) error {
 	fs := flag.NewFlagSet(cmd, flag.ExitOnError)
 	asJSON := fs.Bool("json", false, "print JSON")
 	limit := fs.Int("n", 20, "max results")
-	fs.Parse(args)
+	pos := parseArgs(fs, args)
 	a, err := openApp(cfg, true)
 	if err != nil {
 		return err
 	}
 	defer a.Close()
-	res, err := a.Search(strings.Join(fs.Args(), " "), cmd == "search")
+	res, err := a.Search(strings.Join(pos, " "), cmd == "search")
 	if err != nil {
 		return err
 	}
@@ -207,6 +213,7 @@ func runSearch(cfg app.Config, cmd string, args []string) error {
 	}
 	type out struct {
 		ID      string   `json:"id"`
+		Agent   string   `json:"agent"`
 		Title   string   `json:"title"`
 		Status  string   `json:"status"`
 		Repo    string   `json:"repo"`
@@ -219,7 +226,7 @@ func runSearch(cfg app.Config, cmd string, args []string) error {
 	var rows []out
 	for _, r := range res {
 		p := r.Pup
-		o := out{ID: p.ID, Title: p.Title(), Status: p.Status.String(), Repo: p.Repo(), Branch: p.Branch(),
+		o := out{ID: p.ID, Agent: p.AgentKind(), Title: p.Title(), Status: p.Status.String(), Repo: p.Repo(), Branch: p.Branch(),
 			Updated: p.Updated.Format(time.RFC3339), Cwd: p.Cwd, Resume: a.Target(p, false, false).ShellCommand()}
 		for _, h := range r.Hits {
 			o.Matches = append(o.Matches, strings.NewReplacer("\x01", "", "\x02", "").Replace(h.Snippet))
@@ -232,7 +239,7 @@ func runSearch(cfg app.Config, cmd string, args []string) error {
 		return enc.Encode(rows)
 	}
 	for _, o := range rows {
-		fmt.Printf("%s  %-28s  %-9s  %-12s  %s\n", o.ID[:8], trunc(o.Title, 28), o.Status, trunc(o.Repo, 12), o.Updated[:10])
+		fmt.Printf("%s  %-28s  %-6s  %-9s  %-12s  %s\n", o.ID[:8], trunc(o.Title, 28), o.Agent, o.Status, trunc(o.Repo, 12), o.Updated[:10])
 		for _, mt := range o.Matches {
 			fmt.Printf("          › %s\n", trunc(mt, 100))
 		}
@@ -295,8 +302,8 @@ func runOpen(cfg app.Config, args []string) error {
 	fork := fs.Bool("fork", false, "fork into a new session")
 	remote := fs.Bool("remote", false, "enable remote control")
 	kind := fs.String("opener", "", "herdr | ghostty | inline | print")
-	fs.Parse(args)
-	if fs.NArg() == 0 {
+	pos := parseArgs(fs, args)
+	if len(pos) == 0 {
 		return errors.New("usage: kennel open <id|name>")
 	}
 	if *kind != "" {
@@ -307,9 +314,9 @@ func runOpen(cfg app.Config, args []string) error {
 		return err
 	}
 	defer a.Close()
-	p := a.Find(strings.Join(fs.Args(), " "))
+	p := a.Find(strings.Join(pos, " "))
 	if p == nil {
-		return fmt.Errorf("no session matches %q", strings.Join(fs.Args(), " "))
+		return fmt.Errorf("no session matches %q", strings.Join(pos, " "))
 	}
 	t := a.Target(p, *fork, *remote)
 	if opener.Resolve(cfg.Opener) == opener.Inline {
@@ -330,7 +337,7 @@ func runMap(cfg app.Config, args []string) error {
 	port := fs.Int("port", 7317, "port to listen on (localhost only)")
 	noOpen := fs.Bool("no-open", false, "don't open the browser")
 	token := fs.String("token", "", "fixed API token (default: random per run)")
-	fs.Parse(args)
+	parseArgs(fs, args)
 	a, err := openApp(cfg, true)
 	if err != nil {
 		return err
@@ -344,7 +351,7 @@ func runMap(cfg app.Config, args []string) error {
 func runDigest(cfg app.Config, args []string) error {
 	fs := flag.NewFlagSet("digest", flag.ExitOnError)
 	since := fs.Duration("since", 24*time.Hour, "window to summarize")
-	fs.Parse(args)
+	parseArgs(fs, args)
 	a, err := openApp(cfg, true)
 	if err != nil {
 		return err
@@ -366,8 +373,8 @@ func runClone(cfg app.Config, args []string) error {
 	fs := flag.NewFlagSet("clone", flag.ExitOnError)
 	to := fs.String("to", "", "project folder for the copy (default: same project)")
 	name := fs.String("name", "", "title for the copy")
-	fs.Parse(args)
-	if fs.NArg() == 0 {
+	pos := parseArgs(fs, args)
+	if len(pos) == 0 {
 		return errors.New("usage: kennel clone <id|name> [-to dir]")
 	}
 	a, err := openApp(cfg, true)
@@ -375,9 +382,9 @@ func runClone(cfg app.Config, args []string) error {
 		return err
 	}
 	defer a.Close()
-	p := a.Find(strings.Join(fs.Args(), " "))
+	p := a.Find(strings.Join(pos, " "))
 	if p == nil {
-		return fmt.Errorf("no session matches %q", strings.Join(fs.Args(), " "))
+		return fmt.Errorf("no session matches %q", strings.Join(pos, " "))
 	}
 	id, err := a.Clone(p.ID, app.ExpandHome(*to), *name)
 	if err != nil {
@@ -393,8 +400,8 @@ func runMerge(cfg app.Config, args []string) error {
 	name := fs.String("name", "", "title for the new pup")
 	cwd := fs.String("cwd", "", "folder to start in (default: the first session's)")
 	kind := fs.String("opener", "", "herdr | ghostty | inline | print")
-	fs.Parse(args)
-	if fs.NArg() == 0 {
+	pos := parseArgs(fs, args)
+	if len(pos) == 0 {
 		return errors.New("usage: kennel merge <ref> <ref>... | kennel distill <ref>")
 	}
 	if *kind != "" {
@@ -406,7 +413,7 @@ func runMerge(cfg app.Config, args []string) error {
 	}
 	defer a.Close()
 	var ids []string
-	for _, ref := range fs.Args() {
+	for _, ref := range pos {
 		p := a.Find(ref)
 		if p == nil {
 			return fmt.Errorf("no session matches %q", ref)
@@ -428,4 +435,96 @@ func runMerge(cfg app.Config, args []string) error {
 	}
 	fmt.Println(msg)
 	return nil
+}
+
+func runConvert(cfg app.Config, args []string) error {
+	fs := flag.NewFlagSet("convert", flag.ExitOnError)
+	to := fs.String("to", "", "claude | codex | cursor")
+	name := fs.String("name", "", "title for the new session")
+	kind := fs.String("opener", "", "herdr | ghostty | inline | print")
+	pos := parseArgs(fs, args)
+	if len(pos) == 0 || *to == "" {
+		return errors.New("usage: kennel convert <id|name> -to claude|codex|cursor")
+	}
+	if *kind != "" {
+		cfg.Opener = opener.Kind(*kind)
+	}
+	a, err := openApp(cfg, true)
+	if err != nil {
+		return err
+	}
+	defer a.Close()
+	p := a.Find(strings.Join(pos, " "))
+	if p == nil {
+		return fmt.Errorf("no session matches %q", strings.Join(pos, " "))
+	}
+	t, path, err := a.ConvertTarget(p.ID, *to, *name)
+	if err != nil {
+		return err
+	}
+	fmt.Println("handoff:", path)
+	if opener.Resolve(cfg.Opener) == opener.Inline && t.Agent != "cursor" {
+		c := opener.InlineCmd(t)
+		c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
+		return c.Run()
+	}
+	msg, err := a.Opener().Open(t)
+	if err != nil {
+		return err
+	}
+	fmt.Println(msg)
+	return nil
+}
+
+func runExport(cfg app.Config, args []string) error {
+	fs := flag.NewFlagSet("export", flag.ExitOnError)
+	out := fs.String("o", "", "write here instead of ~/.kennel/handoffs (- for stdout)")
+	pos := parseArgs(fs, args)
+	if len(pos) == 0 {
+		return errors.New("usage: kennel export <id|name> [-o file]")
+	}
+	a, err := openApp(cfg, true)
+	if err != nil {
+		return err
+	}
+	defer a.Close()
+	p := a.Find(strings.Join(pos, " "))
+	if p == nil {
+		return fmt.Errorf("no session matches %q", strings.Join(pos, " "))
+	}
+	switch *out {
+	case "":
+		path, err := a.Export(p)
+		if err != nil {
+			return err
+		}
+		fmt.Println(path)
+	case "-":
+		md, err := a.Markdown(p)
+		if err != nil {
+			return err
+		}
+		fmt.Print(md)
+	default:
+		md, err := a.Markdown(p)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(*out, []byte(md), 0o644)
+	}
+	return nil
+}
+
+// parseArgs lets flags appear after positional arguments (kennel export NAME -o file).
+func parseArgs(fs *flag.FlagSet, args []string) []string {
+	var pos []string
+	for {
+		_ = fs.Parse(args)
+		args = fs.Args()
+		if len(args) == 0 {
+			return pos
+		}
+		pos = append(pos, args[0])
+		args = args[1:]
+	}
 }

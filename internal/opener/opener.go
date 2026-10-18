@@ -30,6 +30,10 @@ func (ExecRunner) Run(name string, args ...string) ([]byte, error) {
 
 // Target says what to open.
 type Target struct {
+	// Agent is "claude" (default), "codex" or "cursor".
+	Agent string
+	// Files are opened alongside (Cursor gets the handoff document).
+	Files     []string
 	SessionID string
 	Cwd       string
 	Title     string
@@ -67,10 +71,35 @@ func (t Target) ClaudeArgs() []string {
 	return args
 }
 
+// Command is the program and arguments that open this target.
+func (t Target) Command() (string, []string) {
+	switch t.Agent {
+	case "codex":
+		var args []string
+		if !t.New {
+			args = append(args, "resume", t.SessionID)
+		}
+		if t.Model != "" && t.New {
+			args = append(args, "-m", t.Model)
+		}
+		if t.Prompt != "" {
+			args = append(args, t.Prompt)
+		}
+		return "codex", args
+	case "cursor":
+		if runtime.GOOS == "darwin" {
+			return "open", append([]string{"-a", "Cursor", t.Cwd}, t.Files...)
+		}
+		return "cursor", append([]string{t.Cwd}, t.Files...)
+	}
+	return "claude", t.ClaudeArgs()
+}
+
 // ShellCommand is a copy-pasteable command line for the target.
 func (t Target) ShellCommand() string {
-	parts := []string{"cd", shellQuote(t.Cwd), "&&", "claude"}
-	for _, a := range t.ClaudeArgs() {
+	bin, args := t.Command()
+	parts := []string{"cd", shellQuote(t.Cwd), "&&", bin}
+	for _, a := range args {
 		parts = append(parts, shellQuote(a))
 	}
 	return strings.Join(parts, " ")
@@ -108,6 +137,17 @@ type Opener struct {
 // Open performs the action and returns a short human description.
 // Inline is handled by the caller (it needs to hand over the terminal).
 func (o Opener) Open(t Target) (string, error) {
+	if t.Agent == "cursor" {
+		if Resolve(o.Kind) == Print {
+			return t.ShellCommand(), nil
+		}
+		// Cursor is an editor, not a terminal agent: open it on the folder.
+		bin, args := t.Command()
+		if _, err := o.Runner.Run(bin, args...); err != nil {
+			return "", err
+		}
+		return "opened Cursor in " + t.Cwd, nil
+	}
 	switch Resolve(o.Kind) {
 	case Herdr:
 		return o.herdr(t)
@@ -159,9 +199,10 @@ func (o Opener) herdr(t Target) (string, error) {
 		return "", fmt.Errorf("herdr tab create: unexpected response: %s", strings.TrimSpace(string(out)))
 	}
 	pane := resp.Result.RootPane.PaneID
-	start := []string{"agent", "start", AgentName(t.Title, t.SessionID), "--kind", "claude", "--pane", pane}
-	if ca := t.ClaudeArgs(); len(ca) > 0 {
-		start = append(append(start, "--"), ca...)
+	bin, cargs := t.Command()
+	start := []string{"agent", "start", AgentName(t.Title, t.SessionID), "--kind", bin, "--pane", pane}
+	if len(cargs) > 0 {
+		start = append(append(start, "--"), cargs...)
 	}
 	if _, err := o.Runner.Run("herdr", start...); err != nil {
 		return "", err
@@ -197,8 +238,9 @@ func (o Opener) ghostty(t Target) (string, error) {
 }
 
 func ghosttyOpenScript(t Target) string {
-	cmd := "claude"
-	for _, a := range t.ClaudeArgs() {
+	bin, args := t.Command()
+	cmd := bin
+	for _, a := range args {
 		cmd += " " + shellQuote(a)
 	}
 	return fmt.Sprintf(`tell application "Ghostty"
@@ -231,7 +273,8 @@ end tell`, asQuote(title))
 
 // InlineCmd is the process to run in kennel's own terminal.
 func InlineCmd(t Target) *exec.Cmd {
-	c := exec.Command("claude", t.ClaudeArgs()...)
+	bin, args := t.Command()
+	c := exec.Command(bin, args...)
 	c.Dir = t.Cwd
 	return c
 }

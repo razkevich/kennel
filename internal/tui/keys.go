@@ -197,8 +197,20 @@ func (m Model) pupActions(key string, p *pack.Pup) (tea.Model, tea.Cmd, bool) {
 	case "R":
 		return m, m.open(p, false, true), true
 	case "C":
+		if p.AgentKind() != "claude" {
+			return m, toast("clone works on Claude sessions; use c to convert", true), true
+		}
 		m.modal = m.cloneModal(p)
 		return m, nil, true
+	case "c":
+		m.modal = m.convertModal(p)
+		return m, nil, true
+	case "E":
+		path, err := m.app.Export(p)
+		if err != nil {
+			return m, toast(err.Error(), true), true
+		}
+		return m, m.copy(path, "exported to "+path+" (path copied)"), true
 	case "M":
 		m.modal = m.mergeModal(p)
 		return m, nil, true

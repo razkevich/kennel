@@ -102,3 +102,29 @@ func TestAutoTitle(t *testing.T) {
 		}
 	}
 }
+
+const codexFixture = `{"timestamp":"2026-10-18T09:00:00Z","type":"session_meta","payload":{"id":"0199c1a2-7e3b-7d40-9a51-6f2b1c0e4a11","cwd":"/r","git":{"branch":"perf/x"}}}
+{"timestamp":"2026-10-18T09:00:01Z","type":"turn_context","payload":{"cwd":"/r","model":"gpt-5-codex"}}
+{"timestamp":"2026-10-18T09:00:02Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>x</environment_context>"}]}}
+{"timestamp":"2026-10-18T09:00:03Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"speed up the export"}]}}
+{"timestamp":"2026-10-18T09:00:04Z","type":"response_item","payload":{"type":"function_call","name":"shell","arguments":"{\"command\":[\"bash\",\"-lc\",\"rg -n export\"]}"}}
+{"timestamp":"2026-10-18T09:00:05Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Streaming fixes it."}]}}
+`
+
+func TestCodexParser(t *testing.T) {
+	p := NewParser(&Session{}, 0)
+	p.Codex = true
+	if _, err := p.Feed(strings.NewReader(codexFixture)); err != nil {
+		t.Fatal(err)
+	}
+	s := p.S
+	if s.Agent != "codex" || s.ID != "0199c1a2-7e3b-7d40-9a51-6f2b1c0e4a11" || s.Cwd != "/r" || s.NUser != 1 || s.NAssistant != 1 || s.NTools != 1 {
+		t.Fatalf("%+v", s)
+	}
+	if s.Branches[0] != "perf/x" || s.Models[0] != "gpt-5-codex" || s.FirstPrompt != "speed up the export" {
+		t.Fatalf("%+v", s)
+	}
+	if len(p.Chunks) != 3 || p.Chunks[1].Text != "shell: rg -n export" {
+		t.Fatalf("chunks %+v", p.Chunks)
+	}
+}

@@ -35,6 +35,19 @@ var namedColors = map[string]lipgloss.Color{
 }
 
 // furColor is a pup's own colour: its /color if set, else a stable pick from its id.
+// Codex huskies are silver-blue and Cursor dalmatians white, so breeds read at a glance.
+func furColorFor(id, named, agent string) lipgloss.Color {
+	if _, ok := namedColors[named]; !ok {
+		switch agent {
+		case "codex":
+			return lipgloss.Color("#a5c8e4")
+		case "cursor":
+			return lipgloss.Color("#eeeeee")
+		}
+	}
+	return furColor(id, named)
+}
+
 func furColor(id, named string) lipgloss.Color {
 	if c, ok := namedColors[named]; ok {
 		return c

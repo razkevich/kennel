@@ -191,6 +191,12 @@ func Generate(dir string, now time.Time) error {
 	if err := os.WriteFile(filepath.Join(dir, PanesFile), []byte(demoPanes), 0o644); err != nil {
 		return err
 	}
+	if err := writeCodex(CodexDir(dir), now); err != nil {
+		return err
+	}
+	if err := writeCursor(CursorDir(dir), now); err != nil {
+		return err
+	}
 	pid := 40000
 	for i, sp := range Specs() {
 		if sp.ID == "" {

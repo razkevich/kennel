@@ -17,7 +17,7 @@ Running ten-plus Claude Code sessions a day means losing track of them: which on
 - **a terminal app** (`kennel`), fast and keyboard-first, with a map, list, search, Ask, jobs, artifacts and gear;
 - **a pixel-art office in your browser** (`kennel map`), where sessions are pups that wander their rooms, sit at desks while working and bounce when they need you.
 
-Sessions are **pups** 🐕. Groups are **kennels** 🏠. Other terminals, such as monitors, dev servers, log tails and long jobs, are **things** 📺🔥📜⏳.
+Sessions are **pups** 🐕, in three breeds: Claude Code corgis ▼•ᴥ•▼, Codex huskies ▲•ᴥ•▲ and Cursor dalmatians ◖•ᴥ•◗. Groups are **kennels** 🏠. Other terminals, such as monitors, dev servers, log tails and long jobs, are **things** 📺🔥📜⏳.
 
 ## Highlights
 
@@ -32,6 +32,10 @@ Sessions are **pups** 🐕. Groups are **kennels** 🏠. Other terminals, such a
 | 📺 **Things** | Non-agent terminals as objects in the rooms. Kennel finds them in herdr panes, and you can save your own commands to start, focus or stop. |
 | ⏰ **Jobs** | Background agents from the Claude daemon, and cron tasks scheduled inside sessions (`/loop`, CronCreate) with their last fire time. |
 | 🎨 **Artifacts** | Every artifact your sessions published, newest first, starrable, one key to open. |
+| 🐺 **Claude, Codex, Cursor** | Indexes Claude Code transcripts, Codex CLI rollouts (`~/.codex/sessions`) and Cursor's agent chats (read-only from its state database). Each opens in its own tool: `claude --resume`, `codex resume`, or Cursor on the folder. Filter with `agent:codex`. |
+| ↔ **Convert** | Continue any session in another agent (`c`): kennel exports the conversation to Markdown and starts Claude or Codex with a handoff brief, or opens Cursor on the folder with the handoff document. |
+| ⑂ **Fork · clone · merge** | Fork (`f`) a Claude session, clone it into another project (`C`), merge several sessions into a new pup seeded with a combined brief (`M`), or distill a huge one into a fresh start (`Z`). Export any conversation as Markdown (`E`). |
+| 📰 **Digest** | `d` or `kennel digest`: what you touched, shipped and spent, what's waiting, and what slid under the rug. |
 | 🔨 **Build** | Shape any room: templates (on-call room, release train, research lab, lounge, one-on-one corner), size and shape, floor, walls and furniture. Add **purpose blocks**: 🚪 spawn door (new pup with a preset folder, name, prompt and model), 🧲 magnet (auto-adopt), 🔔 bell (desktop alert), 🌀 portal (open in a herdr workspace), 📌 pin board, 🧹 archive chute. In the browser: drag and drop. In the TUI: `B`. |
 | 🔩 **Gear** | MCP servers, skills, plugins, subagents, commands and hooks at user, project and plugin level. Toggle skills, plugins and project MCP servers safely. |
 
@@ -42,6 +46,8 @@ Sessions are **pups** 🐕. Groups are **kennels** 🏠. Other terminals, such a
 <tr><td align="center"><code>kennel map</code>: the office</td><td align="center">click a pup for its card</td></tr>
 <tr><td><img src="docs/img/web-build.png" alt="build mode"></td><td><img src="docs/img/tui-build.png" alt="tui build menu"></td></tr>
 <tr><td align="center">build mode: templates, floors, walls, furniture, blocks</td><td align="center">the same blocks from the TUI (<code>B</code>)</td></tr>
+<tr><td><img src="docs/img/web-projects.png" alt="projects floor in the browser"></td><td><img src="docs/img/tui-pups.png" alt="pups list"></td></tr>
+<tr><td align="center">one room per project: corgis, huskies and dalmatians</td><td align="center">the list, with live status and previews</td></tr>
 <tr><td><img src="docs/img/web-ask.png" alt="ask"></td><td><img src="docs/img/web-search.png" alt="web search"></td></tr>
 <tr><td align="center">Ask with citations</td><td align="center">search across transcripts</td></tr>
 <tr><td><img src="docs/img/tui-search.png" alt="tui search"></td><td><img src="docs/img/tui-ask.png" alt="tui ask"></td></tr>
@@ -71,6 +77,11 @@ kennel map                  # the Gather-style office in your browser
 kennel search "flaky login" # names + transcripts, scriptable (-json)
 kennel ask "why did checkout flicker on safari?"
 kennel open KALSHI          # resume by name or id prefix (-fork, -remote, -opener ghostty)
+kennel convert KALSHI -to codex     # continue in another agent
+kennel merge KALSHI C1VEGA -name RELOC   # one new pup with both histories' brief
+kennel clone KALSHI -to ~/code/other     # copy a session into another project
+kennel export KALSHI -o kalshi.md   # Markdown transcript
+kennel digest -since 168h           # the week in pups
 kennel -demo                # try it on synthetic sessions
 ```
 
@@ -81,6 +92,8 @@ kennel -demo                # try it on synthetic sessions
 | `1`–`6`, `[` `]` | tabs: Map, Pups, Ask, Jobs, Artifacts, Gear |
 | `/` · `a` · `ctrl+k` | search · ask · jump anywhere |
 | `⏎` · `f` · `R` · `t` | open/focus · fork · remote control · quick reply |
+| `C` · `M` · `Z` · `c` · `E` | clone · merge · distill · convert to another agent · export Markdown |
+| `T` · `d` | suggest a name (via claude) · digest |
 | `v` / `space` | read transcript (`/` to find, `n`/`N`) |
 | `s` `r` `m` `N` `x` `D` | star, rename, move to kennel, note, archive, trash |
 | `K` · `e` on a kennel | new kennel · edit name and rules |
@@ -144,11 +157,10 @@ KENNEL_SHOTS=/tmp/ans go test ./internal/tui -run TestShots && (cd e2e && node t
 - Shareable room templates (export or import JSON), multi-room "office kits", and furniture that does things (a coffee machine that pings the idle pups).
 
 **More cool stuff**
-- Daily digest: "yesterday you shipped 3 PRs, 2 pups are still waiting, Under the Rug grew by 4".
 - Semantic vectors through a local Ollama model, alongside BM25.
-- Auto-naming in your own style (UPPERCASE workstream names), via haiku, for untitled pups.
 - People view: who you helped this week (from Slack-paste sessions).
-- Session lineage: forks and `continued-in` chains drawn as leashes between pups.
+- Session lineage: forks, clones, merges and `continued-in` chains drawn as leashes between pups.
+- More agents: Gemini CLI, Aider, opencode, and Cursor's CLI chats.
 - Cost and time per kennel, per week.
 - Worktree janitor: stale worktrees whose pups are asleep.
 - Remote machines: herdr `--machine` pups on other hosts in an "Annex".
