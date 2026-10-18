@@ -159,6 +159,11 @@ type toastMsg struct {
 	text string
 	err  bool
 }
+type nameMsg struct {
+	pup  *pack.Pup
+	name string
+	err  error
+}
 type openedMsg struct {
 	text string
 	err  error
@@ -280,6 +285,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case toastMsg:
 		m.setToast(msg.text, msg.err)
 		return m, nil
+	case nameMsg:
+		if msg.err != nil {
+			m.setToast("naming: "+msg.err.Error(), true)
+			return m, nil
+		}
+		md := renameModal(msg.pup)
+		md.input.SetValue(msg.name)
+		md.input.CursorEnd()
+		md.title = "✨ suggested name for " + msg.pup.Title()
+		m.modal = md
+		return m, nil
 	case openedMsg:
 		if msg.err != nil {
 			m.setToast(msg.err.Error(), true)
@@ -391,6 +407,17 @@ func (m *Model) scopeFilter(rs []search.Result) []search.Result {
 
 // refreshResults re-ranks with metadata only (instant), then schedules a content search.
 func (m *Model) refreshResults() tea.Cmd {
+	selID := ""
+	if m.cursor >= 0 && m.cursor < len(m.results) {
+		selID = m.results[m.cursor].Pup.ID
+	}
+	defer func() {
+		for i, r := range m.results {
+			if r.Pup.ID == selID {
+				m.cursor = i
+			}
+		}
+	}()
 	res, _ := m.app.Search(m.query.Value(), false)
 	keep := map[string][]search.Result{}
 	if m.contentQ == m.query.Value() {

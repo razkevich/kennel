@@ -238,3 +238,29 @@ func diversify(hits []store.Hit, describe func(string) (string, string)) []Sourc
 	}
 	return out
 }
+
+// SuggestName asks for a short UPPERCASE workstream name in the style people use with /rename.
+func SuggestName(ctx context.Context, llm LLM, firstPrompt, recap, lastPrompt string) (string, error) {
+	prompt := `Name this coding-assistant session the way its owner names workstreams with /rename:
+one or two words, UPPERCASE, joined by "-", at most 16 characters, e.g. KALSHI, PG-UPGRADE, FLAKY-CI, C1VEGA.
+Reply with the name only.
+
+First request: ` + firstPrompt + `
+Latest request: ` + lastPrompt + `
+Where it stands: ` + recap
+	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	out, err := llm.Complete(cctx, "haiku", prompt, nil)
+	if err != nil {
+		return "", err
+	}
+	name := strings.ToUpper(strings.Trim(strings.TrimSpace(strings.Split(strings.TrimSpace(out), "\n")[0]), "`\"'*. "))
+	name = strings.Join(strings.Fields(name), "-")
+	if len(name) > 24 {
+		name = name[:24]
+	}
+	if name == "" {
+		return "", fmt.Errorf("no name suggested")
+	}
+	return name, nil
+}

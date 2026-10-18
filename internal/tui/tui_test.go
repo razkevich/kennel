@@ -1,7 +1,9 @@
 package tui
 
 import (
+	"context"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -387,5 +389,36 @@ func TestBuildRoomFromTheTUI(t *testing.T) {
 	h.key("enter")
 	if len(h.app.Style("yard").Blocks) != 0 {
 		t.Fatal("reset should clear the room")
+	}
+}
+
+func TestSelectionSticksWhenListReorders(t *testing.T) {
+	h := newHarness(t, opener.Print)
+	h.key("2", "down", "down", "down")
+	want := h.selectedTitle()
+	p := h.pup(want)
+	f, _ := os.OpenFile(p.Path, os.O_APPEND|os.O_WRONLY, 0)
+	f.WriteString(`{"type":"user","sessionId":"` + p.ID + `","timestamp":"2026-10-18T12:00:30Z","message":{"role":"user","content":"one more thing"}}` + "\n")
+	f.Close()
+	h.app.Sync(context.Background(), nil)
+	h.send(liveMsg{})
+	if got := h.selectedTitle(); got != want {
+		t.Fatalf("selection moved from %q to %q", want, got)
+	}
+	// Pups that need you float to the top; right after them comes the newest.
+	if h.model().cursor != 1 {
+		t.Fatalf("%s is now newest and should follow FLAKY-CI, cursor=%d", want, h.model().cursor)
+	}
+}
+
+func TestSuggestName(t *testing.T) {
+	h := newHarness(t, opener.Print)
+	h.key("2", "/")
+	h.typeText("staging dry run")
+	h.send(searchTickMsg{seq: h.model().searchSeq})
+	h.key("enter", "T")
+	h.contains("suggested name for PG-UPGRADE", "PG-UPGRADE")
+	if v := h.model().modal.input.Value(); v != "PG-UPGRADE" {
+		t.Fatalf("suggestion %q", v)
 	}
 }

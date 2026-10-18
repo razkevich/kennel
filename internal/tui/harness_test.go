@@ -53,6 +53,9 @@ func (r *recorder) Calls() []string {
 type fakeLLM struct{}
 
 func (fakeLLM) Complete(_ context.Context, _ string, prompt string, onText func(string)) (string, error) {
+	if strings.Contains(prompt, "names workstreams") {
+		return "pg upgrade", nil
+	}
 	if strings.Contains(prompt, "search keywords") {
 		return "stripe, PaymentElement, flicker, safari", nil
 	}

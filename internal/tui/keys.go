@@ -1,10 +1,12 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/razkevich/kennel/internal/ask"
 	"github.com/razkevich/kennel/internal/claude"
 	"github.com/razkevich/kennel/internal/pack"
 	"github.com/razkevich/kennel/internal/things"
@@ -222,6 +224,12 @@ func (m Model) pupActions(key string, p *pack.Pup) (tea.Model, tea.Cmd, bool) {
 	case "N":
 		m.modal = noteModal(p)
 		return m, nil, true
+	case "T":
+		llm := m.app.Cfg.LLM
+		return m, tea.Batch(toast("🐕 sniffing out a name…", false), func() tea.Msg {
+			name, err := ask.SuggestName(context.Background(), llm, p.FirstPrompt, p.Recap, p.LastPrompt)
+			return nameMsg{pup: p, name: name, err: err}
+		}), true
 	case "y":
 		return m, m.copy(p.ID, "copied session id"), true
 	case "Y":

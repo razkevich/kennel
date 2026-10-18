@@ -9,6 +9,9 @@ import (
 type Fake struct{}
 
 func (Fake) Complete(_ context.Context, _ string, prompt string, onText func(string)) (string, error) {
+	if strings.Contains(prompt, "names workstreams") {
+		return "STRIPE-FLICKER", nil
+	}
 	if strings.Contains(prompt, "search keywords") {
 		return "stripe, PaymentElement, flicker, postgres, upgrade, replication", nil
 	}

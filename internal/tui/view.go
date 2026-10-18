@@ -176,7 +176,7 @@ func (m Model) helpView() string {
 	}{
 		{"getting around", [][2]string{{"1-6 / [ ]", "switch tabs"}, {"ctrl+k", "jump anywhere"}, {"u", "next pup that needs you"}, {"/", "search (names + transcripts)"}, {"a", "ask your pack (RAG)"}, {"F", "map floor: campus / projects / kennels"}}},
 		{"a pup", [][2]string{{"⏎", "open / focus in herdr or Ghostty"}, {"N", "new thing (monitor, server, logs…)"}, {"f", "fork session"}, {"R", "resume with remote control"}, {"t", "quick reply (herdr)"}, {"v / space", "read transcript"}, {"n", "new session here"}}},
-		{"organize", [][2]string{{"B", "build: shape, floor, walls, blocks"}, {"s", "star (Best in Show)"}, {"r", "rename"}, {"m", "move to kennel"}, {"N", "note"}, {"x", "archive"}, {"D", "trash (recoverable)"}, {"K", "new kennel"}}},
+		{"organize", [][2]string{{"B", "build: shape, floor, walls, blocks"}, {"s", "star (Best in Show)"}, {"r", "rename"}, {"T", "suggest a name (claude)"}, {"m", "move to kennel"}, {"N", "note"}, {"x", "archive"}, {"D", "trash (recoverable)"}, {"K", "new kennel"}}},
 		{"handy", [][2]string{{"y / Y", "copy id / resume command"}, {"p / A", "open PR / artifact"}, {"search", "is:live is:starred repo:x since:7d has:pr"}, {"q", "quit"}}},
 	}
 	var cols []string
