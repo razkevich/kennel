@@ -84,3 +84,34 @@ Unit tests for the parser (fixtures from real record shapes), store/FTS, query p
 search merge and incremental offsets; a smoke test runs the TUI model headless over demo data.
 CI: `go vet`, `go test -race`, build on macOS + Linux. Releases: GoReleaser on tags
 (darwin/linux, amd64/arm64).
+
+## Status after the overnight build (2026-10-18)
+
+Everything above shipped, plus requests that arrived during the night:
+
+| Area | What landed | Where |
+|---|---|---|
+| Web map | Gather-style pixel office: rooms, pups wander, desks for working pups, status bubbles, your avatar (WASD + X), cards, search, Ask, transcripts | `internal/web` |
+| Smart kennels | Yard, Best in Show, Firehouse, Helping Out, Courtroom, Yak Shaving, Water Bowl, Marathons, Shipped, Under the Rug, Dumpster | `internal/pack` |
+| Things | non-agent terminals (monitors, servers, log tails, jobs) as objects; herdr panes + `ps` | `internal/things` |
+| Jobs | Claude daemon background agents + in-session cron tasks | `internal/claude/jobs.go`, TUI Jobs tab |
+| Artifacts | gallery from `frame-link` records | TUI Artifacts tab |
+| Gear | MCP/skills/plugins/agents/commands/hooks at user/project/plugin level, safe toggles | `internal/gear` |
+| Projects | one room per repo (Projects floor) + sidebar section | `internal/floor` |
+| Remote control | 📡 badge from `bridge-session`, `R` resumes with `--remote-control` or sends `/remote-control` via herdr | opener |
+| Building blocks | templates, shapes, floors, walls, furniture; spawn door, magnet, bell, portal, pin board, chute | `internal/blocks`, `internal/floor/behaviors.go`, web build mode, TUI `B` |
+| Fork/clone/merge | fork, clone into another project, merge N sessions via brief, distill | `internal/app/lineage.go` |
+| Agents | Codex rollouts and Cursor composer chats; breeds; convert between agents via Markdown handoff | `internal/claude/codex.go`, `internal/cursor`, `internal/app/export.go` |
+| Treats | drag files/links/#channels/tickets/notes onto pups (live → herdr prompt, asleep → resume with prompt) | `internal/treats`, `internal/app/feed.go` |
+| Digest | touched/shipped/waiting/under-the-rug summary | `internal/digest` |
+
+Testing: Go unit tests per package; TUI tests drive the real Bubble Tea model with keys and mouse
+clicks (bubblezone) and assert on rendered frames; Playwright tests click and drag on the canvas;
+screenshots are rendered from real frames (xterm.js for the TUI). All against `internal/demo`
+synthetic data with a recorder replacing herdr/osascript/open.
+
+Known gaps (not verifiable without touching real data, by design):
+- herdr and Ghostty integrations are exercised only against recorded command shapes, not live.
+- Codex and Cursor formats are implemented from their documented/observed shapes and tested with
+  synthetic fixtures; unknown variants are skipped rather than failing.
+- Cold indexing of a 1.4 GB history takes ~40 s in the background on first run.
