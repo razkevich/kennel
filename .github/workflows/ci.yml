@@ -65,4 +65,4 @@ jobs:
       - name: Build the app
         run: VERSION=ci macos/build-app.sh
       - name: App UI tests
-        run: KENNEL_APP_BIN="$PWD/dist/Kennel.app/Contents/MacOS/Kennel" node --test e2e/app
+        run: KENNEL_APP_BIN="$PWD/dist/Kennel.app/Contents/MacOS/Kennel" node --test e2e/app/app.test.mjs

@@ -1,7 +1,7 @@
 // End-to-end UI tests for the Kennel Mac app. They launch the real app on synthetic
 // sessions with fake runs (nothing real is started) and drive it through its
 // automation port: real menu shortcuts, real clicks in the page, typing into terminals.
-// usage: node --test e2e/app  (after `swift build` in macos/ and `go install ./cmd/kennel`)
+// usage: node --test e2e/app/app.test.mjs  (after `swift build` in macos/ and `go install ./cmd/kennel`)
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";

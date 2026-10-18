@@ -96,7 +96,7 @@ Kennel's own data lives in `~/.kennel`. Override paths with `KENNEL_CLAUDE_DIR`,
 go test -race ./...                         # core, store, indexer, search, agents, blocks, undo
 (cd e2e && npm ci && npx playwright test)   # browser UI: clicks, drags, build mode, library, panels
 (cd macos && ./test.sh)                     # Swift unit tests
-(cd macos && swift build) && node --test e2e/app   # Mac app UI: tabs, shortcuts, terminals, clicks, dialogs
+(cd macos && swift build) && node --test e2e/app/app.test.mjs   # Mac app UI: tabs, shortcuts, terminals, clicks, dialogs
 macos/build-app.sh                          # dist/Kennel.app
 ```
 
