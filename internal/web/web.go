@@ -198,7 +198,7 @@ func (s *Server) fingerprint() uint64 {
 		fmt.Fprintf(h, "k%d|%s|%s|%d|%s;", k.ID, k.Name, k.Icon, k.Floor, k.Smart)
 	}
 	for _, f := range s.App.Floors() {
-		fmt.Fprintf(h, "f%d|%s|%s;", f.ID, f.Name, f.Icon)
+		fmt.Fprintf(h, "f%d|%s|%s|%d;", f.ID, f.Name, f.Icon, f.Sort)
 	}
 	for _, t := range s.App.Treats() {
 		fmt.Fprintf(h, "t%d|%d|%s;", t.ID, t.Kennel, t.Name)
@@ -252,6 +252,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/floors", s.guard(s.handleAddFloor))
 	mux.HandleFunc("POST /api/floors/suggest", s.guard(s.handleSuggestFloors))
 	mux.HandleFunc("POST /api/floors/organize", s.guard(s.handleOrganizeFloors))
+	mux.HandleFunc("POST /api/floors/order", s.guard(s.handleFloorOrder))
 	mux.HandleFunc("POST /api/floors/{id}/{action}", s.guard(s.handleFloor))
 	mux.HandleFunc("GET /api/library", s.guard(s.handleLibrary))
 	mux.HandleFunc("POST /api/themes/run", s.guard(s.handleThemes))
@@ -1537,4 +1538,21 @@ func (s *Server) handleOrganizeFloors(w http.ResponseWriter, r *http.Request) {
 	}
 	s.touch()
 	writeJSON(w, map[string]any{"ok": true, "message": fmt.Sprintf("🏢 moved %d kennels onto their floors", n)})
+}
+
+func (s *Server) handleFloorOrder(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Space string  `json:"space"`
+		IDs   []int64 `json:"ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		fail(w, err, http.StatusBadRequest)
+		return
+	}
+	if err := s.App.ReorderFloors(body.Space, body.IDs); err != nil {
+		fail(w, err, http.StatusBadRequest)
+		return
+	}
+	s.touch()
+	writeJSON(w, map[string]bool{"ok": true})
 }

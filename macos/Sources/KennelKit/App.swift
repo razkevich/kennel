@@ -452,12 +452,8 @@ public final class AppController: NSObject, NSApplicationDelegate, NSWindowDeleg
         switch type {
         case "run":
             guard let run = body["run"] as? [String: Any], let launch = Launch(message: run) else { return }
-            if launch.focus, let s = launch.session, !tabs.contains(where: { $0.session == s }) {
-                // Running in another terminal (herdr, Ghostty): opening it again would fork the conversation.
-                let msg = "\(launch.title) is running in another terminal"
-                web.evaluateJavaScript("window.kennel && window.kennel.toast(\(jsString(msg)), true)")
-                return
-            }
+            // A session open in one of our tabs gets focused; one running in another
+            // terminal gets a second copy here, which is what "open in a tab" asks for.
             openTab(launch)
         case "appearance":
             setKennelAppearance(dark: body["dark"] as? Bool ?? false)

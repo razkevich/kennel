@@ -159,3 +159,33 @@ func (a *App) setKennelFloor(kennelID, floorID int64) error {
 	_, err := a.Store.DB.Exec(`UPDATE kennels SET floor_id=? WHERE id=?`, floorID, kennelID)
 	return err
 }
+
+// ReorderFloors puts a space's floors in the given order.
+func (a *App) ReorderFloors(space string, ids []int64) error {
+	fs := a.FloorsIn(space)
+	prev := make([]int64, len(fs))
+	for i, f := range fs {
+		prev[i] = f.ID
+	}
+	if err := a.setFloorOrder(space, ids); err != nil {
+		return err
+	}
+	a.remember("reorder floors", func() error { return a.setFloorOrder(space, prev) })
+	return a.Reload()
+}
+
+func (a *App) setFloorOrder(space string, ids []int64) error {
+	in := map[int64]bool{}
+	for _, f := range a.FloorsIn(space) {
+		in[f.ID] = true
+	}
+	for i, id := range ids {
+		if !in[id] {
+			return fmt.Errorf("floor %d isn't in this space", id)
+		}
+		if _, err := a.Store.DB.Exec(`UPDATE floors SET sort=? WHERE id=?`, i+1, id); err != nil {
+			return err
+		}
+	}
+	return a.Reload()
+}

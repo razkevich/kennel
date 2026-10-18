@@ -7,7 +7,7 @@ export const open = async (page) => {
   await page.waitForFunction(() => window.kennel && window.kennel.app.state && !window.kennel.app.state.indexing, null, { timeout: 20000 });
   const first = await page.evaluate(() => window.kennel.app.state.floors[0].id);
   if (await page.evaluate(() => window.kennel.app.state.floor) !== first) {
-    await page.locator("#floors button[data-floor]").first().click();
+    await page.locator("#floors .floor[data-floor]").first().click();
   }
   await page.waitForFunction((f) => window.kennel.app.state.floor === f && window.kennel.app.ents.size > 0, first);
 };

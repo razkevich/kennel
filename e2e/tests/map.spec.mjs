@@ -5,7 +5,7 @@ test("shows the office with live counts and the session tray", async ({ page }) 
   await open(page);
   await expect(page.locator("#counts")).toContainText("1 needs you");
   await expect(page.locator("#counts")).toContainText("2 working");
-  await expect(page.locator("#floors button.on .fname")).toContainText("🏢 Main");
+  await expect(page.locator("#floors .floor.on .fname")).toContainText("🏢 Main");
   await expect(page.locator("#pack")).toContainText("Needs you · 1");
   await expect(page.locator("#pack")).toContainText("New, not in a kennel");
   await expect(page.locator("#pack .member", { hasText: "FLAKY-CI" })).toBeVisible();
@@ -50,7 +50,7 @@ test("each project has its own space: floors, kennels, sessions; switching is re
   await page.waitForFunction(() => window.kennel.app.state.space === "/Users/demo/code/infra");
   await expect(page.locator("#projectsel")).toHaveClass(/on/);
   // A fresh space starts with one floor named after the project and no rooms.
-  await expect(page.locator("#floors button.on .fname")).toHaveText("📁 infra");
+  await expect(page.locator("#floors .floor.on .fname")).toHaveText("📁 infra");
   await expect.poll(() => page.evaluate(() => window.kennel.app.rooms.length)).toBe(0);
   const projects = await page.evaluate(() => [...document.querySelectorAll("#pack .member")].map((m) => window.kennel.app.state.pups[m.dataset.id].project));
   expect(projects.length).toBeGreaterThan(0);
@@ -177,18 +177,19 @@ test("things: running ones focus, stopped ones start", async ({ page }) => {
 
 test("floors: add, switch, move a kennel by dragging it onto a floor tab, rename, remove with undo", async ({ page }) => {
   await open(page);
-  page.once("dialog", (d) => d.accept("Side projects"));
   await page.locator("#addfloorbtn").click();
-  await expect(page.locator("#floors button.on .fname")).toHaveText("🏢 Side projects");
-  await expect(page.locator("#floors button.on .fcount")).toHaveText("0 kennels · 0 pups");
+  await page.locator("#floors .fedit").fill("Side projects");
+  await page.locator("#floors .fedit").press("Enter");
+  await expect(page.locator("#floors .floor.on .fname")).toHaveText("🏢 Side projects");
+  await expect(page.locator("#floors .floor.on .fcount")).toHaveText("0 kennels · 0 pups");
   await expect.poll(() => page.evaluate(() => window.kennel.app.rooms.length)).toBe(0);
   // The floor is remembered across reloads.
   await page.goto("/?t=e2e");
   await page.waitForFunction(() => window.kennel && window.kennel.app.state);
-  await expect(page.locator("#floors button.on .fname")).toHaveText("🏢 Side projects");
+  await expect(page.locator("#floors .floor.on .fname")).toHaveText("🏢 Side projects");
 
   // Back on Main, drag Payments by its wall onto the new floor's tab.
-  await page.locator("#floors button[data-floor]").first().click();
+  await page.locator("#floors .floor[data-floor]").first().click();
   await page.waitForFunction(() => window.kennel.app.rooms.some((r) => r.title === "Payments"));
   const key = await page.evaluate(() => window.kennel.app.rooms.find((r) => r.title === "Payments").key);
   await page.evaluate((k) => {
@@ -197,26 +198,39 @@ test("floors: add, switch, move a kennel by dragging it onto a floor tab, rename
     app.cam.y = (r.y + r.h / 2) * 32 - st.clientHeight / app.cam.z / 2;
   }, key);
   const wall = await page.evaluate((k) => window.kennel.wallPos(k), key);
-  const tab = await page.locator("#floors button", { hasText: "Side projects" }).boundingBox();
+  const tab = await page.locator("#floors .floor", { hasText: "Side projects" }).boundingBox();
   await page.mouse.move(wall.x, wall.y);
   await page.mouse.down();
   for (let i = 1; i <= 10; i++) await page.mouse.move(wall.x + ((tab.x + tab.width / 2 - wall.x) * i) / 10, wall.y + ((tab.y + tab.height / 2 - wall.y) * i) / 10);
-  await expect(page.locator("#floors button.droptarget .fname")).toHaveText("🏢 Side projects");
+  await expect(page.locator("#floors .floor.droptarget .fname")).toHaveText("🏢 Side projects");
   await page.mouse.up();
   await expect(page.locator("#toast")).toContainText("moved Payments to Side projects");
   await expect.poll(() => page.evaluate(() => window.kennel.app.rooms.some((r) => r.title === "Payments"))).toBe(false);
 
   // Rename and remove from the tab's right-click menu; undo brings it back.
-  page.once("dialog", (d) => d.accept("Garden"));
-  await page.locator("#floors button", { hasText: "Side projects" }).click({ button: "right" });
-  await page.locator("#ctxmenu button", { hasText: "Rename" }).click();
-  await expect(page.locator("#floors button", { hasText: "Garden" })).toBeVisible();
-  await page.locator("#floors button", { hasText: "Garden" }).click({ button: "right" });
+  // Rename in place (double-click), set an icon and reorder from the ⋯ menu.
+  await page.locator("#floors .floor", { hasText: "Side projects" }).dblclick();
+  await page.locator("#floors .fedit").fill("Garden");
+  await page.locator("#floors .fedit").press("Enter");
+  await expect(page.locator("#floors .floor", { hasText: "Garden" })).toBeVisible();
+  await page.locator("#floors .floor", { hasText: "Garden" }).locator("button.dots").click();
+  await page.locator("#ctxmenu button", { hasText: "Icon" }).click();
+  await page.locator("#ctxmenu button", { hasText: "🌱" }).click();
+  await expect(page.locator("#floors .floor .fname", { hasText: "Garden" })).toContainText("🌱");
+  await page.locator("#floors .floor", { hasText: "Garden" }).locator("button.dots").click();
+  await page.locator("#ctxmenu button", { hasText: "Move up" }).click();
+  await expect(page.locator("#floors .floor .fname").first()).toContainText("Garden");
+  const lastBox = await page.locator("#floors .floor").last().boundingBox();
+  await page.locator("#floors .floor", { hasText: "Garden" }).dragTo(page.locator("#floors .floor").last(), { targetPosition: { x: 20, y: lastBox.height - 4 } });
+  await expect.poll(() => page.locator("#floors .floor .fname").last().textContent()).toContain("Garden");
+  // Remove asks first when the floor holds kennels, and says where they go.
+  page.once("dialog", (d) => { expect(d.message()).toContain("move to Main"); d.accept(); });
+  await page.locator("#floors .floor", { hasText: "Garden" }).locator("button.dots").click();
   await page.locator("#ctxmenu button", { hasText: "Remove floor" }).click();
-  await expect(page.locator("#floors button", { hasText: "Garden" })).toHaveCount(0);
+  await expect(page.locator("#floors .floor", { hasText: "Garden" })).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => window.kennel.app.rooms.some((r) => r.title === "Payments"))).toBe(true);
   await page.keyboard.press("Meta+z");
-  await expect(page.locator("#floors button", { hasText: "Garden" })).toBeVisible();
+  await expect(page.locator("#floors .floor", { hasText: "Garden" })).toBeVisible();
   // Leave things as they were: Payments back on Main, the extra floor gone.
   const garden = await page.evaluate(() => window.kennel.app.state.floors.find((f) => f.name === "Garden").id);
   const main = await page.evaluate(() => window.kennel.app.state.floors[0].id);
@@ -430,13 +444,13 @@ test("organize kennels into floors: suggestions, review, apply, one undo", async
   await expect(payments).toHaveValue("Work");
   await sheet.locator(".apply").click();
   await expect(page.locator("#toast")).toContainText("onto their floors");
-  await expect(page.locator("#floors button .fname", { hasText: "Work" })).toBeVisible();
+  await expect(page.locator("#floors .floor .fname", { hasText: "Work" })).toBeVisible();
   expect(await page.evaluate(() => window.kennel.app.state.floors.length)).toBeGreaterThan(floorsBefore);
-  await page.locator("#floors button", { hasText: "Work" }).click();
+  await page.locator("#floors .floor", { hasText: "Work" }).click();
   await page.waitForFunction(() => window.kennel.app.rooms.some((r) => r.title === "Payments"));
-  await expect(page.locator("#floors button.on .fcount")).toContainText("kennel");
+  await expect(page.locator("#floors .floor.on .fcount")).toContainText("kennel");
   await page.keyboard.press("Meta+z");
   await expect.poll(() => page.evaluate(() => window.kennel.app.state.floors.length)).toBe(floorsBefore);
-  await page.locator("#floors button[data-floor]").first().click();
+  await page.locator("#floors .floor[data-floor]").first().click();
   await page.waitForFunction(() => window.kennel.app.rooms.some((r) => r.title === "Payments"));
 });

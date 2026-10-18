@@ -63,7 +63,7 @@ before(async () => {
   await waitFor(async () => (await state()).pageLoaded, "page loaded", 20000);
   await waitFor(() => js("!!(window.kennel && window.kennel.app.state && window.kennel.app.ents.size > 0)"), "map drawn");
   if ((await js("window.kennel.app.state.floor !== window.kennel.app.state.floors[0].id"))) {
-    await js(`document.querySelector("#floors button[data-floor]").click()`);
+    await js(`document.querySelector("#floors .floor[data-floor]").click()`);
     await waitFor(() => js("window.kennel.app.state.floor === window.kennel.app.state.floors[0].id && window.kennel.app.ents.size > 0"), "first floor");
   }
 });
@@ -232,13 +232,17 @@ test("double-clicking a pup on the map opens it", async () => {
   await waitFor(async () => (await tabs()).some((t) => t.session === id), "double-click opened a tab");
 });
 
-test("a pup running in another terminal isn't opened twice", async () => {
+test("a pup running in another terminal still opens in a tab here, and only once", async () => {
   await backToKennel();
   const before = (await tabs()).length;
-  await clickPup("PG-UPGRADE");
+  const id = await clickPup("PG-UPGRADE");
   assert.ok(await cardButton("Go to"));
-  await waitFor(() => js(`document.querySelector("#toast").innerText.includes("running in another terminal")`), "toast");
-  assert.equal((await tabs()).length, before);
+  await waitFor(async () => (await tabs()).some((t) => t.session === id), "opened as a tab");
+  assert.equal((await tabs()).length, before + 1);
+  await backToKennel();
+  assert.ok(await cardButton("Go to"));
+  await waitFor(async () => (await selected()).session === id, "the same tab is focused again");
+  assert.equal((await tabs()).length, before + 1, "no second tab");
 });
 
 test("tab shortcuts: ⌘⇧K Kennel, ⌘1..9 by position, ⌘⇧] next", async () => {
@@ -315,7 +319,7 @@ test("the Kennel tab keeps the full web UI: library, panels and search work in t
 
 test("in the app, pups drag to a new spot and rooms resize from their handles", async () => {
   await backToKennel();
-  await js(`document.querySelector("#floors button[data-floor]").click()`);
+  await js(`document.querySelector("#floors .floor[data-floor]").click()`);
   await waitFor(() => js(`window.kennel.app.state.floor === window.kennel.app.state.floors[0].id`), "first floor");
   const id = await pupId("RATE-LIMITS");
   const roomKey = await js(`window.kennel.app.ents.get(${JSON.stringify(id)}).room.key`);

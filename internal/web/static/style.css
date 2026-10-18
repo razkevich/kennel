@@ -323,7 +323,6 @@ main { display: flex; height: calc(100% - 60px); }
 #pack .empty { color: var(--dim); padding: 24px 8px; text-align: center; }
 
 /* ---------- floors and project filter ---------- */
-#floors button.droptarget { background: var(--accent2); color: var(--accent); box-shadow: inset 0 0 0 2px var(--accent); }
 #projectsel { height: 32px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--sub); padding: 0 10px; font-weight: 600; font-size: 12.5px; max-width: 220px; }
 #projectsel.on { background: var(--accent2); color: var(--accent); border-color: var(--accent); }
 
@@ -447,11 +446,18 @@ body.resizing { cursor: col-resize; user-select: none; }
 #floornav .fhead { display: flex; align-items: center; justify-content: space-between; padding: 0 4px; font-size: 12.5px; }
 #floornav .fhead button { border: 1px solid var(--line); background: var(--card2); border-radius: 8px; width: 26px; height: 24px; color: var(--sub); }
 #floors { display: flex; flex-direction: column; gap: 3px; overflow: auto; }
-#floors button { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; text-align: left; border: 1px solid transparent; background: transparent;
-  border-radius: 10px; padding: 6px 9px; color: var(--sub); }
-#floors button:hover { background: var(--card2); color: var(--ink); }
-#floors button.on { background: var(--accent2); border-color: var(--accent); color: var(--ink); }
-#floors .fname { font-weight: 700; font-size: 13px; display: flex; gap: 6px; align-items: center; width: 100%; }
+#floors .floor { display: flex; align-items: center; gap: 4px; border: 1px solid transparent; border-radius: 10px; padding: 5px 4px 5px 9px; color: var(--sub); cursor: pointer; }
+#floors .floor:hover { background: var(--card2); color: var(--ink); }
+#floors .floor.on { background: var(--accent2); border-color: var(--accent); color: var(--ink); }
+#floors .floor.dropbefore { box-shadow: inset 0 3px 0 var(--accent); }
+#floors .floor.dropafter { box-shadow: inset 0 -3px 0 var(--accent); }
+#floors .floor.droptarget { background: var(--accent2); color: var(--accent); box-shadow: inset 0 0 0 2px var(--accent); }
+#floors .ftext { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+#floors .floor button.dots { opacity: 0; }
+#floors .floor:hover button.dots, #floors .floor.on button.dots { opacity: 1; }
+#floors .fedit { flex: 1; min-width: 0; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--accent); background: var(--card); font-weight: 700; }
+#floors .fedit:focus { outline: none; box-shadow: 0 0 0 3px var(--accent2); }
+#floors .fname { font-weight: 700; font-size: 13px; display: flex; gap: 6px; align-items: center; width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #floors .fwait { margin-left: auto; font-size: 11px; color: var(--warm-ink); }
 #floors .fcount { font-size: 11px; color: var(--dim); }
 #organizefloors { border: 1px dashed var(--accent); background: var(--accent2); color: var(--accent); border-radius: 10px; padding: 6px 8px; font-weight: 700; font-size: 11.5px; }

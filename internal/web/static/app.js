@@ -277,20 +277,86 @@ function listen() {
 }
 
 // ---------- UI chrome ----------
+const FLOOR_ICONS = ["🏢", "🏠", "🧪", "🔥", "💼", "🛠", "🌱", "🎮", "📚", "🌙", "🚀", "🧹"];
+
 function renderFloors() {
   const nav = $("#floors");
+  if (nav.querySelector("input")) return; // don't redraw under someone typing a name
   nav.innerHTML = "";
   for (const f of app.state.floors) {
-    const b = el("button", f.id === app.state.floor ? "on" : "");
+    const b = el("div", "floor" + (f.id === app.state.floor ? " on" : ""));
     b.dataset.floor = f.id;
-    b.title = "right-click to rename or remove · drop a kennel here to move it";
+    b.draggable = true;
+    b.title = "click to go · double-click to rename · drag to reorder · drop a kennel here to move it";
     const top = el("span", "fname", `${f.icon || "🏢"} ${f.name}`);
     if (f.waiting) top.appendChild(el("span", "fwait", `❗${f.waiting}`));
-    b.append(top, el("span", "fcount", `${f.kennels} kennel${f.kennels === 1 ? "" : "s"} · ${f.pups} pup${f.pups === 1 ? "" : "s"}`));
+    const text = el("div", "ftext");
+    text.append(top, el("span", "fcount", `${f.kennels} kennel${f.kennels === 1 ? "" : "s"} · ${f.pups} pup${f.pups === 1 ? "" : "s"}`));
+    b.append(text, menuButton(() => floorMenu(f)));
     b.onclick = () => goFloor(f.id);
+    b.ondblclick = (e) => { e.preventDefault(); editFloorName(b, f); };
     b.oncontextmenu = (e) => { e.preventDefault(); showMenu(e, floorMenu(f)); };
+    b.addEventListener("dragstart", (e) => { e.dataTransfer.setData("application/x-kennel-floor", String(f.id)); e.dataTransfer.effectAllowed = "move"; });
+    // Dropping on the top half of a floor puts the dragged one above it, the bottom half below.
+    const below = (e) => e.clientY > b.getBoundingClientRect().top + b.offsetHeight / 2;
+    b.addEventListener("dragover", (e) => {
+      if (![...e.dataTransfer.types].includes("application/x-kennel-floor")) return;
+      e.preventDefault();
+      b.classList.toggle("dropbefore", !below(e));
+      b.classList.toggle("dropafter", below(e));
+    });
+    b.addEventListener("dragleave", () => b.classList.remove("dropbefore", "dropafter"));
+    b.addEventListener("drop", (e) => {
+      b.classList.remove("dropbefore", "dropafter");
+      const moving = Number(e.dataTransfer.getData("application/x-kennel-floor"));
+      if (!moving || moving === f.id) return;
+      e.preventDefault();
+      const ids = app.state.floors.map((x) => x.id).filter((id) => id !== moving);
+      ids.splice(ids.indexOf(f.id) + (below(e) ? 1 : 0), 0, moving);
+      orderFloors(ids);
+    });
     nav.appendChild(b);
   }
+}
+
+async function orderFloors(ids) {
+  try {
+    await api("/api/floors/order", { method: "POST", body: JSON.stringify({ space: app.state.space, ids }) });
+    await loadState();
+    toast("🏢 floors reordered", false, true);
+  } catch (e) { toast(e.message, true); }
+}
+
+// Names are edited in place: Enter saves, Esc cancels.
+function editFloorName(row, f) {
+  const inp = el("input", "fedit");
+  inp.value = f ? f.name : "";
+  inp.placeholder = "Floor name";
+  const text = row.querySelector(".ftext") || row;
+  text.replaceWith(inp);
+  inp.focus(); inp.select();
+  let done = false;
+  const finish = async (save) => {
+    if (done) return;
+    done = true;
+    const name = inp.value.trim();
+    inp.remove();
+    if (!save || !name || (f && name === f.name)) { renderFloors(); return; }
+    try {
+      if (f) {
+        await api(`/api/floors/${f.id}/rename`, { method: "POST", body: JSON.stringify({ name }) });
+        await loadState();
+        toast(`✎ ${name}`, false, true);
+      } else {
+        const nf = await (await api("/api/floors", { method: "POST", body: JSON.stringify({ Name: name, Icon: "🏢", Space: app.state.space }) })).json();
+        goFloor(nf.ID);
+        toast(`🏢 built ${nf.Name}`, false, true);
+      }
+    } catch (e) { toast(e.message, true); renderFloors(); }
+  };
+  inp.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter") finish(true); if (e.key === "Escape") finish(false); };
+  inp.onblur = () => finish(true);
+  inp.onclick = (e) => e.stopPropagation();
 }
 
 function goFloor(id) {
@@ -301,27 +367,31 @@ function goFloor(id) {
   loadState();
 }
 
-async function newFloor() {
-  const name = prompt("Name the new floor", `Floor ${app.state.floors.length + 1}`);
-  if (!name || !name.trim()) return;
-  try {
-    const f = await (await api("/api/floors", { method: "POST", body: JSON.stringify({ Name: name.trim(), Icon: "🏢", Space: app.state.space }) })).json();
-    goFloor(f.ID);
-    toast(`🏢 built ${f.Name}`, false, true);
-  } catch (e) { toast(e.message, true); }
+function newFloor() {
+  const nav = $("#floors");
+  const row = el("div", "floor new");
+  nav.appendChild(row);
+  editFloorName(row, null);
 }
 
 function floorMenu(f) {
   const post = async (action, body) => {
     try { await api(`/api/floors/${f.id}/${action}`, { method: "POST", body: JSON.stringify(body || {}) }); await loadState(); return true; } catch (e) { toast(e.message, true); return false; }
   };
-  return [
-    ["✎ Rename…", async () => { const n = prompt("Rename floor", f.name); if (n && n.trim() && await post("rename", { name: n.trim() })) toast(`✎ ${n.trim()}`, false, true); }],
-    ["🗑 Remove floor", async () => {
-      if (app.state.floors.length < 2) { toast("a space keeps at least one floor", true); return; }
-      if (await post("delete")) { app.ents.clear(); toast(`🗑 removed ${f.name}; its kennels moved to another floor`, false, true); }
-    }],
-  ];
+  const ids = app.state.floors.map((x) => x.id);
+  const i = ids.indexOf(f.id);
+  const swap = (j) => { const next = [...ids]; [next[i], next[j]] = [next[j], next[i]]; orderFloors(next); };
+  const items = [["✎ Rename", () => { const row = document.querySelector(`#floors .floor[data-floor="${f.id}"]`); if (row) editFloorName(row, f); }]];
+  items.push(["🎨 Icon", () => showMenu({ clientX: 220, clientY: 120 }, FLOOR_ICONS.map((ic) => [`${ic}  ${ic === f.icon ? "✓" : ""}`, async () => { if (await post("rename", { name: f.name, icon: ic })) toast(`${ic} ${f.name}`, false, true); }]))]);
+  if (i > 0) items.push(["↑ Move up", () => swap(i - 1)]);
+  if (i < ids.length - 1) items.push(["↓ Move down", () => swap(i + 1)]);
+  items.push(["—"], ["🗑 Remove floor", async () => {
+    if (app.state.floors.length < 2) { toast("a space keeps at least one floor", true); return; }
+    const to = app.state.floors.find((x) => x.id !== f.id);
+    if (f.kennels && !confirm(`Remove ${f.name}? Its ${f.kennels} kennel${f.kennels === 1 ? "" : "s"} move to ${to.name}.`)) return;
+    if (await post("delete")) { app.ents.clear(); toast(`🗑 removed ${f.name}`, false, true); }
+  }]);
+  return items;
 }
 
 async function moveKennelToFloor(r, floorID) {
@@ -335,7 +405,7 @@ async function moveKennelToFloor(r, floorID) {
 
 function floorTabAt(x, y) {
   const b = document.elementFromPoint(x, y);
-  return b && b.closest ? b.closest("#floors button[data-floor]") : null;
+  return b && b.closest ? b.closest("#floors .floor[data-floor]") : null;
 }
 
 function renderProjects() {
@@ -1029,7 +1099,7 @@ window.addEventListener("mousemove", (e) => {
     case "room": {
       const r = drag.room;
       const tab = r.kennel && floorTabAt(e.clientX, e.clientY);
-      document.querySelectorAll("#floors button").forEach((b) => b.classList.toggle("droptarget", b === tab));
+      document.querySelectorAll("#floors .floor").forEach((b) => b.classList.toggle("droptarget", b === tab));
       r.x = Math.max(1, Math.round(w.x - drag.dx));
       r.y = Math.max(2, Math.round(w.y - drag.dy));
       snapGuides(r);
@@ -1079,7 +1149,7 @@ window.addEventListener("mouseup", async (e) => {
     case "pup": await dropPups(d, w); break;
     case "room": {
       const tab = d.room.kennel && floorTabAt(e.clientX, e.clientY);
-      document.querySelectorAll("#floors button.droptarget").forEach((b) => b.classList.remove("droptarget"));
+      document.querySelectorAll("#floors .floor.droptarget").forEach((b) => b.classList.remove("droptarget"));
       if (tab && Number(tab.dataset.floor) !== app.state.floor) await moveKennelToFloor(d.room, Number(tab.dataset.floor));
       else if (tab) await loadState();
       else await saveRoomBox(d.room, false);

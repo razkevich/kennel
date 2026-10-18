@@ -67,15 +67,18 @@ test("build mode: template, floor, furniture, blocks, moving rooms", async ({ pa
   // Leave build mode and use the door: it spawns a pup with the preset name.
   await page.keyboard.press("b");
   await expect(panel).toBeHidden();
-  await reveal(page, L);
-  const door = await page.evaluate((k) => {
-    const r = window.kennel.app.rooms.find((x) => x.key === k);
-    const d = r.style.blocks.find((b) => b.kind === "door");
-    return window.kennel.roomPos(k, d.x, d.y - 0.05);
-  }, L);
-  page.once("dialog", (d) => d.accept());
-  await page.mouse.click(door.x, door.y);
-  await expect(page.locator("#toast")).toContainText("claude -n PAGER");
+  page.on("dialog", (d) => d.accept());
+  // The map may still be settling after leaving build mode, so measure and click until the door answers.
+  await expect(async () => {
+    await reveal(page, L);
+    const door = await page.evaluate((k) => {
+      const r = window.kennel.app.rooms.find((x) => x.key === k);
+      const d = r.style.blocks.find((b) => b.kind === "door");
+      return window.kennel.roomPos(k, d.x, d.y - 0.05);
+    }, L);
+    await page.mouse.click(door.x, door.y);
+    await expect(page.locator("#toast")).toContainText("claude -n PAGER", { timeout: 1500 });
+  }).toPass({ timeout: 10000 });
 });
 
 test("clicking a pup in build mode selects the pup, and the panel can move it to a kennel", async ({ page }) => {
