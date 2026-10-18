@@ -49,6 +49,12 @@ func (s *Store) Close() error { return s.DB.Close() }
 
 const metaSchema = `
 CREATE TABLE IF NOT EXISTS kv(k TEXT PRIMARY KEY, v TEXT);
+CREATE TABLE IF NOT EXISTS floors(
+	id INTEGER PRIMARY KEY,
+	name TEXT NOT NULL,
+	icon TEXT NOT NULL DEFAULT '',
+	sort INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS kennels(
 	id INTEGER PRIMARY KEY,
 	name TEXT NOT NULL UNIQUE,
@@ -116,6 +122,8 @@ func (s *Store) migrate() error {
 	for _, col := range []struct{ table, name, def string }{
 		{"pup_meta", "theme", "TEXT NOT NULL DEFAULT ''"},
 		{"pup_meta", "unfiled", "INTEGER NOT NULL DEFAULT 0"},
+		{"kennels", "floor_id", "INTEGER NOT NULL DEFAULT 0"},
+		{"kennels", "smart", "TEXT NOT NULL DEFAULT ''"},
 	} {
 		var n int
 		_ = s.DB.QueryRow(`SELECT count(*) FROM pragma_table_info(?) WHERE name=?`, col.table, col.name).Scan(&n)
@@ -124,6 +132,9 @@ func (s *Store) migrate() error {
 				return err
 			}
 		}
+	}
+	if err := s.firstFloor(); err != nil {
+		return err
 	}
 	var v string
 	_ = s.DB.QueryRow(`SELECT v FROM kv WHERE k='index_version'`).Scan(&v)

@@ -19,6 +19,11 @@ type Kennel struct {
 	Cwd   string
 	Rules Rules
 	Sort  int
+	// Floor is where the kennel's room stands on the map.
+	Floor int64
+	// Smart names a self-filling kind ("yard", "fire", "workshop"…); such a kennel
+	// shows matching pups instead of the ones filed into it.
+	Smart string
 }
 
 // Rules auto-assign pups to a kennel when they have no explicit kennel.
@@ -66,7 +71,7 @@ type PupMeta struct {
 }
 
 func (s *Store) Kennels() ([]Kennel, error) {
-	rows, err := s.DB.Query(`SELECT id, name, icon, color, cwd, rules, sort FROM kennels ORDER BY sort, id`)
+	rows, err := s.DB.Query(`SELECT id, name, icon, color, cwd, rules, sort, floor_id, smart FROM kennels ORDER BY sort, id`)
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +80,7 @@ func (s *Store) Kennels() ([]Kennel, error) {
 	for rows.Next() {
 		var k Kennel
 		var rules string
-		if err := rows.Scan(&k.ID, &k.Name, &k.Icon, &k.Color, &k.Cwd, &rules, &k.Sort); err != nil {
+		if err := rows.Scan(&k.ID, &k.Name, &k.Icon, &k.Color, &k.Cwd, &rules, &k.Sort, &k.Floor, &k.Smart); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(rules), &k.Rules)
@@ -94,16 +99,16 @@ func (s *Store) SaveKennel(k *Kennel) error {
 		var maxSort sql.NullInt64
 		_ = s.DB.QueryRow(`SELECT max(sort) FROM kennels`).Scan(&maxSort)
 		k.Sort = int(maxSort.Int64) + 1
-		res, err := s.DB.Exec(`INSERT INTO kennels(name, icon, color, cwd, rules, sort, created) VALUES(?,?,?,?,?,?,?)`,
-			k.Name, k.Icon, k.Color, k.Cwd, rules, k.Sort, time.Now().UnixMilli())
+		res, err := s.DB.Exec(`INSERT INTO kennels(name, icon, color, cwd, rules, sort, created, floor_id, smart) VALUES(?,?,?,?,?,?,?,?,?)`,
+			k.Name, k.Icon, k.Color, k.Cwd, rules, k.Sort, time.Now().UnixMilli(), k.Floor, k.Smart)
 		if err != nil {
 			return err
 		}
 		k.ID, _ = res.LastInsertId()
 		return nil
 	}
-	_, err := s.DB.Exec(`UPDATE kennels SET name=?, icon=?, color=?, cwd=?, rules=?, sort=? WHERE id=?`,
-		k.Name, k.Icon, k.Color, k.Cwd, rules, k.Sort, k.ID)
+	_, err := s.DB.Exec(`UPDATE kennels SET name=?, icon=?, color=?, cwd=?, rules=?, sort=?, floor_id=?, smart=? WHERE id=?`,
+		k.Name, k.Icon, k.Color, k.Cwd, rules, k.Sort, k.Floor, k.Smart, k.ID)
 	return err
 }
 
@@ -220,8 +225,8 @@ func (s *Store) RestoreKennel(k Kennel) error {
 		b, _ := json.Marshal(k.Rules)
 		rules = string(b)
 	}
-	_, err := s.DB.Exec(`INSERT INTO kennels(id, name, icon, color, cwd, rules, sort, created) VALUES(?,?,?,?,?,?,?,?)`,
-		k.ID, k.Name, k.Icon, k.Color, k.Cwd, rules, k.Sort, time.Now().UnixMilli())
+	_, err := s.DB.Exec(`INSERT INTO kennels(id, name, icon, color, cwd, rules, sort, created, floor_id, smart) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		k.ID, k.Name, k.Icon, k.Color, k.Cwd, rules, k.Sort, time.Now().UnixMilli(), k.Floor, k.Smart)
 	return err
 }
 

@@ -185,9 +185,6 @@ func Generate(dir string, now time.Time) error {
 	if err := os.WriteFile(filepath.Join(dir, Marker), []byte("synthetic data\n"), 0o644); err != nil {
 		return err
 	}
-	if err := writeGear(dir); err != nil {
-		return err
-	}
 	if err := os.WriteFile(filepath.Join(dir, PanesFile), []byte(demoPanes), 0o644); err != nil {
 		return err
 	}
@@ -321,44 +318,4 @@ func renderSession(sp Spec, cwd string, now time.Time) []string {
 		add(map[string]any{"type": "cost-state", "totalCostUSD": sp.CostUSD, "sessionId": sp.ID})
 	}
 	return lines
-}
-
-func writeGear(dir string) error {
-	files := map[string]string{
-		filepath.Join(filepath.Dir(dir), ".claude.json"): `{"mcpServers":{
-  "linear":{"type":"http","url":"https://mcp.linear.app/mcp"},
-  "github":{"type":"http","url":"https://api.githubcopilot.com/mcp/"},
-  "postgres":{"command":"npx","args":["-y","@modelcontextprotocol/server-postgres","postgres://localhost/atlas"]}}}`,
-		filepath.Join(dir, "settings.json"): `{
-  "theme": "dark",
-  "enabledPlugins": {
-    "superpowers@superpowers-dev": true,
-    "frontend-design@claude-plugins-official": true,
-    "vercel@claude-plugins-official": false
-  },
-  "hooks": {
-    "Stop": [{"hooks": [{"type": "command", "command": "afplay /System/Library/Sounds/Glass.aiff"}]}],
-    "SessionStart": [{"matcher": "startup", "hooks": [{"type": "command", "command": "~/.claude/hooks/context.sh"}]}]
-  }
-}
-`,
-		filepath.Join(dir, "skills", "deploy-checklist", "SKILL.md"):                                                                           "---\nname: deploy-checklist\ndescription: Walk through the release checklist before any production deploy\n---\n",
-		filepath.Join(dir, "skills", "grafana-dash", "SKILL.md"):                                                                               "---\nname: grafana-dash\ndescription: Open Grafana dashboards as live terminal charts\n---\n",
-		filepath.Join(dir, "skills", "weekly-report", "SKILL.md"):                                                                              "---\nname: weekly-report\ndescription: Summarize the week's merged PRs and incidents for the team update\n---\n",
-		filepath.Join(dir, "skills-disabled", "old-jira", "SKILL.md"):                                                                          "---\nname: old-jira\ndescription: Legacy Jira helper (replaced by Linear MCP)\n---\n",
-		filepath.Join(dir, "agents", "reviewer.md"):                                                                                            "---\nname: reviewer\ndescription: Strict code reviewer for correctness and security\n---\n",
-		filepath.Join(dir, "commands", "standup.md"):                                                                                           "---\ndescription: Draft my standup from yesterday's sessions\n---\n",
-		filepath.Join(dir, "plugins", "cache", "superpowers-dev", "superpowers", "6.3.0", "skills", "brainstorming", "SKILL.md"):               "---\ndescription: Turn ideas into designs before writing code\n---\n",
-		filepath.Join(dir, "plugins", "cache", "superpowers-dev", "superpowers", "6.3.0", "skills", "systematic-debugging", "SKILL.md"):        "---\ndescription: Find root causes before proposing fixes\n---\n",
-		filepath.Join(dir, "plugins", "cache", "claude-plugins-official", "frontend-design", "1.0.0", "skills", "frontend-design", "SKILL.md"): "---\ndescription: Distinctive, intentional UI design\n---\n",
-	}
-	for path, content := range files {
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			return err
-		}
-		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-			return err
-		}
-	}
-	return nil
 }

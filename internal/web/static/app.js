@@ -221,6 +221,10 @@ function layout(state) {
 }
 
 const pupOf = (id) => app.state && app.state.pups[id];
+// Your own kennels hold the pups you file; smart ones fill themselves.
+const isOwnKennel = (r) => !!(r && r.kennel && !r.smart);
+const ownKennels = () => (app.state.kennels || []).filter((k) => !k.smart);
+const dimmed = (p) => !!(app.project && p && p.project !== app.project);
 const thingOf = (id) => app.state && app.state.things[id];
 
 // ---------- data ----------
@@ -256,12 +260,12 @@ async function loadState() {
   if ((app.state.appearance || "") !== appearance) applyAppearance(app.state.appearance);
   layout(app.state);
   renderFloors();
+  renderProjects();
   renderCounts();
   renderPack();
   renderBuilder();
   renderThemeStatus();
   if (native) native.postMessage({ type: "counts", counts: app.state.counts });
-  loadInbox();
   if (lib.open) refreshLibrary();
   if (app.tab === "jobs") renderJobs();
   if (app.sel) renderCard();
@@ -288,11 +292,74 @@ function listen() {
 function renderFloors() {
   const nav = $("#floors");
   nav.innerHTML = "";
-  app.state.floors.forEach((f, i) => {
-    const b = el("button", i === app.floor ? "on" : "", f);
-    b.onclick = () => { app.floor = i; app.sel = null; $("#card").hidden = true; app.placedYou = false; app.ents.clear(); loadState(); };
+  for (const f of app.state.floors) {
+    const b = el("button", f.id === app.state.floor ? "on" : "", `${f.icon || "🏢"} ${f.name}`);
+    b.dataset.floor = f.id;
+    b.title = "right-click to rename or remove · drop a kennel here to move it";
+    b.onclick = () => goFloor(f.id);
+    b.oncontextmenu = (e) => { e.preventDefault(); showMenu(e, floorMenu(f)); };
     nav.appendChild(b);
-  });
+  }
+  const add = el("button", "addfloor", "＋");
+  add.title = "new floor";
+  add.onclick = newFloor;
+  nav.appendChild(add);
+}
+
+function goFloor(id) {
+  if (id === app.state.floor) return;
+  app.floor = id; app.sel = null; app.multi.clear();
+  $("#card").hidden = true;
+  app.placedYou = false; app.ents.clear();
+  loadState();
+}
+
+async function newFloor() {
+  const name = prompt("Name the new floor", `Floor ${app.state.floors.length + 1}`);
+  if (!name || !name.trim()) return;
+  try {
+    const f = await (await api("/api/floors", { method: "POST", body: JSON.stringify({ Name: name.trim(), Icon: "🏢" }) })).json();
+    goFloor(f.ID);
+    toast(`🏢 built ${f.Name}`, false, true);
+  } catch (e) { toast(e.message, true); }
+}
+
+function floorMenu(f) {
+  const post = async (action, body) => {
+    try { await api(`/api/floors/${f.id}/${action}`, { method: "POST", body: JSON.stringify(body || {}) }); await loadState(); return true; } catch (e) { toast(e.message, true); return false; }
+  };
+  return [
+    ["✎ Rename…", async () => { const n = prompt("Rename floor", f.name); if (n && n.trim() && await post("rename", { name: n.trim() })) toast(`✎ ${n.trim()}`, false, true); }],
+    ["🗑 Remove floor", async () => {
+      if (app.state.floors.length < 2) { toast("the last floor stays", true); return; }
+      if (await post("delete")) { app.ents.clear(); toast(`🗑 removed ${f.name}; its kennels moved to another floor`, false, true); }
+    }],
+  ];
+}
+
+async function moveKennelToFloor(r, floorID) {
+  const f = app.state.floors.find((x) => x.id === floorID);
+  try {
+    await api(`/api/kennels/${r.kennel}/floor`, { method: "POST", body: JSON.stringify({ floor: floorID }) });
+    await loadState();
+    toast(`🏢 moved ${r.title} to ${f ? f.name : "another floor"}`, false, true);
+  } catch (e) { toast(e.message, true); }
+}
+
+function floorTabAt(x, y) {
+  const b = document.elementFromPoint(x, y);
+  return b && b.closest ? b.closest("#floors button[data-floor]") : null;
+}
+
+function renderProjects() {
+  const sel = $("#projectsel");
+  const v = app.project;
+  sel.innerHTML = "";
+  sel.appendChild(new Option("All projects", ""));
+  for (const pr of app.state.projects) sel.appendChild(new Option(`${pr.name} · ${pr.count}`, pr.root));
+  if (v && !app.state.projects.some((pr) => pr.root === v)) sel.appendChild(new Option(v.split("/").pop(), v));
+  sel.value = v;
+  sel.classList.toggle("on", !!v);
 }
 
 function renderCounts() {
@@ -315,40 +382,61 @@ function miniDog(fur, status, agent) {
   return cv;
 }
 
+// The session tray: everything recent, grouped by what it needs from you. Drag any
+// row onto one of your kennels to file it.
+const tray = { q: "", closed: {}, more: {} };
+
 function renderPack() {
   const box = $("#pack");
-  box.innerHTML = "";
-  const pups = Object.values(app.state.pups);
+  if (!box.querySelector(".traylist")) {
+    box.innerHTML = "";
+    const q = el("input");
+    q.type = "search";
+    q.className = "trayq";
+    q.placeholder = "Filter sessions…";
+    q.oninput = () => { tray.q = q.value; renderTray(); };
+    box.append(q, el("div", "traylist"));
+  }
+  renderTray();
+}
+
+function renderTray() {
+  const list = $("#pack .traylist");
+  const q = tray.q.trim().toLowerCase();
+  const pups = app.state.tray.map(pupOf).filter(Boolean)
+    .filter((p) => !dimmed(p))
+    .filter((p) => !q || `${p.title} ${p.repo} ${p.kennel} ${p.snippet} ${p.branch}`.toLowerCase().includes(q));
+  const used = new Set();
+  const take = (f) => pups.filter((p) => !used.has(p.id) && f(p)).map((p) => (used.add(p.id), p));
   const groups = [
-    ["waiting", "Needs you"], ["working", "Working"], ["done", "Done"], ["idle", "Idle"], ["offline", "Asleep"],
+    ["waiting", "❗ Needs you", take((p) => p.status === "waiting")],
+    ["new", "📥 New, not in a kennel", take((p) => !p.kennel)],
+    ["working", "⚡ Working", take((p) => p.status === "working")],
+    ["recent", "🕘 Recent", take(() => true)],
   ];
-  for (const [st, label] of groups) {
-    const list = pups.filter((p) => p.status === st).sort((a, b) => b.updated - a.updated);
-    if (!list.length) continue;
-    const g = el("div", "group");
-    g.appendChild(el("h4", "", `${label} · ${list.length}`));
-    for (const p of list) g.appendChild(memberRow(p));
-    box.appendChild(g);
-  }
-  const things = Object.values(app.state.things);
-  if (things.length) {
-    const g = el("div", "group");
-    g.appendChild(el("h4", "", `Things · ${things.length}`));
-    for (const t of things) {
-      const row = el("div", "member" + (app.sel === t.key ? " on" : ""));
-      const icon = el("div", "", t.icon);
-      icon.style.width = "28px"; icon.style.textAlign = "center"; icon.style.fontSize = "18px";
-      const who = el("div", "who");
-      who.appendChild(el("div", "name", t.name));
-      who.appendChild(el("div", "what", "$ " + t.command));
-      const dot = el("span", "dot");
-      dot.style.background = t.running ? STATUS.working.color : STATUS.offline.color;
-      row.append(icon, who, dot);
-      row.onclick = () => select(t.key, true);
-      g.appendChild(row);
+  // Rebuilding the list under the cursor would break hovers and drags, so only redraw on change.
+  const sig = JSON.stringify([q, app.project, app.sel, tray.closed, tray.more, groups.map(([k, , items]) => [k, items.map((p) => [p.id, p.title, p.status, p.kennel, p.updated, p.starred])])]);
+  if (sig === tray.sig) return;
+  tray.sig = sig;
+  list.innerHTML = "";
+  for (const [key, label, items] of groups) {
+    if (!items.length) continue;
+    const g = el("div", "group" + (tray.closed[key] ? " closed" : ""));
+    const h = el("h4", "", `${label} · ${items.length}`);
+    h.onclick = () => { tray.closed[key] = !tray.closed[key]; renderTray(); };
+    g.appendChild(h);
+    if (!tray.closed[key]) {
+      const limit = tray.more[key] ? items.length : 25;
+      for (const p of items.slice(0, limit)) g.appendChild(memberRow(p));
+      if (items.length > limit) {
+        const more = el("button", "more", `show ${items.length - limit} more`);
+        more.onclick = () => { tray.more[key] = true; renderTray(); };
+        g.appendChild(more);
+      }
     }
-    box.appendChild(g);
+    list.appendChild(g);
   }
+  if (!list.children.length) list.appendChild(el("div", "empty", q || app.project ? "Nothing matches." : "No sessions in the last two weeks."));
 }
 
 function memberRow(p) {
@@ -357,11 +445,16 @@ function memberRow(p) {
   const who = el("div", "who");
   who.appendChild(el("div", "name", (p.starred ? "★ " : "") + p.title));
   who.appendChild(el("div", "what", p.snippet || p.repo));
+  const side = el("div", "side");
+  if (p.kennel) side.appendChild(el("span", "pill kennel", p.kennel));
+  side.appendChild(el("span", "age", relAge(p.updated)));
   const dot = el("span", "dot");
   dot.style.background = STATUS[p.status].color;
-  row.append(miniDog(p.fur, p.status, p.agent), who, dot);
-  row.onclick = () => select(p.id, true);
+  row.append(miniDog(p.fur, p.status, p.agent), who, side, dot);
+  row.title = "click to see it · double-click to open · drag onto a kennel to file";
+  row.onclick = () => select(p.id, app.ents.has(p.id));
   row.ondblclick = () => act("open", p.id);
+  draggablePup(row, p);
   return row;
 }
 
@@ -438,7 +531,7 @@ function renderCard() {
     const move = el("label", "move", "🏠 kennel");
     const sel = el("select");
     sel.appendChild(new Option("— none —", "0"));
-    for (const k of app.state.kennels || []) sel.appendChild(new Option(`${k.icon} ${k.name}`, String(k.id), false, k.name === p.kennel));
+    for (const k of ownKennels()) sel.appendChild(new Option(`${k.icon} ${k.name}`, String(k.id), false, k.name === p.kennel));
     sel.onchange = () => act("move", p.id, { kennel: Number(sel.value) });
     move.appendChild(sel);
     card.append(row, el("div", "meta", meta.filter(Boolean).join(" · ")), el("div", "snip", p.snippet), actions, move);
@@ -486,8 +579,23 @@ function renderRoomCard(key) {
   const b3 = el("button", "", "🔨 Shape");
   b3.onclick = () => { setBuild(true); build.room = r.key; renderBuilder(); };
   actions.appendChild(b3);
-  card.append(row, el("div", "snip", r.blurb && !r.blurb.startsWith("/") ? r.blurb : (isKennel ? "Your kennel." : "")), actions);
-  if (isKennel) {
+  if (r.kennel) {
+    const rn = el("button", "", "✎ Rename");
+    rn.onclick = () => renameKennel(r);
+    const del = el("button", "", "🗑 Delete");
+    del.onclick = () => deleteKennel(r);
+    actions.append(rn, del);
+  }
+  card.append(row, el("div", "snip", r.smart ? `Fills itself: ${r.blurb}.` : r.blurb && !r.blurb.startsWith("/") ? r.blurb : "Your kennel. Drag sessions in from the tray."), actions);
+  if (r.kennel && app.state.floors.length > 1) {
+    const mv = el("label", "move", "🏢 floor");
+    const sel = el("select");
+    for (const f of app.state.floors) sel.appendChild(new Option(`${f.icon} ${f.name}`, String(f.id), false, f.id === app.state.floor));
+    sel.onchange = () => moveKennelToFloor(r, Number(sel.value));
+    mv.appendChild(sel);
+    card.appendChild(mv);
+  }
+  if (isKennel && !r.smart) {
     const kid = Number(r.key.slice(7));
     const box = el("div", "addpups");
     const q = el("input");
@@ -621,7 +729,7 @@ async function runSearch() {
 }
 
 // ---------- ask ----------
-const PANELS = ["pack", "ask", "build", "jobs", "art", "gear"];
+const PANELS = ["pack", "ask", "build", "jobs", "art"];
 function showTab(tab) {
   if (tab === "build") { setBuild(true); return; }
   if (build.on) setBuild(false);
@@ -631,7 +739,6 @@ function showTab(tab) {
   if (tab === "ask") $("#askq").focus();
   if (tab === "jobs") renderJobs();
   if (tab === "art") renderArt();
-  if (tab === "gear") renderGear();
   app.tab = tab;
 }
 for (const b of document.querySelectorAll("#side .tabs button")) b.onclick = () => showTab(b.dataset.tab);
@@ -835,6 +942,8 @@ window.addEventListener("mousemove", (e) => {
       break;
     case "room": {
       const r = drag.room;
+      const tab = r.kennel && floorTabAt(e.clientX, e.clientY);
+      document.querySelectorAll("#floors button").forEach((b) => b.classList.toggle("droptarget", b === tab));
       r.x = Math.max(1, Math.round(w.x - drag.dx));
       r.y = Math.max(2, Math.round(w.y - drag.dy));
       snapGuides(r);
@@ -882,7 +991,14 @@ window.addEventListener("mouseup", async (e) => {
   }
   switch (d.kind) {
     case "pup": await dropPups(d, w); break;
-    case "room": await saveRoomBox(d.room, false); break;
+    case "room": {
+      const tab = d.room.kennel && floorTabAt(e.clientX, e.clientY);
+      document.querySelectorAll("#floors button.droptarget").forEach((b) => b.classList.remove("droptarget"));
+      if (tab && Number(tab.dataset.floor) !== app.state.floor) await moveKennelToFloor(d.room, Number(tab.dataset.floor));
+      else if (tab) await loadState();
+      else await saveRoomBox(d.room, false);
+      break;
+    }
     case "resize": await saveRoomBox(d.room, true); break;
     case "marquee":
       if (app.multi.size === 1) { select([...app.multi][0], false); app.multi.clear(); }
@@ -897,14 +1013,8 @@ function click(sx, sy, w, e) {
     const r = roomAt(w.x, w.y);
     const hit = !build.carry && entityAt(sx, sy);
     if (hit) { select(hit.id, false); return; }
-    if (r && build.carry && build.room === r.key) {
-      const box = interior(r);
-      const item = { kind: build.carry.kind, x: Math.max(0, Math.min(1, (w.x - box.x) / box.w)), y: Math.max(0, Math.min(1, (w.y + 0.4 - box.y) / box.h)) };
-      const st = styleOf(r);
-      if (build.carry.type === "decor") (st.decor = st.decor || []).push(item);
-      else { item.config = {}; (st.blocks = st.blocks || []).push(item); build.carry = null; }
-      saveStyle(r).then(renderBuilder);
-    } else if (r) { build.room = r.key; app.sel = "room:" + r.key; renderBuilder(); renderCard(); }
+    if (r && build.carry) placeIn(r, build.carry, w);
+    else if (r) { build.room = r.key; app.sel = "room:" + r.key; renderBuilder(); renderCard(); }
     return;
   }
   const hit = entityAt(sx, sy);
@@ -980,9 +1090,9 @@ async function dropPups(d, w) {
     await saveStyle(target, true);
     return;
   }
-  if (!target.key.startsWith("kennel:")) {
+  if (!isOwnKennel(target)) {
     back();
-    toast(app.state.floor === 2 ? "drop it inside one of your kennels" : "rooms on this floor fill themselves — file pups on 🏠 Kennels", true);
+    toast(`${target.title} fills itself; drop pups into one of your own kennels`, true);
     return;
   }
   const st = styleOf(target);
@@ -995,19 +1105,17 @@ async function dropPups(d, w) {
   for (const g of d.group) g.ent.dragging = false;
   toast(`🏠 ${d.group.length > 1 ? d.group.length + " pups" : "filed"} into ${target.icon} ${target.title}`, false, true);
   app.multi.clear();
-  loadInbox();
 }
 
-const inKennel = (id) => { const e = app.ents.get(id); return !!(e && e.room && e.room.key.startsWith("kennel:")); };
+const inKennel = (id) => { const e = app.ents.get(id); return isOwnKennel(e && e.room); };
 
-// Removing a pup from a kennel only unfiles it: the session stays in the library and inbox.
+// Removing a pup from a kennel only unfiles it: the session goes back to 📥 New.
 async function unfile(ids) {
   const names = [...new Set(ids.map((id) => pupOf(id) && pupOf(id).kennel).filter(Boolean))];
   const one = ids.length === 1 && pupOf(ids[0]) ? pupOf(ids[0]).title : `${ids.length} pups`;
   for (const id of ids) await act("move", id, { kennel: 0 });
   app.multi.clear();
   toast(`✕ removed ${one} from ${names.join(", ") || "its kennel"}`, false, true);
-  loadInbox();
 }
 
 // Delete takes pups out of the kennel they're in; anywhere else it archives them.
@@ -1087,8 +1195,8 @@ function pupMenu(ent) {
       [p && p.starred ? "☆ Unstar" : "★ Star", () => act("star", ent.id)],
       ["✎ Rename…", () => { const t = prompt("Rename", p ? p.title : ""); if (t) act("rename", ent.id, { title: t }); }]);
   }
-  const kennels = app.state.kennels || [];
-  if (kennels.length) items.push(["—"], ...kennels.slice(0, 12).map((k) => [`→ ${k.icon || "🏠"} ${k.name}`, async () => { for (const id of ids) await act("move", id, { kennel: k.id }); toast(`🏠 filed ${ids.length > 1 ? ids.length + " pups " : ""}into ${k.name}`, false, true); app.multi.clear(); loadInbox(); }]));
+  const kennels = ownKennels();
+  if (kennels.length) items.push(["—"], ...kennels.slice(0, 12).map((k) => [`→ ${k.icon || "🏠"} ${k.name}`, async () => { for (const id of ids) await act("move", id, { kennel: k.id }); toast(`🏠 filed ${ids.length > 1 ? ids.length + " pups " : ""}into ${k.name}`, false, true); app.multi.clear(); }]));
   const r = ent.room;
   if (r && r.style && r.style.spots && ids.some((id) => r.style.spots[id])) items.push(["—"], ["↺ Back to its slot", () => { for (const id of ids) delete r.style.spots[id]; saveStyle(r, true); }]);
   const filed = ids.filter(inKennel);
@@ -1104,10 +1212,36 @@ function roomMenu(r) {
   const st = r.style || {};
   const pos = st.pos && st.pos[String(app.state.floor)];
   const items = [["🐣 New pup here", () => newPupIn(r)], ["🔨 Customize", () => { setBuild(true); build.room = r.key; renderBuilder(); }]];
+  if (r.kennel) {
+    items.push(["✎ Rename…", () => renameKennel(r)]);
+    for (const f of app.state.floors) if (f.id !== app.state.floor) items.push([`🏢 Move to ${f.name}`, () => moveKennelToFloor(r, f.id)]);
+  }
   if (pos && pos.w) items.push(["⤡ Fit to pups", () => { delete pos.w; delete pos.h; saveStyle(r); }]);
   if (st.spots && Object.keys(st.spots).length) items.push(["↺ Tidy pups", () => { delete st.spots; saveStyle(r); }]);
   if (pos) items.push(["⌂ Back to auto layout", () => { delete st.pos[String(app.state.floor)]; saveStyle(r); }]);
+  if (r.kennel) items.push(["—"], ["🗑 Delete kennel", () => deleteKennel(r)]);
   return items;
+}
+
+async function renameKennel(r) {
+  const name = prompt("Rename kennel", r.title);
+  if (!name || !name.trim() || name.trim() === r.title) return;
+  try {
+    await api(`/api/kennels/${r.kennel}/rename`, { method: "POST", body: JSON.stringify({ name: name.trim() }) });
+    await loadState();
+    toast(`✎ ${name.trim()}`, false, true);
+  } catch (e) { toast(e.message, true); }
+}
+
+async function deleteKennel(r) {
+  const n = r.pups.length;
+  if (!r.smart && n && !confirm(`Delete ${r.title}? Its ${n} pups go back to 📥 New; the sessions themselves are kept.`)) return;
+  try {
+    await api(`/api/kennels/${r.kennel}/delete`, { method: "POST", body: "{}" });
+    app.sel = null; $("#card").hidden = true;
+    await loadState();
+    toast(`🗑 deleted ${r.title}`, false, true);
+  } catch (e) { toast(e.message, true); }
 }
 
 async function newPupIn(r) {
@@ -1405,6 +1539,13 @@ const WALL = 1.6; // tiles of back wall above each room's floor
 
 
 function drawRoom(r) {
+  ctx.save();
+  if (app.project && !r.pups.some((id) => !dimmed(pupOf(id)))) ctx.globalAlpha = 0.45;
+  drawRoomBody(r);
+  ctx.restore();
+}
+
+function drawRoomBody(r) {
   const x0 = r.x * TILE, y0 = r.y * TILE, W = r.w * TILE, H = r.h * TILE;
   const wallH = WALL * TILE;
   const style = r.look.Border;
@@ -1451,7 +1592,7 @@ function drawRoom(r) {
   const n = r.pups.length + r.things.length;
   if (!n) {
     ctx.fillStyle = PAL.empty; ctx.font = "italic 13px Inter, system-ui";
-    ctx.textAlign = "center"; ctx.fillText(r.blurb && !r.blurb.startsWith("/") ? r.blurb : "empty", x0 + W / 2, y0 + wallH + 62); ctx.textAlign = "left";
+    ctx.textAlign = "center"; ctx.fillText(isOwnKennel(r) ? "drag sessions here from the tray →" : r.blurb || "empty", x0 + W / 2, y0 + wallH + 62); ctx.textAlign = "left";
   }
   if (app.dropRoom === r.key) {
     ctx.fillStyle = "#3d47db1f"; ctx.fillRect(x0, y0, W, H);
@@ -1480,7 +1621,7 @@ function autoDecor(r, x0, y0, W, H) {
   plant(x0 + 16, y0 + 30, 1); plant(x0 + W - 16, y0 + 30, 1);
   if (W >= 260) bookshelf(x0 + 40, y0 + 4, Math.min(84, W / 4));
   if (f === "▒") return;
-  if (r.key === "lobby" || f === "~") { sofa(x0 + W / 2 - 40, y0 + H - 26); rug(x0 + W / 2, y0 + H - 46, 110, 36, PAL === NIGHT ? "#3a355e" : "#e7e2f7"); }
+  if (r.smart === "lobby" || f === "~") { sofa(x0 + W / 2 - 40, y0 + H - 26); rug(x0 + W / 2, y0 + H - 46, 110, 36, PAL === NIGHT ? "#3a355e" : "#e7e2f7"); }
   if (H > 160 && W >= 220) plant(x0 + W - 18, y0 + H - 14, 0.8);
 }
 
@@ -1557,6 +1698,13 @@ function nameTag(x, y, text, selected, dot) {
 function drawPup(e) {
   const p = pupOf(e.id);
   if (!p) return;
+  ctx.save();
+  if (dimmed(p)) ctx.globalAlpha = 0.18;
+  drawPupBody(e, p);
+  ctx.restore();
+}
+
+function drawPupBody(e, p) {
   const s = 3;
   const x = e.x * TILE, y = e.y * TILE;
   const selected = app.sel === e.id;
@@ -1713,6 +1861,15 @@ function render() {
   if (!youDrawn) drawYou();
   drawDropHover();
   drawOverlays();
+  if (!app.rooms.length) {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const cw = canvas.width / dpr, ch = canvas.height / dpr;
+    ctx.textAlign = "center"; ctx.fillStyle = PAL.labelInk;
+    ctx.font = "700 20px Inter, system-ui"; ctx.fillText("This floor is empty", cw / 2, ch / 2 - 14);
+    ctx.font = "14px Inter, system-ui"; ctx.fillStyle = PAL.empty;
+    ctx.fillText("Draw a kennel with ▭ (R), or open 🔨 Build to add rooms that fill themselves.", cw / 2, ch / 2 + 14);
+    ctx.textAlign = "left";
+  }
   if (app.shownZoom !== app.cam.z) { app.shownZoom = app.cam.z; $("#zoomval").textContent = Math.round(app.cam.z * 100) + "%"; }
 
   const near = nearest();
@@ -1875,20 +2032,67 @@ function chip(label, on, fn, cls) {
   return b;
 }
 
+function blockChips() {
+  const bk = el("div", "chips");
+  for (const k of catalog.kinds) {
+    const c = chip(`${k.icon} ${k.name}`, false, () => {
+      build.carry = build.carry && build.carry.kind === k.key ? null : { type: "block", kind: k.key };
+      renderBuilder();
+    }, build.carry && build.carry.kind === k.key ? "carry" : "");
+    c.title = k.blurb;
+    carriable(c, { type: "block", kind: k.key });
+    bk.appendChild(c);
+  }
+  return bk;
+}
+
+// Chips in the builder can also be dragged straight onto a room.
+function carriable(node, item) {
+  node.draggable = true;
+  node.addEventListener("dragstart", (e) => { e.dataTransfer.setData("application/x-kennel-block", JSON.stringify(item)); e.dataTransfer.effectAllowed = "copy"; });
+}
+
+function placeIn(r, item, w) {
+  const box = interior(r);
+  const placed = { kind: item.kind, x: Math.max(0, Math.min(1, (w.x - box.x) / box.w)), y: Math.max(0, Math.min(1, (w.y + 0.4 - box.y) / box.h)) };
+  const st = styleOf(r);
+  if (item.type === "decor") (st.decor = st.decor || []).push(placed);
+  else { placed.config = {}; (st.blocks = st.blocks || []).push(placed); }
+  build.room = r.key;
+  if (item.type === "block") build.carry = null;
+  return saveStyle(r).then(renderBuilder);
+}
+
+async function addSmart(k) {
+  try {
+    await api("/api/kennels", { method: "POST", body: JSON.stringify({ Name: k.Name, Icon: k.Icon, Smart: k.Key, Floor: app.state.floor }) });
+    await loadState();
+    toast(`${k.Icon} added ${k.Name}`, false, true);
+  } catch (e) { toast(e.message, true); }
+}
+
 function renderBuilder() {
   const box = $("#build");
   if (!box || box.hidden) return;
   box.innerHTML = "";
   const r = build.room && roomByKey(build.room);
   if (!r) {
-    box.appendChild(el("div", "hint", "Click any room to shape it: size, floor, walls, furniture, and blocks that do things. Your own kennels can also pull pups in with a 🧲 magnet."));
-    box.appendChild(el("h3", "", "blocks you can place"));
-    for (const k of catalog.kinds) {
-      const c = el("div", "blockcard");
-      c.appendChild(el("div", "head", `${k.icon} ${k.name}`));
-      c.appendChild(el("div", "hint", k.blurb));
-      box.appendChild(c);
+    box.appendChild(el("div", "hint", "Add rooms to this floor, or click a room on the map to shape it."));
+    box.appendChild(el("h3", "", "add a kennel"));
+    const own = el("div", "chips");
+    own.appendChild(chip("▭ Draw a kennel", false, () => { setTool("room"); toast("drag on the map to draw it"); }));
+    box.appendChild(own);
+    box.appendChild(el("h3", "", "rooms that fill themselves"));
+    const sm = el("div", "smartgrid");
+    for (const k of catalog.smarts) {
+      const c = el("button", "smart");
+      c.append(el("b", "", `${k.Icon} ${k.Name}`), el("span", "", k.Blurb));
+      c.onclick = () => addSmart(k);
+      sm.appendChild(c);
     }
+    box.appendChild(sm);
+    box.appendChild(el("h3", "", "blocks: click one, then click a room (or drag it there)"));
+    box.appendChild(blockChips());
     return;
   }
   const st = styleOf(r);
@@ -1934,16 +2138,13 @@ function renderBuilder() {
     const b = el("button", "decor" + (build.carry && build.carry.kind === d.key ? " carry" : ""), d.icon);
     b.title = d.name;
     b.onclick = () => { build.carry = build.carry && build.carry.kind === d.key ? null : { type: "decor", kind: d.key }; renderBuilder(); };
+    carriable(b, { type: "decor", kind: d.key });
     dc.appendChild(b);
   }
   box.appendChild(dc);
 
-  box.appendChild(el("h3", "", "blocks — pick one, then click in the room"));
-  const bk = el("div", "chips");
-  for (const k of catalog.kinds) bk.appendChild(chip(`${k.icon} ${k.name}`, false, () => {
-    build.carry = build.carry && build.carry.kind === k.key ? null : { type: "block", kind: k.key }; renderBuilder();
-  }, build.carry && build.carry.kind === k.key ? "carry" : ""));
-  box.appendChild(bk);
+  box.appendChild(el("h3", "", "blocks: click one, then click in the room (or drag it there)"));
+  box.appendChild(blockChips());
 
   (st.blocks || []).forEach((b, i) => {
     const k = kindOf(b.kind);
@@ -2044,6 +2245,14 @@ const dropTargetAt = (clientX, clientY) => {
 
 canvas.addEventListener("dragover", (e) => {
   e.preventDefault();
+  if ([...e.dataTransfer.types].includes("application/x-kennel-block")) {
+    e.dataTransfer.dropEffect = "copy";
+    const rc = canvas.getBoundingClientRect();
+    const w = screenToWorld(e.clientX - rc.left, e.clientY - rc.top);
+    const r = roomAt(w.x, w.y);
+    app.dropRoom = r ? r.key : null;
+    return;
+  }
   if ([...e.dataTransfer.types].includes("application/x-kennel-pup")) {
     e.dataTransfer.dropEffect = "move";
     const r = kennelRoomAt(e.clientX, e.clientY);
@@ -2057,6 +2266,15 @@ canvas.addEventListener("dragover", (e) => {
 canvas.addEventListener("dragleave", () => { $("#stage").classList.remove("dropping"); app.dropHover = null; app.dropRoom = null; });
 canvas.addEventListener("drop", async (e) => {
   e.preventDefault();
+  const block = e.dataTransfer.getData("application/x-kennel-block");
+  if (block) {
+    app.dropRoom = null;
+    const rc = canvas.getBoundingClientRect();
+    const w = screenToWorld(e.clientX - rc.left, e.clientY - rc.top);
+    const r = roomAt(w.x, w.y);
+    if (r) placeIn(r, JSON.parse(block), w); else toast("drop it inside a room", true);
+    return;
+  }
   $("#stage").classList.remove("dropping");
   $("#stage").classList.remove("pupdrag");
   const pupId = e.dataTransfer.getData("application/x-kennel-pup");
@@ -2064,7 +2282,7 @@ canvas.addEventListener("drop", async (e) => {
     app.dropHover = null;
     const r = kennelRoomAt(e.clientX, e.clientY);
     if (r) await fileInto(r, pupId);
-    else toast(app.state.floor === 2 ? "drop it inside one of your kennels" : "switch to 🏠 Kennels to file pups", true);
+    else toast("drop it inside one of your own kennels (smart rooms fill themselves)", true);
     return;
   }
   const target = dropTargetAt(e.clientX, e.clientY);
@@ -2111,18 +2329,7 @@ function drawDropHover() {
 }
 
 
-// ---------- inbox: newest sessions not in a kennel yet ----------
-let inboxN = 12;
-try { inboxN = Number(localStorage.getItem("kennel.inboxN")) || 12; } catch (_) {}
-$("#inboxn").value = String(inboxN);
-$("#inboxn").onchange = () => { inboxN = Number($("#inboxn").value); try { localStorage.setItem("kennel.inboxN", String(inboxN)); } catch (_) {} loadInbox(); };
-$("#inboxtoggle").onclick = () => {
-  const box = $("#inbox");
-  box.classList.toggle("collapsed");
-  $("#inboxtoggle").textContent = box.classList.contains("collapsed") ? "+" : "–";
-  try { localStorage.setItem("kennel.inboxCollapsed", box.classList.contains("collapsed") ? "1" : ""); } catch (_) {}
-};
-try { if (localStorage.getItem("kennel.inboxCollapsed")) { $("#inbox").classList.add("collapsed"); $("#inboxtoggle").textContent = "+"; } } catch (_) {}
+// ---------- dragging sessions from the tray ----------
 
 function relAge(ms) {
   const d = ((app.state ? app.state.now : Date.now()) - ms) / 1000;
@@ -2142,35 +2349,18 @@ function draggablePup(node, p) {
   node.addEventListener("dragend", () => $("#stage").classList.remove("pupdrag"));
 }
 
-let inboxItems = [];
-async function loadInbox() {
-  try { inboxItems = await (await api(`/api/inbox?n=${inboxN}`)).json(); } catch (_) { inboxItems = []; }
-  const list = $("#inboxlist");
-  list.innerHTML = "";
-  if (!inboxItems.length) list.appendChild(el("div", "inpup", "✨ everything is filed"));
-  for (const p of inboxItems) {
-    const chip = el("div", "inpup");
-    chip.title = `${p.title}\n${p.snippet || ""}`;
-    chip.dataset.id = p.id;
-    chip.append(miniDog(p.fur, p.status, p.agent), el("span", "", p.title), el("span", "age", relAge(p.updated)));
-    chip.onclick = () => { app.state.pups[p.id] = app.state.pups[p.id] || p; select(p.id, false); };
-    draggablePup(chip, p);
-    list.appendChild(chip);
-  }
-}
 
 // A pup dropped on one of your kennels on the map is filed there.
 function kennelRoomAt(clientX, clientY) {
   const rc = canvas.getBoundingClientRect();
   const w = screenToWorld(clientX - rc.left, clientY - rc.top);
   const r = roomAt(w.x, w.y);
-  return r && r.key.startsWith("kennel:") ? r : null;
+  return isOwnKennel(r) ? r : null;
 }
 
 async function fileInto(r, pupId) {
   await act("move", pupId, { kennel: Number(r.key.slice(7)) });
   toast(`🏠 filed into ${r.icon} ${r.title}`, false, true);
-  loadInbox();
 }
 
 // ---------- library ----------
@@ -2213,7 +2403,7 @@ function fillLibFilters() {
   mv.innerHTML = "";
   mv.appendChild(new Option("move to…", ""));
   mv.appendChild(new Option("📥 no kennel", "0"));
-  for (const x of app.state.kennels || []) mv.appendChild(new Option(`${x.icon} ${x.name}`, String(x.id)));
+  for (const x of ownKennels()) mv.appendChild(new Option(`${x.icon} ${x.name}`, String(x.id)));
 }
 
 function weekOf(ms) {
@@ -2283,7 +2473,6 @@ $("#libdo").onclick = async () => {
   await loadState();
   library = await (await api("/api/library")).json();
   renderLibrary();
-  loadInbox();
   toast(`🚚 moved ${n} pups`, false, true);
 };
 $("#libthemes").onclick = async () => {
@@ -2307,7 +2496,7 @@ function renderThemeStatus() {
   lib.wasRunning = t.running;
 }
 
-// ---------- side panels: jobs & things, artifacts, gear ----------
+// ---------- side panels: jobs & things, artifacts ----------
 async function renderJobs() {
   const box = $("#jobs");
   box.innerHTML = "";
@@ -2353,44 +2542,6 @@ async function renderArt() {
   }
 }
 
-let gearScope = 0;
-async function renderGear() {
-  const box = $("#gear");
-  box.innerHTML = "";
-  box.className = "panel";
-  let scopes;
-  try { scopes = await (await api("/api/gear")).json(); } catch (e) { box.textContent = e.message; return; }
-  gearScope = Math.min(gearScope, scopes.length - 1);
-  const tabs = el("div", "gearscopes");
-  scopes.forEach((sc, i) => {
-    const b = el("button", i === gearScope ? "on" : "", (sc.name === "User" ? "👤 " : sc.name === "Plugins" ? "🧩 " : "📁 ") + sc.name);
-    b.onclick = () => { gearScope = i; renderGear(); };
-    tabs.appendChild(b);
-  });
-  box.appendChild(tabs);
-  const sc = scopes[gearScope];
-  if (!sc) return;
-  let kind = "";
-  for (const it of sc.items) {
-    if (it.kind !== kind) { kind = it.kind; box.appendChild(el("h4", "", kind + "s")); }
-    const row = el("div", "gitem");
-    const w = el("div", "w");
-    w.append(el("div", "n", `${it.icon} ${it.name}`), el("div", "d", `${it.level} · ${it.detail}`));
-    const sw = el("button", "switch" + (it.enabled ? " on" : ""));
-    sw.title = it.toggleable ? (it.enabled ? "disable" : "enable") : "managed outside kennel";
-    sw.disabled = !it.toggleable;
-    sw.onclick = async () => {
-      try {
-        const res = await api("/api/gear/toggle", { method: "POST", body: JSON.stringify({ Scope: sc.name, Kind: it.kind, Name: it.name, Level: it.level }) });
-        await loadState();
-        toast((await res.json()).message, false, true);
-      } catch (e) { toast(e.message, true); }
-      renderGear();
-    };
-    row.append(w, sw);
-    box.appendChild(row);
-  }
-}
 
 // ---------- digest ----------
 async function openDigest() {
@@ -2450,6 +2601,13 @@ window.kennel = {
 };
 
 $("#buildbtn").onclick = () => setBuild(!build.on);
+try { app.project = localStorage.getItem("kennel.project") || ""; } catch (_) { app.project = ""; }
+$("#projectsel").onchange = () => {
+  app.project = $("#projectsel").value;
+  try { localStorage.setItem("kennel.project", app.project); } catch (_) {}
+  $("#projectsel").classList.toggle("on", !!app.project);
+  renderTray();
+};
 $("#themebtn").onclick = cycleAppearance;
 systemDark.addEventListener("change", () => applyAppearance(appearance));
 applyAppearance(appearance);

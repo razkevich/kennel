@@ -30,7 +30,6 @@ import (
 	"github.com/razkevich/kennel/internal/claude"
 	"github.com/razkevich/kennel/internal/digest"
 	"github.com/razkevich/kennel/internal/floor"
-	"github.com/razkevich/kennel/internal/gear"
 	"github.com/razkevich/kennel/internal/indexer"
 	"github.com/razkevich/kennel/internal/opener"
 	"github.com/razkevich/kennel/internal/pack"
@@ -188,7 +187,10 @@ func (s *Server) fingerprint() uint64 {
 		fmt.Fprintf(h, "%s|%v;", t.Key(), t.Running)
 	}
 	for _, k := range s.App.Kennels() {
-		fmt.Fprintf(h, "k%d|%s;", k.ID, k.Name)
+		fmt.Fprintf(h, "k%d|%s|%s|%d|%s;", k.ID, k.Name, k.Icon, k.Floor, k.Smart)
+	}
+	for _, f := range s.App.Floors() {
+		fmt.Fprintf(h, "f%d|%s|%s;", f.ID, f.Name, f.Icon)
 	}
 	styles := s.App.Styles()
 	keys := make([]string, 0, len(styles))
@@ -228,13 +230,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/drop", s.guard(s.handleDrop))
 	mux.HandleFunc("POST /api/undo", s.guard(s.handleUndo))
 	mux.HandleFunc("POST /api/kennels", s.guard(s.handleAddKennel))
+	mux.HandleFunc("POST /api/kennels/{id}/{action}", s.guard(s.handleKennel))
+	mux.HandleFunc("POST /api/floors", s.guard(s.handleAddFloor))
+	mux.HandleFunc("POST /api/floors/{id}/{action}", s.guard(s.handleFloor))
 	mux.HandleFunc("GET /api/library", s.guard(s.handleLibrary))
-	mux.HandleFunc("GET /api/inbox", s.guard(s.handleInbox))
 	mux.HandleFunc("POST /api/themes/run", s.guard(s.handleThemes))
 	mux.HandleFunc("GET /api/jobs", s.guard(s.handleJobs))
 	mux.HandleFunc("GET /api/artifacts", s.guard(s.handleArtifacts))
-	mux.HandleFunc("GET /api/gear", s.guard(s.handleGear))
-	mux.HandleFunc("POST /api/gear/toggle", s.guard(s.handleGearToggle))
 	mux.HandleFunc("GET /api/digest", s.guard(s.handleDigest))
 	mux.HandleFunc("POST /api/room/{action}", s.guard(s.handleRoom))
 	mux.HandleFunc("POST /api/appearance", s.guard(s.handleAppearance))
@@ -315,6 +317,7 @@ type PupJSON struct {
 	Cost        float64  `json:"cost"`
 	Pane        string   `json:"pane"`
 	Cwd         string   `json:"cwd"`
+	Project     string   `json:"project"`
 	Note        string   `json:"note"`
 }
 
@@ -332,6 +335,8 @@ type ThingJSON struct {
 
 type RoomJSON struct {
 	Key     string      `json:"key"`
+	Kennel  int64       `json:"kennel"`
+	Smart   string      `json:"smart"`
 	Style   store.Style `json:"style"`
 	MinCols int         `json:"minCols"`
 	MinRows int         `json:"minRows"`
@@ -345,15 +350,18 @@ type RoomJSON struct {
 }
 
 type StateJSON struct {
-	Version int64                `json:"version"`
-	Now     int64                `json:"now"`
-	Floor   int                  `json:"floor"`
-	Floors  []string             `json:"floors"`
-	Rooms   []RoomJSON           `json:"rooms"`
-	Pups    map[string]PupJSON   `json:"pups"`
-	Things  map[string]ThingJSON `json:"things"`
-	Counts  map[string]int       `json:"counts"`
-	Demo    bool                 `json:"demo"`
+	Version int64              `json:"version"`
+	Now     int64              `json:"now"`
+	Floor   int64              `json:"floor"`
+	Floors  []FloorJSON        `json:"floors"`
+	Rooms   []RoomJSON         `json:"rooms"`
+	Pups    map[string]PupJSON `json:"pups"`
+	// Tray lists recent and live pups from every floor, newest first, for the side panel.
+	Tray     []string             `json:"tray"`
+	Projects []ProjectJSON        `json:"projects"`
+	Things   map[string]ThingJSON `json:"things"`
+	Counts   map[string]int       `json:"counts"`
+	Demo     bool                 `json:"demo"`
 	// Indexing reports first-run progress ("12/230"); empty when idle.
 	Indexing string `json:"indexing"`
 	// Undo names the action ⌘Z would reverse; empty when there's nothing to undo.
@@ -365,9 +373,23 @@ type StateJSON struct {
 }
 
 type KennelJSON struct {
+	ID    int64  `json:"id"`
+	Name  string `json:"name"`
+	Icon  string `json:"icon"`
+	Floor int64  `json:"floor"`
+	Smart string `json:"smart"`
+}
+
+type FloorJSON struct {
 	ID   int64  `json:"id"`
 	Name string `json:"name"`
 	Icon string `json:"icon"`
+}
+
+type ProjectJSON struct {
+	Root  string `json:"root"`
+	Name  string `json:"name"`
+	Count int    `json:"count"`
 }
 
 var statusNames = map[claude.Status]string{claude.Offline: "offline", claude.Idle: "idle", claude.Done: "done", claude.Working: "working", claude.Waiting: "waiting"}
@@ -376,7 +398,7 @@ func pupJSON(p *pack.Pup) PupJSON {
 	j := PupJSON{ID: p.ID, Agent: p.AgentKind(), Title: p.Title(), Status: statusNames[p.Status], Repo: p.Repo(), Branch: p.Branch(), Snippet: p.Snippet(),
 		FirstPrompt: p.FirstPrompt, Recap: p.Recap, Updated: p.Updated.UnixMilli(), Started: p.Started.UnixMilli(), Fur: furColor(p.ID, p.Color),
 		Starred: p.Meta.Starred, Archived: p.Meta.Archived, Remote: p.Remote != "", Crons: len(p.Crons), PRs: p.PRs, Artifacts: len(p.Artifacts),
-		Unread: p.Unread(), Messages: p.NUser, Cost: p.Cost, Pane: p.Pane, Cwd: p.Cwd, Note: p.Meta.Note}
+		Unread: p.Unread(), Messages: p.NUser, Cost: p.Cost, Pane: p.Pane, Cwd: p.Cwd, Project: app.ProjectRoot(p.Cwd), Note: p.Meta.Note}
 	if !p.Live.Since.IsZero() {
 		j.Since = p.Live.Since.UnixMilli()
 	}
@@ -409,14 +431,32 @@ func furColor(id, c string) string {
 	return furs[h.Sum32()%uint32(len(furs))]
 }
 
-func (s *Server) State(fl int) StateJSON {
-	if fl < 0 || fl >= len(floor.Names) {
-		fl = 0
+// trayWindow is how far back the session tray reaches; live pups always show.
+const trayWindow = 14 * 24 * time.Hour
+
+// State is one floor of the map plus everything the side panel needs.
+func (s *Server) State(fl int64) StateJSON {
+	st := StateJSON{Version: s.Version(), Now: s.App.Now().UnixMilli(), Pups: map[string]PupJSON{}, Things: map[string]ThingJSON{},
+		Counts: map[string]int{}, Demo: s.App.Cfg.Demo, Floors: []FloorJSON{}, Tray: []string{}, Projects: []ProjectJSON{}, Rooms: []RoomJSON{}}
+	for _, f := range s.App.Floors() {
+		st.Floors = append(st.Floors, FloorJSON{f.ID, f.Name, f.Icon})
+		if f.ID == fl {
+			st.Floor = fl
+		}
 	}
-	st := StateJSON{Version: s.Version(), Now: s.App.Now().UnixMilli(), Floor: fl, Floors: floor.Names,
-		Pups: map[string]PupJSON{}, Things: map[string]ThingJSON{}, Counts: map[string]int{}, Demo: s.App.Cfg.Demo}
+	if st.Floor == 0 && len(st.Floors) > 0 {
+		st.Floor = st.Floors[0].ID
+	}
+	now := s.App.Now()
 	for _, p := range s.App.Pups() {
 		st.Counts[statusNames[p.Status]]++
+		if !p.Meta.Archived && !p.Empty() && (p.Status.Live() || now.Sub(p.Updated) < trayWindow) {
+			st.Tray = append(st.Tray, p.ID)
+			st.Pups[p.ID] = pupJSON(p)
+		}
+	}
+	for _, pr := range s.App.Projects() {
+		st.Projects = append(st.Projects, ProjectJSON{pr.Root, pr.Name, pr.Count})
 	}
 	st.Indexing, _ = s.indexing.Load().(string)
 	st.Undo = s.App.UndoLabel()
@@ -426,10 +466,10 @@ func (s *Server) State(fl int) StateJSON {
 	}
 	st.Kennels = []KennelJSON{}
 	for _, k := range s.App.Kennels() {
-		st.Kennels = append(st.Kennels, KennelJSON{k.ID, k.Name, k.Icon})
+		st.Kennels = append(st.Kennels, KennelJSON{k.ID, k.Name, k.Icon, s.App.FloorOf(k), k.Smart})
 	}
-	for _, r := range floor.Rooms(s.App, fl) {
-		rj := RoomJSON{Key: r.Key, Style: r.Style, MinCols: r.MinCols, MinRows: r.MinRows, Title: r.Title, Icon: r.Icon, Color: r.Color, Look: r.Look, Blurb: r.Blurb, Pups: []string{}, Things: []string{}}
+	for _, r := range floor.Rooms(s.App, st.Floor) {
+		rj := RoomJSON{Key: r.Key, Kennel: r.KennelID, Smart: r.Smart, Style: r.Style, MinCols: r.MinCols, MinRows: r.MinRows, Title: r.Title, Icon: r.Icon, Color: r.Color, Look: r.Look, Blurb: r.Blurb, Pups: []string{}, Things: []string{}}
 		for _, p := range r.Pups {
 			rj.Pups = append(rj.Pups, p.ID)
 			st.Pups[p.ID] = pupJSON(p)
@@ -444,7 +484,8 @@ func (s *Server) State(fl int) StateJSON {
 }
 
 func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
-	fl := s.App.DefaultFloor("web_floor")
+	var fl int64
+	fmt.Sscan(s.App.Store.Get("web_floor"), &fl)
 	if v := r.URL.Query().Get("floor"); v != "" {
 		fmt.Sscan(v, &fl)
 		_ = s.App.Store.Set("web_floor", fmt.Sprint(fl))
@@ -777,7 +818,7 @@ func (s *Server) handleThingAction(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCatalog(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"shapes": blocks.Shapes, "floors": blocks.Floors, "walls": blocks.Walls,
-		"decor": blocks.DecorItems, "kinds": blocks.Kinds, "templates": blocks.Templates})
+		"decor": blocks.DecorItems, "kinds": blocks.Kinds, "templates": blocks.Templates, "smarts": floor.SmartKinds()})
 }
 
 // handleRoom edits a room's building blocks: style, template, reset, door (spawn).
@@ -937,6 +978,22 @@ func (s *Server) handleAddKennel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	k.ID = 0
+	k.Name = strings.TrimSpace(k.Name)
+	if k.Smart != "" {
+		kind, ok := floor.SmartKindByKey(k.Smart)
+		if !ok {
+			fail(w, fmt.Errorf("unknown smart kennel %q", k.Smart), http.StatusBadRequest)
+			return
+		}
+		if k.Icon == "" {
+			k.Icon = kind.Icon
+		}
+	}
+	// Names are unique; a second Firehouse on another floor becomes "Firehouse 2".
+	base := k.Name
+	for n := 2; s.kennelNamed(k.Name); n++ {
+		k.Name = fmt.Sprintf("%s %d", base, n)
+	}
 	if err := s.App.SaveKennel(&k); err != nil {
 		fail(w, err, http.StatusBadRequest)
 		return
@@ -1047,82 +1104,6 @@ func (s *Server) handleArtifacts(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out)
 }
 
-func (s *Server) gearScopes() []gear.Scope {
-	var roots []string
-	for _, pr := range s.App.Projects() {
-		roots = append(roots, pr.Root)
-	}
-	return gear.Inventory(s.App.Cfg.ClaudeDir, roots)
-}
-
-func (s *Server) handleGear(w http.ResponseWriter, r *http.Request) {
-	type itemJSON struct {
-		Kind       string `json:"kind"`
-		Icon       string `json:"icon"`
-		Name       string `json:"name"`
-		Level      string `json:"level"`
-		Detail     string `json:"detail"`
-		Path       string `json:"path"`
-		Enabled    bool   `json:"enabled"`
-		Toggleable bool   `json:"toggleable"`
-	}
-	type scopeJSON struct {
-		Name  string     `json:"name"`
-		Root  string     `json:"root"`
-		Items []itemJSON `json:"items"`
-	}
-	out := []scopeJSON{}
-	for _, sc := range s.gearScopes() {
-		sj := scopeJSON{Name: sc.Name, Root: sc.Root, Items: []itemJSON{}}
-		for _, it := range sc.Items {
-			sj.Items = append(sj.Items, itemJSON{string(it.Kind), gear.KindIcon[it.Kind], it.Name, it.Level, it.Detail, it.Path, it.Enabled, it.Toggle != nil})
-		}
-		out = append(out, sj)
-	}
-	writeJSON(w, out)
-}
-
-func (s *Server) handleGearToggle(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Scope, Kind, Name, Level string
-	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
-	find := func() *gear.Item {
-		for _, sc := range s.gearScopes() {
-			if sc.Name != body.Scope {
-				continue
-			}
-			for _, it := range sc.Items {
-				if string(it.Kind) == body.Kind && it.Name == body.Name && it.Level == body.Level && it.Toggle != nil {
-					it := it
-					return &it
-				}
-			}
-		}
-		return nil
-	}
-	it := find()
-	if it == nil {
-		fail(w, errors.New("that item can't be toggled from kennel"), http.StatusBadRequest)
-		return
-	}
-	if err := it.Toggle(); err != nil {
-		fail(w, err, http.StatusBadRequest)
-		return
-	}
-	verb := "disabled"
-	if !it.Enabled {
-		verb = "enabled"
-	}
-	s.App.Remember(verb+" "+it.Name, func() error {
-		if again := find(); again != nil {
-			return again.Toggle()
-		}
-		return fmt.Errorf("%s isn't there anymore", body.Name)
-	})
-	writeJSON(w, map[string]any{"ok": true, "message": verb + " " + it.Name + " — takes effect in new sessions"})
-}
-
 func (s *Server) handleDigest(w http.ResponseWriter, r *http.Request) {
 	days := 1
 	fmt.Sscan(r.URL.Query().Get("days"), &days)
@@ -1130,19 +1111,117 @@ func (s *Server) handleDigest(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"days": days, "lines": d.Lines()})
 }
 
-// handleInbox lists the newest sessions that aren't in a kennel yet.
-func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
-	n := 12
-	fmt.Sscan(r.URL.Query().Get("n"), &n)
-	out := []PupJSON{}
-	for _, p := range s.App.Pups() {
-		if len(out) >= n {
+func (s *Server) kennelNamed(name string) bool {
+	for _, k := range s.App.Kennels() {
+		if strings.EqualFold(k.Name, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// handleKennel renames, deletes or moves a kennel to another floor.
+func (s *Server) handleKennel(w http.ResponseWriter, r *http.Request) {
+	var id int64
+	fmt.Sscan(r.PathValue("id"), &id)
+	var k *store.Kennel
+	for _, x := range s.App.Kennels() {
+		if x.ID == id {
+			x := x
+			k = &x
+		}
+	}
+	if k == nil {
+		fail(w, fmt.Errorf("no kennel %d", id), http.StatusNotFound)
+		return
+	}
+	var body struct {
+		Name  string `json:"name"`
+		Icon  string `json:"icon"`
+		Floor int64  `json:"floor"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	var err error
+	switch r.PathValue("action") {
+	case "rename":
+		name := strings.TrimSpace(body.Name)
+		if name == "" {
+			err = errors.New("a kennel needs a name")
 			break
 		}
-		if p.Empty() || p.Meta.Archived || p.Kennel != nil {
-			continue
+		if !strings.EqualFold(name, k.Name) && s.kennelNamed(name) {
+			err = fmt.Errorf("there's already a kennel called %s", name)
+			break
 		}
-		out = append(out, pupJSON(p))
+		k.Name = name
+		if body.Icon != "" {
+			k.Icon = body.Icon
+		}
+		err = s.App.SaveKennel(k)
+	case "delete":
+		err = s.App.DeleteKennel(id)
+	case "floor":
+		err = s.App.MoveKennelToFloor(id, body.Floor)
+	default:
+		fail(w, errors.New("unknown action"), http.StatusNotFound)
+		return
 	}
-	writeJSON(w, out)
+	if err != nil {
+		fail(w, err, http.StatusBadRequest)
+		return
+	}
+	s.touch()
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+func (s *Server) handleAddFloor(w http.ResponseWriter, r *http.Request) {
+	var f store.Floor
+	if err := json.NewDecoder(r.Body).Decode(&f); err != nil {
+		fail(w, err, http.StatusBadRequest)
+		return
+	}
+	f.ID = 0
+	f.Name = strings.TrimSpace(f.Name)
+	if err := s.App.SaveFloor(&f); err != nil {
+		fail(w, err, http.StatusBadRequest)
+		return
+	}
+	s.touch()
+	writeJSON(w, f)
+}
+
+// handleFloor renames or removes a floor; a removed floor's kennels move to another one.
+func (s *Server) handleFloor(w http.ResponseWriter, r *http.Request) {
+	var id int64
+	fmt.Sscan(r.PathValue("id"), &id)
+	var body struct {
+		Name string `json:"name"`
+		Icon string `json:"icon"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	var err error
+	switch r.PathValue("action") {
+	case "rename":
+		err = errors.New("no such floor")
+		for _, f := range s.App.Floors() {
+			if f.ID == id {
+				f.Name = strings.TrimSpace(body.Name)
+				if body.Icon != "" {
+					f.Icon = body.Icon
+				}
+				err = s.App.SaveFloor(&f)
+			}
+		}
+	case "delete":
+		err = s.App.DeleteFloor(id)
+	default:
+		fail(w, errors.New("unknown action"), http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		fail(w, err, http.StatusBadRequest)
+		return
+	}
+	s.touch()
+	writeJSON(w, map[string]any{"ok": true})
 }

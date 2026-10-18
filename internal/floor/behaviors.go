@@ -17,8 +17,8 @@ import (
 // RoomsOf lists every room (on any floor) a pup currently stands in.
 func RoomsOf(a *app.App, pupID string) []Room {
 	var out []Room
-	for f := range Names {
-		for _, r := range Rooms(a, f) {
+	for _, f := range a.Floors() {
+		for _, r := range Rooms(a, f.ID) {
 			for _, p := range r.Pups {
 				if p.ID == pupID {
 					out = append(out, r)
@@ -72,8 +72,8 @@ func Ring(a *app.App, ts []app.Transition) int {
 func Sweep(a *app.App) int {
 	now := a.Now()
 	n := 0
-	for f := range Names {
-		for _, r := range Rooms(a, f) {
+	for _, f := range a.Floors() {
+		for _, r := range Rooms(a, f.ID) {
 			for _, c := range r.Style.OfKind(blocks.Chute) {
 				limit := time.Duration(c.Int("days", 14)) * 24 * time.Hour
 				for _, p := range r.Pups {
@@ -136,8 +136,8 @@ func RoomCwd(a *app.App, room Room) string {
 
 // FindRoom looks a room up by key on any floor.
 func FindRoom(a *app.App, key string) (Room, bool) {
-	for f := range Names {
-		for _, r := range Rooms(a, f) {
+	for _, f := range a.Floors() {
+		for _, r := range Rooms(a, f.ID) {
 			if r.Key == key {
 				return r, true
 			}

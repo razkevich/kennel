@@ -62,9 +62,9 @@ before(async () => {
   });
   await waitFor(async () => (await state()).pageLoaded, "page loaded", 20000);
   await waitFor(() => js("!!(window.kennel && window.kennel.app.state && window.kennel.app.ents.size > 0)"), "map drawn");
-  if ((await js("window.kennel.app.state.floor")) !== 0) {
-    await js(`document.querySelectorAll("#floors button")[0].click()`);
-    await waitFor(() => js("window.kennel.app.state.floor === 0 && window.kennel.app.ents.size > 0"), "campus floor");
+  if ((await js("window.kennel.app.state.floor !== window.kennel.app.state.floors[0].id"))) {
+    await js(`document.querySelector("#floors button[data-floor]").click()`);
+    await waitFor(() => js("window.kennel.app.state.floor === window.kennel.app.state.floors[0].id && window.kennel.app.ents.size > 0"), "first floor");
   }
 });
 
@@ -269,8 +269,7 @@ test("things, spawn doors, convert and new pups all open as tabs", async () => {
   // a new pup in one of your kennels gets a pre-assigned session id
   await backToKennel();
   const k = await call("POST", "/jsasync", { code: `return (await fetch("/api/kennels", { method: "POST", headers: { "X-Kennel-Token": new URLSearchParams(location.search).get("t") }, body: JSON.stringify({ Name: "App test", Icon: "🧪", Cwd: "/Users/demo/code/atlas" }) })).json()` });
-  await js(`document.querySelectorAll("#floors button")[2].click()`);
-  await waitFor(() => js(`window.kennel.app.state.floor === 2 && window.kennel.app.rooms.some(r => r.key === "kennel:${k.value.ID}")`), "kennels floor");
+  await waitFor(() => js(`window.kennel.app.rooms.some(r => r.key === "kennel:${k.value.ID}")`), "kennel on the map");
   await js(`(() => { window.kennel.app.sel = "room:kennel:${k.value.ID}"; document.querySelector("#card").hidden = false; })()`);
   await js(`window.kennel.app.sel = "room:kennel:${k.value.ID}"; null`);
   await js(`(() => { const r = window.kennel.app.rooms.find(r => r.key === "kennel:${k.value.ID}"); const st = document.querySelector("#stage"); const a = window.kennel.app; a.cam.x = (r.x + r.w/2)*32 - st.clientWidth/a.cam.z/2; a.cam.y = (r.y + r.h/2)*32 - st.clientHeight/a.cam.z/2; })()`);
@@ -283,7 +282,6 @@ test("things, spawn doors, convert and new pups all open as tabs", async () => {
   await waitFor(async () => (await tabs()).length === count + 1, "new pup tab");
   const out = await text((await selected()).index);
   assert.match(out, /would run: claude --session-id [0-9a-f-]{36} -n NIGHTLY 'summarize overnight alerts'/);
-  await js(`document.querySelectorAll("#floors button")[0].click()`);
 });
 
 test("the Kennel tab keeps the full web UI: library, panels and search work in the app", async () => {
@@ -291,16 +289,16 @@ test("the Kennel tab keeps the full web UI: library, panels and search work in t
   await js(`document.querySelector("#libbtn").click()`);
   await waitFor(() => js(`!document.querySelector("#library").hidden && document.querySelectorAll(".librow").length > 0`), "library rows");
   await js(`document.querySelector("#libclose").click()`);
-  await js(`document.querySelector("#side .tabs button[data-tab=gear]").click()`);
-  await waitFor(() => js(`document.querySelector("#gear").innerText.includes("deploy-checklist")`), "gear panel");
+  await js(`document.querySelector("#side .tabs button[data-tab=art]").click()`);
+  await waitFor(() => js(`document.querySelector("#art").innerText.includes("PG16 cutover runbook")`), "artifacts panel");
   await js(`document.querySelector("#side .tabs button[data-tab=pack]").click()`);
   
 });
 
 test("in the app, pups drag to a new spot and rooms resize from their handles", async () => {
   await backToKennel();
-  await js(`document.querySelector("#floors button").click()`);
-  await waitFor(() => js(`window.kennel.app.state.floor === 0`), "campus");
+  await js(`document.querySelector("#floors button[data-floor]").click()`);
+  await waitFor(() => js(`window.kennel.app.state.floor === window.kennel.app.state.floors[0].id`), "first floor");
   const id = await pupId("RATE-LIMITS");
   const roomKey = await js(`window.kennel.app.ents.get(${JSON.stringify(id)}).room.key`);
   await js(`(() => { const a = window.kennel.app, st = document.querySelector("#stage"), r = a.rooms.find(r => r.key === ${JSON.stringify(roomKey)}); a.flyTo = null; a.cam.follow = false; a.cam.x = (r.x + r.w/2)*32 - st.clientWidth/a.cam.z/2; a.cam.y = (r.y + r.h/2)*32 - st.clientHeight/a.cam.z/2; })()`);
@@ -317,7 +315,7 @@ test("in the app, pups drag to a new spot and rooms resize from their handles", 
   const z = await js(`window.kennel.app.cam.z`);
   const se = await js(`window.kennel.worldPos(${r.x + r.w}, ${r.y + r.h})`);
   await call("POST", "/drag", { x: se.x, y: se.y, toX: se.x + 3 * 32 * z, toY: se.y + 2 * 32 * z });
-  await waitFor(() => js(`(window.kennel.app.rooms.find(r => r.key === ${JSON.stringify(roomKey)}).style.pos || {})["0"]?.w === ${r.w + 3}`), "room resized");
+  await waitFor(() => js(`(window.kennel.app.rooms.find(r => r.key === ${JSON.stringify(roomKey)}).style.pos || {})[String(window.kennel.app.state.floor)]?.w === ${r.w + 3}`), "room resized");
   await call("POST", "/snapshot", { index: 0, path: path.join(shots, "app-edit.png") });
   await key("z");
   await key("z");

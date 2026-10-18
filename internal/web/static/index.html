@@ -12,6 +12,7 @@
   <div class="logo"><span class="face">▼•ᴥ•▼</span> kennel</div>
 
   <div id="counts"></div>
+  <select id="projectsel" title="Show one project; the rest of the map fades"><option value="">All projects</option></select>
   <button id="themebtn" type="button" title="Appearance">🖥 Auto</button>
   <div class="search">
     <input id="q" type="search" placeholder="Search names, prompts, transcripts…  ( / )" autocomplete="off" spellcheck="false">
@@ -22,7 +23,7 @@
 <main>
   <div id="stage">
     <canvas id="map" aria-label="kennel map"></canvas>
-    <div id="inbox"><div class="inhead"><b>📥 New</b><span>drag onto a kennel</span><select id="inboxn" title="how many"><option>8</option><option selected>12</option><option>20</option><option>40</option></select><button id="inboxtoggle" title="hide">–</button></div><div id="inboxlist"></div></div>
+    
     <div id="library" hidden>
       <div class="libbar">
         <b>📚 Library</b>
@@ -61,12 +62,10 @@
   <aside id="side">
     <div id="card" hidden></div>
     <div class="tabs">
-      <button data-tab="pack" class="on" title="Pack">🐾 Pack</button>
+      <button data-tab="pack" class="on" title="Recent sessions: drag onto a kennel to file">🐾 Sessions</button>
       <button data-tab="ask" title="Ask">💬</button>
       <button data-tab="jobs" title="Jobs & things">⏰</button>
       <button data-tab="art" title="Artifacts">🎨</button>
-      <button data-tab="gear" title="Gear: MCP, skills, plugins">🔩</button>
-      <button data-tab="build" title="Build">🔨</button>
     </div>
     <section id="treats">
       <div class="treathead"><b>🦴 Treats</b><span>drag onto a pup</span><button id="addtreat" title="save a treat">＋</button></div>
@@ -76,7 +75,6 @@
     <section id="build" hidden></section>
     <section id="jobs" hidden></section>
     <section id="art" hidden></section>
-    <section id="gear" hidden></section>
     <section id="ask" hidden>
       <form id="askform">
         <textarea id="askq" rows="3" placeholder="Ask your pack… e.g. what did we decide about the postgres upgrade?"></textarea>

@@ -1,39 +1,58 @@
 import { test, expect } from "@playwright/test";
+import { open, post, pupId, thingKey, clickEntity } from "./helpers.mjs";
 
-// Every test starts on the campus floor; the server remembers the last floor between tests.
-const open = async (page) => {
-  await page.goto("/?t=e2e");
-  await page.waitForFunction(() => window.kennel && window.kennel.app.state);
-  if (await page.evaluate(() => window.kennel.app.state.floor) !== 0) {
-    await page.locator("#floors button", { hasText: "Campus" }).click();
-  }
-  await page.waitForFunction(() => window.kennel.app.state.floor === 0 && window.kennel.app.ents.size > 0);
-};
-
-const pupId = (page, title) =>
-  page.evaluate((t) => Object.values(window.kennel.app.state.pups).find((p) => p.title === t)?.id, title);
-
-const thingKey = (page, name) =>
-  page.evaluate((n) => Object.values(window.kennel.app.state.things).find((t) => t.name === n)?.key, name);
-
-// Click where an entity is drawn on the canvas, like a user would.
-const clickEntity = async (page, id, opts = {}) => {
-  await page.evaluate((i) => window.kennel.reveal(i), id);
-  const pos = await page.evaluate((i) => window.kennel.screenPos(i), id);
-  expect(pos, `entity ${id} on screen`).toBeTruthy();
-  await page.mouse.click(pos.x, pos.y, opts);
-};
-
-test("shows the office with live counts and the pack", async ({ page }) => {
+test("shows the office with live counts and the session tray", async ({ page }) => {
   await open(page);
   await expect(page.locator("#counts")).toContainText("1 needs you");
   await expect(page.locator("#counts")).toContainText("2 working");
-  await expect(page.locator("#floors button.on")).toHaveText("🏡 Campus");
+  await expect(page.locator("#floors button.on")).toHaveText("🏢 Main");
   await expect(page.locator("#pack")).toContainText("Needs you · 1");
+  await expect(page.locator("#pack")).toContainText("New, not in a kennel");
   await expect(page.locator("#pack .member", { hasText: "FLAKY-CI" })).toBeVisible();
-  await expect(page.locator("#pack")).toContainText("Things");
   const rooms = await page.evaluate(() => window.kennel.app.rooms.map((r) => r.title));
-  expect(rooms).toEqual(expect.arrayContaining(["The Yard", "Lobby", "Workshop", "Firehouse", "Helping Out", "Dumpster"]));
+  expect(rooms).toEqual(expect.arrayContaining(["The Yard", "Workshop", "Firehouse", "Helping Out", "Best in Show", "Payments"]));
+  // Each pup stands in one room at most.
+  const ids = await page.evaluate(() => window.kennel.app.rooms.flatMap((r) => r.pups));
+  expect(new Set(ids).size).toBe(ids.length);
+});
+
+test("tray: filter, collapse groups, drag a session onto a kennel to file it", async ({ page }) => {
+  await open(page);
+  const tray = page.locator("#pack");
+  await tray.locator(".trayq").fill("pg-upgrade");
+  await expect(tray.locator(".member")).toHaveCount(1);
+  await tray.locator(".trayq").fill("");
+  await tray.locator("h4", { hasText: "New" }).click();
+  await expect(tray.locator(".group.closed")).toHaveCount(1);
+  await expect(tray.locator(".group.closed .member")).toHaveCount(0);
+  await tray.locator("h4", { hasText: "New" }).click();
+
+  const id = await pupId(page, "RATE-LIMITS");
+  const payments = await page.evaluate(() => window.kennel.app.rooms.find((r) => r.title === "Payments").key);
+  await page.evaluate((k) => {
+    const app = window.kennel.app, st = document.querySelector("#stage"), r = app.rooms.find((x) => x.key === k);
+    app.cam.x = (r.x + r.w / 2) * 32 - st.clientWidth / app.cam.z / 2;
+    app.cam.y = (r.y + r.h / 2) * 32 - st.clientHeight / app.cam.z / 2;
+  }, payments);
+  const at = await page.evaluate((k) => window.kennel.roomPos(k, 0.5, 0.6), payments);
+  await tray.locator(`.member[data-id="${id}"]`).dragTo(page.locator("#map"), { targetPosition: { x: at.x - (await page.locator("#map").boundingBox()).x, y: at.y - (await page.locator("#map").boundingBox()).y } });
+  await expect(page.locator("#toast")).toContainText("filed into 💳 Payments");
+  await expect(tray.locator(`.member[data-id="${id}"] .pill.kennel`)).toHaveText("Payments");
+  await expect.poll(() => page.evaluate((k) => window.kennel.app.rooms.find((r) => r.key === k).pups.length, payments)).toBe(1);
+  await page.keyboard.press("Meta+z");
+  await expect.poll(() => page.evaluate((k) => window.kennel.app.rooms.find((r) => r.key === k).pups.length, payments)).toBe(0);
+});
+
+test("project filter dims other projects and narrows the tray", async ({ page }) => {
+  await open(page);
+  await page.locator("#projectsel").selectOption("/Users/demo/code/infra");
+  await expect(page.locator("#projectsel")).toHaveClass(/on/);
+  const shown = await page.locator("#pack .member").count();
+  expect(shown).toBeGreaterThan(0);
+  const projects = await page.evaluate(() => [...document.querySelectorAll("#pack .member")].map((m) => window.kennel.app.state.pups[m.dataset.id].project));
+  expect(new Set(projects)).toEqual(new Set(["/Users/demo/code/infra"]));
+  await page.locator("#projectsel").selectOption("");
+  await expect.poll(() => page.locator("#pack .member").count()).toBeGreaterThan(shown);
 });
 
 test("clicking a pup opens its card, double-click resumes it", async ({ page }) => {
@@ -124,24 +143,52 @@ test("things: running ones focus, stopped ones start", async ({ page }) => {
   await expect(page.locator("#toast")).toContainText("terraform plan -out tf.plan");
 });
 
-test("floors switch between campus, projects and kennels", async ({ page }) => {
+test("floors: add, switch, move a kennel by dragging it onto a floor tab, rename, remove with undo", async ({ page }) => {
   await open(page);
-  await page.locator("#floors button", { hasText: "Projects" }).click();
-  await expect(page.locator("#floors button.on")).toHaveText("📁 Projects");
-  await page.waitForFunction(() => window.kennel.app.state.floor === 1);
-  const projects = await page.evaluate(() => window.kennel.app.rooms.map((r) => r.title));
-  expect(projects).toEqual(expect.arrayContaining(["atlas", "infra", "mobile", "dotfiles"]));
-  await page.locator("#floors button", { hasText: "Kennels" }).click();
-  await page.waitForFunction(() => window.kennel.app.state.floor === 2);
-  const keys = await page.evaluate(() => window.kennel.app.rooms.map((r) => r.key));
-  expect(keys.length).toBeGreaterThan(0);
-  expect(keys.every((k) => k.startsWith("kennel:") || k === "new-kennel")).toBeTruthy();
-  // The floor is remembered: a reload comes back to the kennels.
+  page.once("dialog", (d) => d.accept("Side projects"));
+  await page.locator("#floors button.addfloor").click();
+  await expect(page.locator("#floors button.on")).toHaveText("🏢 Side projects");
+  await expect.poll(() => page.evaluate(() => window.kennel.app.rooms.length)).toBe(0);
+  // The floor is remembered across reloads.
   await page.goto("/?t=e2e");
   await page.waitForFunction(() => window.kennel && window.kennel.app.state);
-  await expect(page.locator("#floors button.on")).toHaveText("🏠 Kennels");
-  await page.locator("#floors button", { hasText: "Campus" }).click();
-  await page.waitForFunction(() => window.kennel.app.state.floor === 0);
+  await expect(page.locator("#floors button.on")).toHaveText("🏢 Side projects");
+
+  // Back on Main, drag Payments by its wall onto the new floor's tab.
+  await page.locator("#floors button[data-floor]").first().click();
+  await page.waitForFunction(() => window.kennel.app.rooms.some((r) => r.title === "Payments"));
+  const key = await page.evaluate(() => window.kennel.app.rooms.find((r) => r.title === "Payments").key);
+  await page.evaluate((k) => {
+    const app = window.kennel.app, st = document.querySelector("#stage"), r = app.rooms.find((x) => x.key === k);
+    app.cam.x = (r.x + r.w / 2) * 32 - st.clientWidth / app.cam.z / 2;
+    app.cam.y = (r.y + r.h / 2) * 32 - st.clientHeight / app.cam.z / 2;
+  }, key);
+  const wall = await page.evaluate((k) => window.kennel.wallPos(k), key);
+  const tab = await page.locator("#floors button", { hasText: "Side projects" }).boundingBox();
+  await page.mouse.move(wall.x, wall.y);
+  await page.mouse.down();
+  for (let i = 1; i <= 10; i++) await page.mouse.move(wall.x + ((tab.x + tab.width / 2 - wall.x) * i) / 10, wall.y + ((tab.y + tab.height / 2 - wall.y) * i) / 10);
+  await expect(page.locator("#floors button.droptarget")).toHaveText("🏢 Side projects");
+  await page.mouse.up();
+  await expect(page.locator("#toast")).toContainText("moved Payments to Side projects");
+  await expect.poll(() => page.evaluate(() => window.kennel.app.rooms.some((r) => r.title === "Payments"))).toBe(false);
+
+  // Rename and remove from the tab's right-click menu; undo brings it back.
+  page.once("dialog", (d) => d.accept("Garden"));
+  await page.locator("#floors button", { hasText: "Side projects" }).click({ button: "right" });
+  await page.locator("#ctxmenu button", { hasText: "Rename" }).click();
+  await expect(page.locator("#floors button", { hasText: "Garden" })).toBeVisible();
+  await page.locator("#floors button", { hasText: "Garden" }).click({ button: "right" });
+  await page.locator("#ctxmenu button", { hasText: "Remove floor" }).click();
+  await expect(page.locator("#floors button", { hasText: "Garden" })).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => window.kennel.app.rooms.some((r) => r.title === "Payments"))).toBe(true);
+  await page.keyboard.press("Meta+z");
+  await expect(page.locator("#floors button", { hasText: "Garden" })).toBeVisible();
+  // Leave things as they were: Payments back on Main, the extra floor gone.
+  const garden = await page.evaluate(() => window.kennel.app.state.floors.find((f) => f.name === "Garden").id);
+  const main = await page.evaluate(() => window.kennel.app.state.floors[0].id);
+  await post(page, `/api/kennels/${key.slice(7)}/floor`, { floor: main });
+  await post(page, `/api/floors/${garden}/delete`, {});
 });
 
 test("api rejects requests without the token", async ({ request }) => {
@@ -190,7 +237,7 @@ test("treats: drag a saved treat or a desktop file onto a pup", async ({ page })
   const chip = page.locator("#treatlist .treat", { hasText: "runbook" });
   await expect(chip).toBeVisible();
 
-  const id = await pupId(page, "RATE-LIMITS");
+  const id = await pupId(page, "PG-UPGRADE");
   await page.evaluate((i) => window.kennel.reveal(i), id);
   const pos = await page.evaluate((i) => window.kennel.screenPos(i), id);
   const drop = (payload) => page.evaluate(({ x, y, payload }) => {
@@ -203,8 +250,7 @@ test("treats: drag a saved treat or a desktop file onto a pup", async ({ page })
 
   const treatId = await chip.getAttribute("data-id");
   await drop({ treat: Number(treatId) });
-  await expect(page.locator("#toast")).toContainText(`claude --resume ${id}`);
-  await expect(page.locator("#toast")).toContainText("Please read /Users/demo/docs/runbook.md");
+  await expect(page.locator("#toast")).toContainText("runbook");
 
   await drop({ file: { name: "notes.md", body: "# notes\nremember the rollback plan" } });
   await expect(page.locator("#toast")).toContainText("notes.md");

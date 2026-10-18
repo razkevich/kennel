@@ -1,9 +1,8 @@
-// Package floor lays out kennel's map: which rooms exist on each floor and who stands where.
+// Package floor lays out kennel's map: which rooms stand on each floor and who is in them.
 package floor
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/razkevich/kennel/internal/app"
@@ -13,18 +12,13 @@ import (
 	"github.com/razkevich/kennel/internal/things"
 )
 
-var Names = []string{"🏡 Campus", "📁 Projects", "🏠 Kennels"}
-
-// KennelsFloor is the curated floor: only rooms you built, holding only pups you chose.
-const KennelsFloor = 2
-
-const (
-	peach    = "#fab387"
-	lavender = "#b4befe"
-)
+const peach = "#fab387"
 
 type Room struct {
-	Key     string
+	Key      string
+	KennelID int64
+	// Smart is the self-filling kind of a smart kennel; empty for your own kennels.
+	Smart   string
 	Style   store.Style
 	MinCols int
 	MinRows int
@@ -36,6 +30,49 @@ type Room struct {
 	Pups    []*pack.Pup
 	Things  []things.Thing
 }
+
+// SmartKind is a kind of room that fills itself; you place one on a floor from Build.
+type SmartKind struct {
+	Key   string
+	Name  string
+	Icon  string
+	Color string
+	Blurb string
+	Look  pack.Look
+}
+
+const (
+	Lobby    = "lobby"
+	Workshop = "workshop"
+)
+
+// SmartKinds lists what Build offers: the pack's smart kennels plus the lobby and workshop.
+func SmartKinds() []SmartKind {
+	var out []SmartKind
+	for _, sm := range pack.Smarts {
+		if sm.Key == "all" {
+			continue
+		}
+		out = append(out, SmartKind{sm.Key, sm.Name, sm.Icon, sm.Color, sm.Blurb, sm.Look})
+	}
+	return append(out,
+		SmartKind{Lobby, "Lobby", "🪑", "#b4befe", "everyone else from this month", pack.Look{Border: "rounded", Floor: " "}},
+		SmartKind{Workshop, "Workshop", "🔧", peach, "monitors, servers and jobs not in a kennel", pack.Look{Border: "thick", Floor: "▪", Decor: "🧰"}})
+}
+
+func SmartKindByKey(key string) (SmartKind, bool) {
+	for _, k := range SmartKinds() {
+		if k.Key == key {
+			return k, true
+		}
+	}
+	return SmartKind{}, false
+}
+
+// Smart rooms only show recent pups (except the ones about old work).
+const recentWindow = 21 * 24 * time.Hour
+
+var keepsOld = map[string]bool{"rug": true, "dumpster": true, "best": true, "shipped": true}
 
 // styled applies the user's building blocks (floor, walls, shape) over a room's defaults.
 func styled(a *app.App, rooms []Room) []Room {
@@ -60,117 +97,101 @@ func styled(a *app.App, rooms []Room) []Room {
 	return rooms
 }
 
-// campusOrder decides which room a pup stands in when several smart kennels match.
-var campusOrder = []string{"yard", "best", "fire", "helping", "court", "yak", "water", "marathon", "shipped", "rug", "dumpster"}
-
-const recentWindow = 21 * 24 * time.Hour
-
-func workshop() Room {
-	return Room{Key: "workshop", Title: "Workshop", Icon: "🔧", Color: peach, Look: pack.Look{Border: "thick", Floor: "▪", Decor: "🧰"},
-		Blurb: "monitors, servers and long jobs — N to add one"}
-}
-
-// Rooms lays out one floor of the map. Both the TUI and the web map draw these.
-func Rooms(a *app.App, floor int) []Room {
-	return styled(a, rooms(a, floor))
-}
-
-func rooms(a *app.App, floor int) []Room {
+// Rooms lays out one floor's kennels. A pup stands in at most one room per floor:
+// the kennel it's filed in, else the first smart kennel that wants it. Unfiled pups
+// wait in the page's session tray until you drag them somewhere.
+func Rooms(a *app.App, floorID int64) []Room {
 	now := a.Now()
 	pups := a.Pups()
 	allThings := a.Things()
+	placed := map[string]bool{}
+
 	var rooms []Room
-	switch floor {
-	case 0:
-		placed := map[string]bool{}
-		for _, key := range campusOrder {
-			sm := pack.SmartByKey(key)
-			r := Room{Key: key, Title: sm.Name, Icon: sm.Icon, Color: sm.Color, Look: sm.Look, Blurb: sm.Blurb}
-			for _, p := range pups {
-				if placed[p.ID] || !sm.Match(p, now) {
-					continue
-				}
-				if key != "rug" && key != "dumpster" && !p.Status.Live() && now.Sub(p.Updated) > recentWindow {
-					continue
-				}
-				placed[p.ID] = true
-				r.Pups = append(r.Pups, p)
-			}
-			rooms = append(rooms, r)
+	var smart []int
+	homed := map[string]bool{}
+	for _, t := range allThings {
+		if t.KennelID != 0 {
+			homed[t.Key()] = true
 		}
-		lobby := Room{Key: "lobby", Title: "Lobby", Icon: "🪑", Color: lavender, Look: pack.Look{Border: "rounded", Floor: " "}, Blurb: "everyone else this month"}
-		for _, p := range pups {
-			if !placed[p.ID] && !p.Meta.Archived && !p.Empty() && now.Sub(p.Updated) < recentWindow {
-				lobby.Pups = append(lobby.Pups, p)
-			}
+	}
+	for _, k := range a.Kennels() {
+		if a.FloorOf(k) != floorID {
+			continue
 		}
-		ws := workshop()
-		ws.Things = allThings
-		rooms = append(rooms[:1], append([]Room{lobby, ws}, rooms[1:]...)...)
-	case 1:
-		floorsChars := []string{"·", "⠂", "∴", "⁘", "~", " "}
-		borders := []string{"rounded", "double", "thick", "normal"}
-		palette := []string{"#89dceb", peach, "#cba6f7", "#a6e3a1", "#f9e2af", "#f5c2e7", "#94e2d5", lavender, "#f38ba8", "#89b4fa"}
-		homed := map[string]bool{}
-		for i, pr := range a.Projects() {
-			r := Room{Key: "project:" + pr.Root, Title: pr.Name, Icon: "📁", Color: palette[i%len(palette)],
-				Look: pack.Look{Border: borders[i%len(borders)], Floor: floorsChars[i%len(floorsChars)], Wide: pr.Count > 12}, Blurb: pr.Root}
-			for _, p := range pups {
-				if app.ProjectRoot(p.Cwd) == pr.Root && !p.Meta.Archived && !p.Empty() && (p.Status.Live() || now.Sub(p.Updated) < recentWindow) {
-					r.Pups = append(r.Pups, p)
-				}
+		r := Room{Key: fmt.Sprintf("kennel:%d", k.ID), KennelID: k.ID, Smart: k.Smart, Title: k.Name, Icon: k.Icon, Color: k.Color,
+			Look: pack.Look{Border: "rounded", Floor: "·"}}
+		if kind, ok := SmartKindByKey(k.Smart); ok {
+			r.Look, r.Blurb = kind.Look, kind.Blurb
+			if r.Color == "" {
+				r.Color = kind.Color
 			}
-			for _, t := range allThings {
-				if t.Cwd != "" && strings.HasPrefix(t.Cwd, pr.Root) {
-					r.Things = append(r.Things, t)
-					homed[t.Key()] = true
-				}
+			if r.Icon == "" {
+				r.Icon = kind.Icon
 			}
-			rooms = append(rooms, r)
-		}
-		if ws := homeless(allThings, homed); len(ws.Things) > 0 {
-			rooms = append(rooms, ws)
-		}
-	case 2:
-		homed := map[string]bool{}
-		for _, k := range a.Kennels() {
-			icon := k.Icon
-			if icon == "" {
-				icon = "🏠"
-			}
-			color := k.Color
-			if color == "" {
-				color = peach
-			}
-			r := Room{Key: fmt.Sprintf("kennel:%d", k.ID), Title: k.Name, Icon: icon, Color: color, Look: pack.Look{Border: "rounded", Floor: "·"}}
+			smart = append(smart, len(rooms))
+		} else {
 			for _, p := range pups {
 				if p.Kennel != nil && p.Kennel.ID == k.ID && !p.Meta.Archived {
 					r.Pups = append(r.Pups, p)
+					placed[p.ID] = true
 				}
 			}
 			for _, t := range allThings {
 				if t.KennelID == k.ID {
 					r.Things = append(r.Things, t)
-					homed[t.Key()] = true
 				}
 			}
-			rooms = append(rooms, r)
 		}
-		if len(a.Kennels()) == 0 {
-			rooms = append(rooms, Room{Key: "new-kennel", Title: "Your first kennel", Icon: "＋", Color: peach,
-				Look: pack.Look{Border: "hidden", Floor: " ", Decor: "🔨"}, Blurb: "No kennels yet — press K to build one"})
+		if r.Icon == "" {
+			r.Icon = "🏠"
 		}
-		// The kennels floor shows only what you've chosen: no strays, no unassigned things.
+		if r.Color == "" {
+			r.Color = peach
+		}
+		rooms = append(rooms, r)
 	}
-	return rooms
-}
 
-func homeless(all []things.Thing, homed map[string]bool) Room {
-	ws := workshop()
-	for _, t := range all {
-		if !homed[t.Key()] {
-			ws.Things = append(ws.Things, t)
+	// Smart kennels fill in order; the lobby takes whatever is left, so it goes last.
+	var order, lobbies []int
+	for _, i := range smart {
+		if rooms[i].Smart == Lobby {
+			lobbies = append(lobbies, i)
+		} else {
+			order = append(order, i)
 		}
 	}
-	return ws
+	for _, i := range append(order, lobbies...) {
+		r := &rooms[i]
+		switch r.Smart {
+		case Workshop:
+			for _, t := range allThings {
+				if !homed[t.Key()] {
+					r.Things = append(r.Things, t)
+				}
+			}
+		case Lobby:
+			for _, p := range pups {
+				if !placed[p.ID] && !p.Meta.Archived && !p.Empty() && now.Sub(p.Updated) < recentWindow {
+					r.Pups = append(r.Pups, p)
+					placed[p.ID] = true
+				}
+			}
+		default:
+			sm := pack.SmartByKey(r.Smart)
+			if sm == nil {
+				continue
+			}
+			for _, p := range pups {
+				if placed[p.ID] || !sm.Match(p, now) {
+					continue
+				}
+				if !keepsOld[r.Smart] && !p.Status.Live() && now.Sub(p.Updated) > recentWindow {
+					continue
+				}
+				r.Pups = append(r.Pups, p)
+				placed[p.ID] = true
+			}
+		}
+	}
+	return styled(a, rooms)
 }

@@ -11,23 +11,24 @@ import (
 func TestUndo(t *testing.T) {
 	a := demoApp(t)
 	p := a.Find("RATE-LIMITS")
+	seeded := len(a.Kennels())
 
 	a.ToggleStar(p.ID)
 	a.SetNote(p.ID, "ping Priya")
-	k := store.Kennel{Name: "Payments"}
+	k := store.Kennel{Name: "Billing"}
 	a.SaveKennel(&k)
 	a.MoveTo(p.ID, k.ID)
 	if got := a.UndoLabel(); got != "move RATE-LIMITS" {
 		t.Fatalf("label %q", got)
 	}
-	for _, want := range []string{"move RATE-LIMITS", "build kennel Payments", "note on RATE-LIMITS", "star RATE-LIMITS"} {
+	for _, want := range []string{"move RATE-LIMITS", "build kennel Billing", "note on RATE-LIMITS", "star RATE-LIMITS"} {
 		label, err := a.Undo()
 		if err != nil || label != want {
 			t.Fatalf("undo %q: got %q %v", want, label, err)
 		}
 	}
 	q := a.Pup(p.ID)
-	if q.Meta.Starred || q.Meta.Note != "" || q.Meta.KennelID != 0 || len(a.Kennels()) != 0 {
+	if q.Meta.Starred || q.Meta.Note != "" || q.Meta.KennelID != 0 || len(a.Kennels()) != seeded {
 		t.Fatalf("state not restored: %+v kennels=%d", q.Meta, len(a.Kennels()))
 	}
 	if _, err := a.Undo(); err == nil {
@@ -66,7 +67,7 @@ func TestUndo(t *testing.T) {
 	a.MoveTo(p.ID, k2.ID)
 	a.DeleteKennel(k2.ID)
 	a.Undo()
-	if len(a.Kennels()) != 1 || a.Pup(p.ID).Meta.KennelID != k2.ID {
+	if len(a.Kennels()) != seeded+1 || a.Pup(p.ID).Meta.KennelID != k2.ID {
 		t.Fatalf("kennel and membership not restored")
 	}
 }

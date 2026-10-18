@@ -75,5 +75,3 @@ func (a *App) untrash(trashed, original string) error {
 	return err
 }
 
-// Remember lets a UI record how to reverse an action kennel's core doesn't own (gear toggles).
-func (a *App) Remember(label string, run func() error) { a.remember(label, run) }

@@ -59,6 +59,21 @@ func setup(t *testing.T) (*app.App, *recorder) {
 	return a, rec
 }
 
+// smart finds (or builds) the smart kennel of a kind and returns its room key.
+func smart(t *testing.T, a *app.App, kind string) string {
+	t.Helper()
+	for _, k := range a.Kennels() {
+		if k.Smart == kind {
+			return "kennel:" + itoa(k.ID)
+		}
+	}
+	k := store.Kennel{Name: kind, Smart: kind}
+	if err := a.SaveKennel(&k); err != nil {
+		t.Fatal(err)
+	}
+	return "kennel:" + itoa(k.ID)
+}
+
 func pupNamed(t *testing.T, a *app.App, title string) *pack.Pup {
 	for _, p := range a.Pups() {
 		if p.Title() == title {
@@ -71,10 +86,11 @@ func pupNamed(t *testing.T, a *app.App, title string) *pack.Pup {
 
 func TestStyleOverridesLook(t *testing.T) {
 	a, _ := setup(t)
-	if err := a.SaveStyle("yard", store.Style{Shape: "tower", Floor: "water", Wall: "brick"}); err != nil {
+	yard := smart(t, a, "yard")
+	if err := a.SaveStyle(yard, store.Style{Shape: "tower", Floor: "water", Wall: "brick"}); err != nil {
 		t.Fatal(err)
 	}
-	r, ok := FindRoom(a, "yard")
+	r, ok := FindRoom(a, yard)
 	if !ok || r.Look.Floor != "~" || r.Look.Border != "thick" || r.MinCols != 2 || r.MinRows != 4 {
 		t.Fatalf("style not applied: %+v", r)
 	}
@@ -103,7 +119,7 @@ func TestMagnetAdoptsIntoKennel(t *testing.T) {
 
 func TestBellRingsOnlyInBelledRooms(t *testing.T) {
 	a, rec := setup(t)
-	a.SaveStyle("yard", store.Style{Blocks: []store.Block{{Kind: blocks.Bell, Config: map[string]string{"when": "waiting"}}}})
+	a.SaveStyle(smart(t, a, "yard"), store.Style{Blocks: []store.Block{{Kind: blocks.Bell, Config: map[string]string{"when": "waiting"}}}})
 	flaky := pupNamed(t, a, "FLAKY-CI")
 	old := pupNamed(t, a, "RATE-LIMITS")
 	n := Ring(a, []app.Transition{
@@ -121,8 +137,9 @@ func TestBellRingsOnlyInBelledRooms(t *testing.T) {
 
 func TestChuteArchivesSleepyPups(t *testing.T) {
 	a, _ := setup(t)
-	a.SaveStyle("lobby", store.Style{Blocks: []store.Block{{Kind: blocks.Chute, Config: map[string]string{"days": "2"}}}})
-	before, _ := FindRoom(a, "lobby")
+	lobby := smart(t, a, Lobby)
+	a.SaveStyle(lobby, store.Style{Blocks: []store.Block{{Kind: blocks.Chute, Config: map[string]string{"days": "2"}}}})
+	before, _ := FindRoom(a, lobby)
 	moved := Sweep(a)
 	if moved == 0 {
 		t.Fatalf("expected archives from %d lobby pups", len(before.Pups))
@@ -138,7 +155,7 @@ func TestChuteArchivesSleepyPups(t *testing.T) {
 
 func TestPortalRoutesIntoWorkspace(t *testing.T) {
 	a, rec := setup(t)
-	a.SaveStyle("yard", store.Style{Blocks: []store.Block{{Kind: blocks.Portal, Config: map[string]string{"workspace": "pack"}}}})
+	a.SaveStyle(smart(t, a, "yard"), store.Style{Blocks: []store.Block{{Kind: blocks.Portal, Config: map[string]string{"workspace": "pack"}}}})
 	p := pupNamed(t, a, "ONBOARDING")
 	tgt := TargetFor(a, p, true, false)
 	if tgt.Workspace != "pack" {
@@ -155,7 +172,11 @@ func TestPortalRoutesIntoWorkspace(t *testing.T) {
 
 func TestDoorSpawnsWithPresets(t *testing.T) {
 	a, _ := setup(t)
-	r, _ := FindRoom(a, "project:/Users/demo/code/infra")
+	k := store.Kennel{Name: "Infra", Cwd: "/Users/demo/code/infra"}
+	if err := a.SaveKennel(&k); err != nil {
+		t.Fatal(err)
+	}
+	r, _ := FindRoom(a, "kennel:"+itoa(k.ID))
 	door := store.Block{Kind: blocks.Door, Config: map[string]string{"name": "ONCALL", "model": "opus", "prompt": "check the alerts"}}
 	tgt, err := Spawn(a, r, door)
 	if err != nil {
@@ -168,10 +189,11 @@ func TestDoorSpawnsWithPresets(t *testing.T) {
 
 func TestTemplate(t *testing.T) {
 	a, _ := setup(t)
-	if err := ApplyTemplate(a, "fire", blocks.Templates[0]); err != nil {
+	fire := smart(t, a, "fire")
+	if err := ApplyTemplate(a, fire, blocks.Templates[0]); err != nil {
 		t.Fatal(err)
 	}
-	st := a.Style("fire")
+	st := a.Style(fire)
 	if st.Shape != "office" || len(st.Decor) != 3 || len(st.OfKind(blocks.Door)) != 1 || st.OfKind(blocks.Door)[0].Get("name") != "ONCALL" {
 		t.Fatalf("template: %+v", st)
 	}
@@ -182,10 +204,10 @@ func itoa(n int64) string { return strconv.FormatInt(n, 10) }
 func TestTwoChutesDontUndoEachOther(t *testing.T) {
 	a, _ := setup(t)
 	chute := store.Block{Kind: blocks.Chute, Config: map[string]string{"days": "2"}}
-	a.SaveStyle("lobby", store.Style{Blocks: []store.Block{chute, chute}})
+	a.SaveStyle(smart(t, a, Lobby), store.Style{Blocks: []store.Block{chute, chute}})
 	Sweep(a)
 	Sweep(a)
-	r, _ := FindRoom(a, "dumpster")
+	r, _ := FindRoom(a, smart(t, a, "dumpster"))
 	archived := 0
 	for _, p := range r.Pups {
 		if p.Meta.Archived {
@@ -195,4 +217,74 @@ func TestTwoChutesDontUndoEachOther(t *testing.T) {
 	if archived == 0 {
 		t.Fatal("old lobby pups should end up archived")
 	}
+}
+
+func TestOneRoomPerPupPerFloor(t *testing.T) {
+	a, _ := setup(t)
+	k := store.Kennel{Name: "Ops"}
+	a.SaveKennel(&k)
+	flaky := pupNamed(t, a, "FLAKY-CI")
+	if err := a.MoveTo(flaky.ID, k.ID); err != nil {
+		t.Fatal(err)
+	}
+	smart(t, a, Lobby)
+	seen := map[string]string{}
+	for _, r := range Rooms(a, a.Floors()[0].ID) {
+		for _, p := range r.Pups {
+			if prev, ok := seen[p.ID]; ok {
+				t.Fatalf("%s is in both %s and %s", p.Title(), prev, r.Title)
+			}
+			seen[p.ID] = r.Title
+		}
+	}
+	if seen[flaky.ID] != "Ops" {
+		t.Fatalf("filed pup should stand in its kennel, got %q", seen[flaky.ID])
+	}
+	if err := a.MoveTo(flaky.ID, mustKennel(t, a, "yard")); err == nil {
+		t.Fatal("filing into a smart kennel should fail")
+	}
+}
+
+func TestFloorsCarryKennels(t *testing.T) {
+	a, _ := setup(t)
+	main := a.Floors()[0].ID
+	f := store.Floor{Name: "Side projects"}
+	if err := a.SaveFloor(&f); err != nil {
+		t.Fatal(err)
+	}
+	k := store.Kennel{Name: "Garden", Floor: f.ID}
+	a.SaveKennel(&k)
+	has := func(floor int64, title string) bool {
+		for _, r := range Rooms(a, floor) {
+			if r.Title == title {
+				return true
+			}
+		}
+		return false
+	}
+	if !has(f.ID, "Garden") || has(main, "Garden") {
+		t.Fatal("kennel should stand on its own floor only")
+	}
+	if err := a.MoveKennelToFloor(k.ID, main); err != nil || !has(main, "Garden") {
+		t.Fatalf("move: %v", err)
+	}
+	a.MoveKennelToFloor(k.ID, f.ID)
+	if err := a.DeleteFloor(f.ID); err != nil || !has(main, "Garden") {
+		t.Fatalf("deleting a floor moves its kennels: %v", err)
+	}
+	if _, err := a.Undo(); err != nil || !has(f.ID, "Garden") {
+		t.Fatalf("undo brings the floor back with its kennels: %v", err)
+	}
+	if err := a.DeleteFloor(main); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.DeleteFloor(f.ID); err == nil {
+		t.Fatal("the last floor stays")
+	}
+}
+
+func mustKennel(t *testing.T, a *app.App, kind string) int64 {
+	key := smart(t, a, kind)
+	id, _ := strconv.ParseInt(strings.TrimPrefix(key, "kennel:"), 10, 64)
+	return id
 }

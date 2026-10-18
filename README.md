@@ -23,10 +23,11 @@ Sessions are **pups**: Claude Code corgis ▼•ᴥ•▼, Codex huskies ▲•�
 
 | | |
 |---|---|
-| 🗺 **The office** | Floors: a campus of smart rooms, one room per project, and **your kennels**, which show only what you've filed. Pups wander, sit at desks while working, and bounce with `!` when they need you. Walk with WASD, interact with X, click to inspect, double-click to open. |
-| ✋ **Arrange it by hand** | Drag pups anywhere in their room, or onto another kennel to file them. Marquee-select several and move them together. Select a room to get handles: drag its wall to move it and its handles to resize it, with snap guides as you go. Draw a new kennel with the ▭ tool. Right-click anything for its actions. Take pups out of a kennel by dragging them out, with Delete, or from the right-click menu or their card. That only unfiles them: the session stays in the library and inbox, and rule-based kennels won't pull it back. Tools: `V` select, `H` hand (or hold Space), `R` kennel. |
+| 🗺 **The office** | One map, with as many **floors** as you like (＋ in the dock; right-click a floor tab to rename or remove it; drag a kennel onto a tab to move it). Each floor holds **your kennels**, which show what you filed, and optional **smart rooms** that fill themselves: Live now, Firehouse, Helping Out, Best in Show, Lobby, Workshop and more, added from 🔨 Build. Pups wander, sit at desks while working, and bounce with `!` when they need you. Click to inspect, double-click to open. |
+| ✋ **Arrange it by hand** | Drag pups anywhere in their room, or onto another kennel to file them. Marquee-select several and move them together. Select a room to get handles: drag its wall to move it and its handles to resize it, with snap guides as you go. Draw a new kennel with the ▭ tool. Right-click anything for its actions. Take pups out of a kennel by dragging them out, with Delete, or from the right-click menu or their card. That only unfiles them: the session goes back to 📥 New in the tray, and rule-based kennels won't pull it back. Tools: `V` select, `H` hand (or hold Space), `R` kennel. |
 | 🌗 **Light and dark** | A day office and a night office. The 🖥 Auto / ☀️ Light / 🌙 Dark switch in the top bar (or `Shift+T`, or View → Appearance in the Mac app) is shared by every open window. |
-| 📥 **Inbox** | The newest sessions that aren't filed yet, in a strip above the map. Drag one onto a kennel. |
+| 🐾 **Session tray** | The side panel lists the last two weeks: ❗ needs you, 📥 new (not in a kennel), ⚡ working, 🕘 recent. Filter it, and drag any row onto a kennel to file it. |
+| 📁 **Project filter** | Pick a project at the top: the tray narrows to it and the rest of the map fades. |
 | 📚 **Library** | Every past session: filter by date, agent, kennel or theme, group by day, week, theme, kennel, repo or agent, sort, and move many at once. |
 | ✨ **Themes** | Automatic categories from an LLM, Cloudflare Workers AI or your `claude` haiku. Only titles, first asks and recaps are sent. |
 | 🔎 **Search** | Fuzzy titles, branches and PRs, plus full-text over every prompt, reply and tool call, with highlighted snippets. Filters: `is:live` `repo:x` `agent:codex` `since:7d` `has:pr`. |
@@ -36,21 +37,21 @@ Sessions are **pups**: Claude Code corgis ▼•ᴥ•▼, Codex huskies ▲•�
 | ⑂ **Fork, clone, merge, convert** | Fork; clone into another project; merge several sessions into a new pup from a brief; distill a long one; continue any session in another agent (Claude ↔ Codex ↔ Cursor) through a Markdown handoff. The original is never touched. |
 | 🦴 **Treats** | Drag a file, link, `#slack-channel`, ticket or note onto a pup. A live pup gets it as a prompt; an asleep one wakes up with it. |
 | 🔨 **Build** | Room templates, shapes, floors, walls and furniture, plus purpose blocks: 🚪 spawn door, 🧲 magnet, 🔔 bell, 🌀 portal to a herdr workspace, 📌 pin board, 🧹 archive chute. |
-| ⏰ 🎨 🔩 📰 | Jobs and things (background agents, in-session cron tasks, monitors and servers), artifacts, gear (MCP servers, skills, plugins and hooks, with safe toggles), and a digest. |
+| ⏰ 🎨 🔩 📰 | Jobs and things (background agents, in-session cron tasks, monitors and servers), artifacts, and a digest. |
 
 ## Screens
 
 <table>
 <tr><td><img src="docs/img/web-map.png" alt="the office"></td><td><img src="docs/img/web-library.png" alt="library grouped by theme"></td></tr>
-<tr><td align="center">the office, with the inbox strip</td><td align="center">📚 library, grouped by ✨ theme</td></tr>
+<tr><td align="center">the office, with the session tray</td><td align="center">📚 library, grouped by ✨ theme</td></tr>
 <tr><td><img src="docs/img/web-edit.png" alt="resizing a room"></td><td><img src="docs/img/web-card.png" alt="pup card"></td></tr>
 <tr><td align="center">✋ select a room, drag handles to resize</td><td align="center">a pup's card: state and every action</td></tr>
 <tr><td><img src="docs/img/web-build.png" alt="build mode"></td><td><img src="docs/img/web-dark.png" alt="dark mode"></td></tr>
 <tr><td align="center">🔨 build mode</td><td align="center">🌙 the night office</td></tr>
-<tr><td><img src="docs/img/web-ask.png" alt="ask"></td><td><img src="docs/img/web-projects.png" alt="projects floor"></td></tr>
-<tr><td align="center">💬 Ask, with citations</td><td align="center">one room per project</td></tr>
-<tr><td><img src="docs/img/web-gear.png" alt="gear"></td><td><img src="docs/img/web-jobs.png" alt="jobs and things"></td></tr>
-<tr><td align="center">🔩 gear: MCP, skills, plugins, hooks</td><td align="center">⏰ jobs and things</td></tr>
+<tr><td><img src="docs/img/web-ask.png" alt="ask"></td><td><img src="docs/img/web-projects.png" alt="project filter"></td></tr>
+<tr><td align="center">💬 Ask, with citations</td><td align="center">📁 one project in focus</td></tr>
+<tr><td colspan="2"><img src="docs/img/web-jobs.png" alt="jobs and things"></td></tr>
+<tr><td colspan="2" align="center">⏰ jobs and things</td></tr>
 </table>
 
 Every screenshot comes from built-in synthetic sessions (`kennel -demo`), not real ones.

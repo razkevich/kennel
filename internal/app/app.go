@@ -53,6 +53,7 @@ type App struct {
 	mu      sync.RWMutex
 	pups    []*pack.Pup
 	kennels []store.Kennel
+	floors  []store.Floor
 	jobs    []claude.Job
 	herdr   []opener.HerdrAgent
 	live    map[string]claude.Live
@@ -106,7 +107,7 @@ func New(cfg Config) (*App, error) {
 	}
 	a := &App{Cfg: cfg, Store: st, Indexer: &indexer.Indexer{Store: st, ClaudeDir: cfg.ClaudeDir, CodexDir: cfg.CodexDir, CursorDir: cfg.CursorDir}}
 	if cfg.Demo {
-		if err := a.seedDemoThings(); err != nil {
+		if err := a.seedDemo(); err != nil {
 			st.Close()
 			return nil, err
 		}
@@ -148,6 +149,10 @@ func (a *App) Reload() error {
 	if err != nil {
 		return err
 	}
+	floors, err := a.Store.Floors()
+	if err != nil {
+		return err
+	}
 	styles, err := a.Store.Styles()
 	if err != nil {
 		return err
@@ -164,7 +169,7 @@ func (a *App) Reload() error {
 		return err
 	}
 	a.mu.Lock()
-	a.pups, a.kennels, a.live, a.jobs, a.styles = pups, kennels, live, jobs, styles
+	a.pups, a.kennels, a.live, a.jobs, a.styles, a.floors = pups, kennels, live, jobs, styles, floors
 	a.things = things.Resolve(saved, a.panes, a.procs)
 	a.mu.Unlock()
 	return nil
@@ -431,6 +436,11 @@ func (a *App) SetNote(id, note string) error {
 // MoveTo files a pup into a kennel; kennel 0 takes it out of any kennel, which is an
 // explicit choice, so rule-based kennels won't adopt it back.
 func (a *App) MoveTo(id string, kennelID int64) error {
+	for _, k := range a.Kennels() {
+		if k.ID == kennelID && k.Smart != "" {
+			return fmt.Errorf("%s fills itself; file pups into one of your own kennels", k.Name)
+		}
+	}
 	if p := a.Pup(id); p != nil {
 		prev, prevUnfiled := p.Meta.KennelID, p.Meta.Unfiled
 		a.remember("move "+p.Title(), func() error { return a.setKennel(id, prev, prevUnfiled) })
@@ -685,10 +695,25 @@ func (a *App) Thing(key string) *things.Thing {
 	return nil
 }
 
-func (a *App) seedDemoThings() error {
+// seedDemo gives synthetic data a lived-in first floor: a few smart kennels,
+// a workshop, and the demo things.
+func (a *App) seedDemo() error {
 	existing, err := a.Store.Things()
 	if err != nil || len(existing) > 0 {
 		return err
+	}
+	floors, err := a.Store.Floors()
+	if err != nil || len(floors) == 0 {
+		return err
+	}
+	for _, sm := range []struct{ key, name, icon string }{
+		{"yard", "The Yard", "🌳"}, {"fire", "Firehouse", "🔥"}, {"helping", "Helping Out", "🤝"},
+		{"best", "Best in Show", "🏆"}, {"lobby", "Lobby", "🪑"}, {"workshop", "Workshop", "🔧"}, {"", "Payments", "💳"},
+	} {
+		k := store.Kennel{Name: sm.name, Icon: sm.icon, Smart: sm.key, Floor: floors[0].ID}
+		if err := a.Store.SaveKennel(&k); err != nil {
+			return err
+		}
 	}
 	for _, t := range demo.Things() {
 		t := t
