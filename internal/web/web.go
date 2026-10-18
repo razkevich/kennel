@@ -401,6 +401,8 @@ type StateJSON struct {
 	Pups      map[string]PupJSON `json:"pups"`
 	// Tray lists recent and live pups from every floor, newest first, for the side panel.
 	Tray []string `json:"tray"`
+	// Handoffs are the last day's passes between sessions, drawn as lines.
+	Handoffs []HandoffJSON `json:"handoffs"`
 	// Where maps each pup to the floor it stands on in this project, for jumping to it.
 	Where    map[string]int64     `json:"where"`
 	Projects []ProjectJSON        `json:"projects"`
@@ -425,6 +427,12 @@ type KennelJSON struct {
 	Icon  string `json:"icon"`
 	Floor int64  `json:"floor"`
 	Smart string `json:"smart"`
+}
+
+type HandoffJSON struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+	At   int64  `json:"at"`
 }
 
 type SpaceJSON struct {
@@ -508,7 +516,12 @@ func furColor(id, c string) string {
 func (s *Server) State(space string, fl int64) StateJSON {
 	st := StateJSON{Version: s.Version(), Now: s.App.Now().UnixMilli(), Pups: map[string]PupJSON{}, Things: map[string]ThingJSON{},
 		Counts: map[string]int{}, Demo: s.App.Cfg.Demo, Floors: []FloorJSON{}, Tray: []string{}, Projects: []ProjectJSON{}, Rooms: []RoomJSON{},
-		Prefs: map[string]string{}, Spaces: []SpaceJSON{}, Where: map[string]int64{}}
+		Prefs: map[string]string{}, Spaces: []SpaceJSON{}, Where: map[string]int64{}, Handoffs: []HandoffJSON{}}
+	if hs, err := s.App.Store.Handoffs(s.App.Now().Add(-24 * time.Hour)); err == nil {
+		for _, h := range hs {
+			st.Handoffs = append(st.Handoffs, HandoffJSON{h.From, h.To, h.At.UnixMilli()})
+		}
+	}
 	space, floors, _ := s.App.OpenSpace(space)
 	st.Space = space
 	if sp, ok := s.App.Space(space); ok {
@@ -773,6 +786,8 @@ func (s *Server) handlePupAction(w http.ResponseWriter, r *http.Request) {
 		Title  string   `json:"title"`
 		Role   string   `json:"role"`
 		Fur    string   `json:"fur"`
+		From   string   `json:"from"`
+		Note   string   `json:"note"`
 		Cwd    string   `json:"cwd"`
 		With   []string `json:"with"`
 		Agent  string   `json:"agent"`
@@ -844,6 +859,14 @@ func (s *Server) handlePupAction(w http.ResponseWriter, r *http.Request) {
 		}
 	case "look":
 		err = s.App.SetLook(p.ID, body.Role, body.Fur)
+	case "handoff":
+		var reached bool
+		var text string
+		if msg, reached, text, err = s.passOn(p, s.App.Pup(body.From), body.Note); err == nil {
+			s.touch()
+			writeJSON(w, map[string]any{"ok": true, "message": msg, "reached": reached, "text": text, "term": s.Terms.Get(p.ID) != nil})
+			return
+		}
 	case "move":
 		err = s.App.MoveTo(p.ID, body.Kennel)
 		msg = "🚚 moved " + p.Title()
@@ -1494,31 +1517,8 @@ func (s *Server) handleTerm(w http.ResponseWriter, r *http.Request) {
 			fail(w, errors.New("no such session"), http.StatusNotFound)
 			return
 		}
-		// A session live in another terminal may run here too: a second resume of the
-		// same conversation is what you asked for when you press Continue here.
-		tg := floor.TargetFor(s.App, p, false, false)
-		if err := s.App.CheckCwd(tg.Cwd); err != nil {
+		if err := s.startTerm(p, "", body.Cols, body.Rows); err != nil {
 			fail(w, err, http.StatusBadRequest)
-			return
-		}
-		bin, args := tg.Command()
-		line := opener.CommandLine(bin, args)
-		shell := os.Getenv("SHELL")
-		if shell == "" {
-			shell = "/bin/zsh"
-		}
-		cmdArgs := []string{"-l", "-c", line}
-		// Demo and tests never start a real agent: the terminal says what it would run and echoes.
-		if s.App.Cfg.Demo || opener.Resolve(s.App.Cfg.Opener) == opener.Print {
-			shell, cmdArgs = "/bin/sh", []string{"-c", "printf '%s\\n' " + shellQuote("would run: "+line) + "; exec cat"}
-		}
-		var err error
-		dir := tg.Cwd
-		if _, err := os.Stat(dir); err != nil {
-			dir, _ = os.UserHomeDir() // demo sessions point at folders that don't exist
-		}
-		if _, err = s.Terms.Start(id, dir, shell, cmdArgs, nil, body.Cols, body.Rows); err != nil {
-			fail(w, err, http.StatusInternalServerError)
 			return
 		}
 		s.touch()
@@ -1710,4 +1710,59 @@ func (s *Server) handleSpace(w http.ResponseWriter, r *http.Request) {
 	}
 	s.touch()
 	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// startTerm resumes a session in the panel's terminal, with an optional first prompt.
+// A session live in another terminal may run here too: a second resume of the same
+// conversation is what you asked for when you press Continue here.
+func (s *Server) startTerm(p *pack.Pup, prompt string, cols, rows int) error {
+	tg := floor.TargetFor(s.App, p, false, false)
+	tg.Prompt = prompt
+	if err := s.App.CheckCwd(tg.Cwd); err != nil {
+		return err
+	}
+	bin, args := tg.Command()
+	line := opener.CommandLine(bin, args)
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/zsh"
+	}
+	cmdArgs := []string{"-l", "-c", line}
+	// Demo and tests never start a real agent: the terminal says what it would run and echoes.
+	if s.App.Cfg.Demo || opener.Resolve(s.App.Cfg.Opener) == opener.Print {
+		shell, cmdArgs = "/bin/sh", []string{"-c", "printf '%s\\n' " + shellQuote("would run: "+line) + "; exec cat"}
+	}
+	dir := tg.Cwd
+	if _, err := os.Stat(dir); err != nil {
+		dir, _ = os.UserHomeDir() // demo sessions point at folders that don't exist
+	}
+	_, err := s.Terms.Start(p.ID, dir, shell, cmdArgs, nil, cols, rows)
+	return err
+}
+
+// passOn passes one session's latest reply (and your note) to another, wherever
+// kennel can reach it. reached is false when the text has to be pasted by hand.
+func (s *Server) passOn(to, from *pack.Pup, note string) (msg string, reached bool, text string, err error) {
+	if from == nil || from.ID == to.ID {
+		return "", false, "", errors.New("pick another session to pass from")
+	}
+	text = opener.SafeArg(s.App.HandoffText(from, note))
+	switch t := s.Terms.Get(to.ID); {
+	case t != nil:
+		// Bracketed paste keeps it one message.
+		err = t.Write([]byte("\x1b[200~" + text + "\x1b[201~\r"))
+		msg, reached = fmt.Sprintf("📨 %s → %s, in its terminal", from.Title(), to.Title()), true
+	case to.Status.Live() && to.Pane != "":
+		err = opener.Prompt(s.App.Cfg.Runner, to.Pane, text)
+		msg, reached = fmt.Sprintf("📨 %s → %s, in its pane", from.Title(), to.Title()), true
+	case !to.Status.Live() && to.AgentKind() == "claude":
+		err = s.startTerm(to, text, 100, 30)
+		msg, reached = fmt.Sprintf("📨 %s woke up with what %s found", to.Title(), from.Title()), true
+	default:
+		msg = fmt.Sprintf("📋 %s runs where kennel can't type: the message is on your clipboard", to.Title())
+	}
+	if err == nil {
+		_ = s.App.RecordHandoff(from.ID, to.ID)
+	}
+	return msg, reached, text, err
 }

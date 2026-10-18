@@ -1447,6 +1447,15 @@ function spotIn(r, ent) {
 // they're filed there; anywhere else they walk back.
 async function dropPups(d, w) {
   app.dropRoom = null;
+  if (d.group.length === 1 && d.ent.kind === "pup") {
+    const onto = pupNear(w, d.ent.id);
+    if (onto) {
+      d.ent.dragging = false;
+      if (d.ent.home) { d.ent.tx = d.ent.home.x; d.ent.ty = d.ent.home.y; }
+      openHandoff(d.ent.id, onto.id);
+      return;
+    }
+  }
   const target = roomAt(w.x, w.y);
   const items = d.group.filter((g) => g.ent.kind === "item");
   if (items.length) {
@@ -1508,6 +1517,70 @@ async function dropItems(group, target) {
     return;
   }
   for (const g of group) { const t = itemOf(g.ent.id); if (t) await pinTo(0, t); }
+}
+
+const pupNear = (w, except) => {
+  let best = null, bd = 1.1;
+  for (const e of app.ents.values()) {
+    if (e.kind !== "pup" || e.id === except) continue;
+    const d = Math.hypot(e.x - w.x, e.y - 0.4 - w.y);
+    if (d < bd) { bd = d; best = e; }
+  }
+  return best;
+};
+
+// Passing one session's latest reply to another: the sender walks over, an envelope
+// flies, and the two stay linked by a dotted line for a day.
+async function openHandoff(fromId, toId) {
+  const from = pupOf(fromId), to = pupOf(toId);
+  if (!from || !to) return;
+  const note = prompt(`📨 Pass ${from.title}'s latest reply to ${to.title}.\nAdd a note for ${to.title} (optional):`, "");
+  if (note === null) return;
+  const a = app.ents.get(fromId), b = app.ents.get(toId);
+  if (a && b) {
+    a.visit = { x: b.x + (a.x < b.x ? -1.2 : 1.2), y: b.y, until: app.t + 3 };
+    (app.flights = app.flights || []).push({ from: fromId, to: toId, t0: app.t });
+  }
+  try {
+    const out = await (await api(`/api/pup/${toId}/handoff`, { method: "POST", body: JSON.stringify({ from: fromId, note }) })).json();
+    if (!out.reached && out.text) { try { await navigator.clipboard.writeText(out.text); } catch (_) {} }
+    await loadState();
+    if (out.term) { select(toId, false); showTab("term"); }
+    toast(out.message);
+  } catch (e) { toast(e.message, true); }
+}
+
+function drawHandoffs() {
+  const seen = new Set();
+  for (const h of (app.state && app.state.handoffs) || []) {
+    const a = app.ents.get(h.from), b = app.ents.get(h.to);
+    const key = [h.from, h.to].sort().join(":");
+    if (!a || !b || seen.has(key)) continue;
+    seen.add(key);
+    const fresh = Math.max(0.25, 1 - (app.state.now - h.at) / 864e5);
+    const ax = a.x * TILE, ay = (a.y - 0.6) * TILE, bx = b.x * TILE, by = (b.y - 0.6) * TILE;
+    const mx = (ax + bx) / 2, my = Math.min(ay, by) - 40;
+    ctx.save();
+    ctx.globalAlpha = 0.55 * fresh;
+    ctx.strokeStyle = "#3d47db"; ctx.lineWidth = 2; ctx.setLineDash([5, 6]);
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.quadraticCurveTo(mx, my, bx, by); ctx.stroke();
+    ctx.setLineDash([]); ctx.globalAlpha = fresh;
+    ctx.font = "14px system-ui"; ctx.textAlign = "center"; ctx.fillStyle = "#000";
+    ctx.fillText("✉️", (ax + 2 * mx + bx) / 4, (ay + 2 * my + by) / 4 + 5);
+    ctx.restore();
+  }
+  app.flights = (app.flights || []).filter((f) => app.t - f.t0 < 1.6);
+  for (const f of app.flights) {
+    const a = app.ents.get(f.from), b = app.ents.get(f.to);
+    if (!a || !b) continue;
+    const t = Math.min(1, (app.t - f.t0) / 1.4);
+    const ax = a.x * TILE, ay = (a.y - 1) * TILE, bx = b.x * TILE, by = (b.y - 1) * TILE;
+    const mx = (ax + bx) / 2, my = Math.min(ay, by) - 80;
+    const x = (1 - t) * (1 - t) * ax + 2 * (1 - t) * t * mx + t * t * bx, y = (1 - t) * (1 - t) * ay + 2 * (1 - t) * t * my + t * t * by;
+    ctx.font = "22px system-ui"; ctx.textAlign = "center"; ctx.fillStyle = "#000";
+    ctx.fillText("✉️", x, y);
+    ctx.textAlign = "left";
+  }
 }
 
 const inKennel = (id) => { const e = app.ents.get(id); return isOwnKennel(e && e.room); };
@@ -1608,6 +1681,10 @@ function pupMenu(ent) {
     items.push(["🖥 Terminal", () => { select(ent.id, false); showTab("term"); }], ["↗ Open in a tab", () => act("open", ent.id)], ["⑂ Fork", () => act("fork", ent.id)],
       [p && p.starred ? "☆ Unstar" : "★ Star", () => act("star", ent.id)],
       ["✎ Rename…", () => { const t = prompt("Rename", p ? p.title : ""); if (t) act("rename", ent.id, { title: t }); }]);
+  }
+  if (ids.length === 1) {
+    const others = app.state.tray.filter((id) => id !== ent.id).map(pupOf).filter(Boolean).slice(0, 12);
+    items.push(["📨 Pass latest reply to…", () => showMenu({ clientX: 260, clientY: 140 }, others.map((o) => [`${ROLES[o.role] ? ROLES[o.role].icon + " " : ""}${o.title}`, () => openHandoff(ent.id, o.id)]))]);
   }
   const kennels = ownKennels();
   if (kennels.length) items.push(["—"], ...kennels.slice(0, 12).map((k) => [`→ ${k.icon || "🏠"} ${k.name}`, async () => { for (const id of ids) await act("move", id, { kennel: k.id }); toast(`🏠 filed ${ids.length > 1 ? ids.length + " pups " : ""}into ${k.name}`, false, true); app.multi.clear(); }]));
@@ -2059,12 +2136,14 @@ function step(dt) {
     if (e.kind !== "pup") continue;
     const p = pupOf(e.id);
     if (!p || e.dragging) continue;
-    const wanders = (p.status === "idle" || p.status === "done") && !propMode(e);
+    if (e.visit && app.t < e.visit.until) { e.tx = e.visit.x; e.ty = e.visit.y; }
+    else if (e.visit) { e.visit = null; e.tx = e.home.x; e.ty = e.home.y; }
+    const wanders = (p.status === "idle" || p.status === "done") && !propMode(e) && !e.visit;
     if (wanders && Math.hypot(e.tx - e.x, e.ty - e.y) < 0.05 && Math.random() < dt * 0.5) {
       e.tx = e.home.x + (Math.random() - 0.5) * 1.8;
       e.ty = e.home.y + (Math.random() - 0.5) * 1.0;
     }
-    if (!wanders) { e.tx = e.home.x; e.ty = e.home.y; }
+    if (!wanders && !e.visit) { e.tx = e.home.x; e.ty = e.home.y; }
     const dx = e.tx - e.x, dy = e.ty - e.y, d = Math.hypot(dx, dy);
     e.moving = d > 0.05;
     if (e.moving) {
@@ -2306,10 +2385,10 @@ function propBox(r, pr) {
   return { x: b.x + pr.x * b.w, y: b.y + pr.y * b.h, w: pr.w * b.w, h: pr.h * b.h };
 }
 
-// The prop a pup was put in, judged by where it was placed.
+// The prop a pup was put in: only pups you placed count, not ones whose slot an object covers.
 function propOf(e) {
   const r = e.room;
-  if (!r || !r.style || !r.style.props || !e.home) return null;
+  if (!r || !r.style || !r.style.props || !e.home || !(r.style.spots || {})[e.id]) return null;
   for (const pr of r.style.props) {
     const b = propBox(r, pr);
     if (e.home.x >= b.x && e.home.x <= b.x + b.w && e.home.y >= b.y && e.home.y <= b.y + b.h + 0.4) return pr;
@@ -2703,6 +2782,7 @@ function render() {
   for (const e of ents) {
     if (e.kind === "pup") drawPup(e); else if (e.kind === "item") drawItem(e); else drawThing(e);
   }
+  drawHandoffs();
   drawDropHover();
   drawOverlays();
   if (!app.rooms.length) {
@@ -3538,9 +3618,12 @@ window.kennel = {
   termText: () => {
     const b = termUI.xterm && termUI.xterm.buffer.active;
     if (!b) return "";
-    const out = [];
-    for (let i = 0; i < b.length; i++) out.push(b.getLine(i).translateToString(true));
-    return out.join("\n");
+    let out = "";
+    for (let i = 0; i < b.length; i++) {
+      const line = b.getLine(i);
+      out += (i && !line.isWrapped ? "\n" : "") + line.translateToString(true);
+    }
+    return out;
   },
   markdown,
   setAppearance: async (a) => { applyAppearance(a); await api("/api/appearance", { method: "POST", body: JSON.stringify({ appearance: a }) }); },

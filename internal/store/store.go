@@ -49,6 +49,12 @@ func (s *Store) Close() error { return s.DB.Close() }
 
 const metaSchema = `
 CREATE TABLE IF NOT EXISTS kv(k TEXT PRIMARY KEY, v TEXT);
+CREATE TABLE IF NOT EXISTS handoffs(
+	id INTEGER PRIMARY KEY,
+	from_id TEXT NOT NULL,
+	to_id TEXT NOT NULL,
+	at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS spaces(
 	id INTEGER PRIMARY KEY,
 	name TEXT NOT NULL,

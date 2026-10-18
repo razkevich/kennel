@@ -24,6 +24,9 @@ Sessions are **pups**: Claude Code corgis ▼•ᴥ•▼, Codex huskies ▲•�
 | | |
 |---|---|
 | 🗺 **The office** | Organize kennels by **floors** instead of one giant area: the floor navigator on the left lists each floor with its kennels, pups and who needs you; ＋ adds one, right-click renames or removes it, drag a kennel onto a floor to move it, and **✨ Organize into floors** has the model propose floors for your kennels (you review, one ⌘Z undoes it). Each floor holds **your kennels**, which show what you filed, and optional **smart rooms** that fill themselves: Live now, Firehouse, Helping Out, Best in Show, Lobby, Workshop and more, added from 🔨 Build. Pups wander, sit at desks while working, and bounce with `!` when they need you. Click to inspect, double-click to open. |
+| 📨 **Pups talk** | Drag one pup onto another (or right-click → Pass latest reply to…) to hand it the first one's latest reply plus your note: it's typed into the receiver's terminal or herdr pane, or an asleep session wakes up in the panel with it. The sender walks over, an envelope flies, and the two stay linked by a dotted line for a day. |
+| 🛋 **Room objects** | In Build's Shape menu: a room color, and objects you place, move and resize: a rug (pups dropped on it go under, with a count), a doghouse or basket (they peek out), a couch, chair, desk or piano (they sit on it), dividers, and all the furniture. |
+| 💬 **Chats** | The navigator lists active chats first, then recent ones; picking one is the same as clicking it on the map (it hops floors), and ☆ stars it everywhere. |
 | ✏️ **Rename** | Renaming a pup renames the Claude session too: an asleep one gets the same title record `/rename` writes, and one running in kennel's terminal panel or a herdr pane gets `/rename` typed in. |
 | ✋ **Arrange it by hand** | Drag pups anywhere in their room, or onto another kennel to file them. Marquee-select several and move them together. Select a room to get handles: drag its wall to move it and its handles to resize it, with snap guides as you go. Draw a new kennel with the ▭ tool. Right-click anything for its actions. Take pups out of a kennel by dragging them out, with Delete, or from the right-click menu or their card. That only unfiles them: the session goes back to 📥 New in the tray, and rule-based kennels won't pull it back. Tools: `V` select, `H` hand (or hold Space), `R` kennel. |
 | 🌗 **Light and dark** | A day office and a night office. The 🖥 Auto / ☀️ Light / 🌙 Dark switch in the top bar (or `Shift+T`, or View → Appearance in the Mac app) is shared by every open window. |
@@ -118,9 +121,13 @@ The Mac app UI tests launch the real app on synthetic sessions with fake runs, s
 
 ## Roadmap
 
-- More blocks: ⏲ timer (a recurring prompt per room), 📺 screen (a thing's live output on a wall), 🚦 gate, 🏷 label maker; shareable room templates.
-- Semantic vectors (local Ollama) alongside BM25; lineage leashes between forks, clones and merges.
-- More agents: Gemini CLI, Aider, opencode, Cursor's CLI chats; remote herdr machines in an "Annex".
+- **Pups working together:** standing "pairs" (a reviewer pup watches a coder pup and comments on each turn), a relay that passes a reply on automatically when a session finishes, and broadcasting one message to a whole kennel.
+- **Lineage leashes:** show forks, clones, merges and handoffs as a family tree, and replay how a piece of work moved between sessions.
+- **Kennel routines:** a ⏲ timer block that sends a room's pups a recurring prompt (stand-up summaries, "rebase on main"), and a 🚦 gate that holds a pup until another one finishes.
+- **Budgets and costs:** per-kennel spend with a soft limit that taps a pup on the shoulder before it burns through it.
+- **Sharing:** export a floor as a read-only page for teammates, and room templates others can import.
+- **Search over meaning:** local embeddings alongside full-text, and "find the session where we decided X" straight from the map.
+- **More agents:** Gemini CLI, Aider and opencode sessions; remote herdr machines as their own project.
 
 ## License
 

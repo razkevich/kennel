@@ -606,3 +606,29 @@ test("room objects: placed and resized in build mode; a pup dropped on a rug goe
   await post(page, `/api/pup/${id}/move`, { kennel: 0 });
   await post(page, "/api/room/style", { key, style: {} });
 });
+
+test("pups talk: drag one onto another to pass its latest reply; they stay linked", async ({ page }) => {
+  await open(page);
+  const from = await pupId(page, "PG-UPGRADE");
+  const to = await pupId(page, "RATE-LIMITS");
+  await page.evaluate(() => { window.kennel.app.cam.z = 0.6; });
+  await page.evaluate(([a, b]) => {
+    const app = window.kennel.app, st = document.querySelector("#stage"), ea = app.ents.get(a), eb = app.ents.get(b);
+    app.flyTo = null;
+    app.cam.x = ((ea.x + eb.x) / 2) * 32 - st.clientWidth / app.cam.z / 2;
+    app.cam.y = ((ea.y + eb.y) / 2) * 32 - st.clientHeight / app.cam.z / 2;
+  }, [from, to]);
+  const a = await page.evaluate((i) => window.kennel.screenPos(i), from);
+  const b = await page.evaluate((i) => window.kennel.screenPos(i), to);
+  page.once("dialog", (d) => { expect(d.message()).toContain("Pass PG-UPGRADE's latest reply to RATE-LIMITS"); d.accept("check the limits on the new cluster"); });
+  await page.mouse.move(a.x, a.y);
+  await page.mouse.down();
+  for (let i = 1; i <= 10; i++) await page.mouse.move(a.x + ((b.x - a.x) * i) / 10, a.y + ((b.y - a.y) * i) / 10);
+  await page.mouse.up();
+  // RATE-LIMITS is asleep: it wakes up in the panel with the message as its first prompt.
+  await expect(page.locator("#toast")).toContainText("woke up with what PG-UPGRADE found");
+  await expect.poll(() => page.evaluate(() => window.kennel.termText())).toContain("check the limits on the new cluster");
+  await expect.poll(() => page.evaluate(() => window.kennel.termText())).toContain('From the session "PG-UPGRADE"');
+  expect(await page.evaluate(([x, y]) => window.kennel.app.state.handoffs.some((h) => h.from === x && h.to === y), [from, to])).toBe(true);
+  await page.locator("#term button", { hasText: "Stop" }).click();
+});
