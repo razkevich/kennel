@@ -105,6 +105,7 @@ public final class Automation {
                      "bg": c.tab(for: w).map { t in t.view.layer?.backgroundColor.flatMap { NSColor(cgColor: $0)?.usingColorSpace(.sRGB).map { String(format: "#%02x%02x%02x", Int($0.redComponent*255), Int($0.greenComponent*255), Int($0.blueComponent*255)) } } ?? "none" } ?? ""]
                 },
                 "status": c.statusTitle,
+                "kennelDark": c.kennelDark,
                 "pageLoaded": c.pageLoaded,
                 "url": c.server.url?.absoluteString ?? "",
             ])

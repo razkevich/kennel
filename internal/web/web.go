@@ -177,11 +177,12 @@ func (s *Server) fingerprint() uint64 {
 	fmt.Fprintf(h, "ix%s;", ix)
 	th, _ := s.themes.Load().(ThemeStatus)
 	fmt.Fprintf(h, "th%v%d%s;", th.Running, th.Done, th.Error)
+	fmt.Fprintf(h, "ap%s;", s.App.Store.Get("web_appearance"))
 	for _, p := range s.App.Pups() {
 		fmt.Fprintf(h, "t%s", p.Meta.Theme)
 	}
 	for _, p := range s.App.Pups() {
-		fmt.Fprintf(h, "%s|%d|%d|%s|%v|%v|%d|%s;", p.ID, p.Status, p.Updated.UnixMilli(), p.Title(), p.Meta.Starred, p.Meta.Archived, p.Meta.KennelID, p.Pane)
+		fmt.Fprintf(h, "%s|%d|%d|%s|%v|%v|%d|%v|%s;", p.ID, p.Status, p.Updated.UnixMilli(), p.Title(), p.Meta.Starred, p.Meta.Archived, p.Meta.KennelID, p.Meta.Unfiled, p.Pane)
 	}
 	for _, t := range s.App.Things() {
 		fmt.Fprintf(h, "%s|%v;", t.Key(), t.Running)
@@ -236,6 +237,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/gear/toggle", s.guard(s.handleGearToggle))
 	mux.HandleFunc("GET /api/digest", s.guard(s.handleDigest))
 	mux.HandleFunc("POST /api/room/{action}", s.guard(s.handleRoom))
+	mux.HandleFunc("POST /api/appearance", s.guard(s.handleAppearance))
 	return s.hostCheck(mux)
 }
 
@@ -358,6 +360,8 @@ type StateJSON struct {
 	Undo    string       `json:"undo"`
 	Kennels []KennelJSON `json:"kennels"`
 	Themes  ThemeStatus  `json:"themes"`
+	// Appearance is "light", "dark" or "" (follow the system), shared by every open page.
+	Appearance string `json:"appearance"`
 }
 
 type KennelJSON struct {
@@ -445,7 +449,25 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		fmt.Sscan(v, &fl)
 		_ = s.App.Store.Set("web_floor", fmt.Sprint(fl))
 	}
-	writeJSON(w, s.State(fl))
+	st := s.State(fl)
+	st.Appearance = s.App.Store.Get("web_appearance")
+	writeJSON(w, st)
+}
+
+func (s *Server) handleAppearance(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Appearance string `json:"appearance"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || (body.Appearance != "" && body.Appearance != "light" && body.Appearance != "dark") {
+		fail(w, errors.New(`appearance is "light", "dark" or ""`), http.StatusBadRequest)
+		return
+	}
+	if err := s.App.Store.Set("web_appearance", body.Appearance); err != nil {
+		fail(w, err, http.StatusInternalServerError)
+		return
+	}
+	s.touch()
+	writeJSON(w, map[string]any{"ok": true})
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {

@@ -76,9 +76,23 @@ public final class AppController: NSObject, NSApplicationDelegate, NSWindowDeleg
         web.navigationDelegate = self
         web.uiDelegate = self
         w.contentView!.addSubview(web)
-        w.backgroundColor = NSColor(srgbRed: 0.961, green: 0.957, blue: 0.945, alpha: 1)
-        w.appearance = NSAppearance(named: .aqua)
         kennelWindow = w
+        setKennelAppearance(dark: NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua)
+    }
+
+    /// The Kennel tab's chrome follows the page's light/dark mode; terminal tabs keep the Ghostty theme.
+    func setKennelAppearance(dark: Bool) {
+        kennelWindow.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+        kennelWindow.backgroundColor = dark
+            ? NSColor(srgbRed: 0.106, green: 0.118, blue: 0.192, alpha: 1)
+            : NSColor(srgbRed: 0.961, green: 0.957, blue: 0.945, alpha: 1)
+        kennelDark = dark
+    }
+    public private(set) var kennelDark = false
+
+    @objc func setAppearanceMenu(_ sender: NSMenuItem) {
+        let value = ["", "light", "dark"][sender.tag]
+        web.evaluateJavaScript("window.kennel && window.kennel.setAppearance(\(jsString(value)))")
     }
 
     func showError(_ msg: String) {
@@ -373,6 +387,10 @@ public final class AppController: NSObject, NSApplicationDelegate, NSWindowDeleg
             item("Zoom Split", #selector(toggleSplitZoom(_:)), "\r", [.command, .shift]),
             item("Toggle Full Screen", #selector(toggleFullScreen(_:)), "\r"),
             .separator(),
+            tagged(item("Appearance: Auto", #selector(setAppearanceMenu(_:)), ""), 0),
+            tagged(item("Appearance: Light", #selector(setAppearanceMenu(_:)), ""), 1),
+            tagged(item("Appearance: Dark", #selector(setAppearanceMenu(_:)), ""), 2),
+            .separator(),
             item("Open Ghostty Config", #selector(openConfig(_:)), ","),
             item("Reload Config", #selector(reloadConfig(_:)), ",", [.command, .shift]),
         ].map { $0.target = $0.target ?? self; return $0 })
@@ -441,6 +459,8 @@ public final class AppController: NSObject, NSApplicationDelegate, NSWindowDeleg
                 return
             }
             openTab(launch)
+        case "appearance":
+            setKennelAppearance(dark: body["dark"] as? Bool ?? false)
         case "counts":
             if let c = body["counts"] as? [String: Int] { counts = c; updateStatus() }
         default:

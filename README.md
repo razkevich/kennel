@@ -24,7 +24,8 @@ Sessions are **pups**: Claude Code corgis ▼•ᴥ•▼, Codex huskies ▲•�
 | | |
 |---|---|
 | 🗺 **The office** | Floors: a campus of smart rooms, one room per project, and **your kennels**, which show only what you've filed. Pups wander, sit at desks while working, and bounce with `!` when they need you. Walk with WASD, interact with X, click to inspect, double-click to open. |
-| ✋ **Arrange it by hand** | Drag pups anywhere in their room, or onto another kennel to file them. Marquee-select several and move them together. Select a room to get handles: drag its wall to move it and its handles to resize it, with snap guides as you go. Draw a new kennel with the ▭ tool. Right-click anything for its actions. Tools: `V` select, `H` hand (or hold Space), `R` kennel. |
+| ✋ **Arrange it by hand** | Drag pups anywhere in their room, or onto another kennel to file them. Marquee-select several and move them together. Select a room to get handles: drag its wall to move it and its handles to resize it, with snap guides as you go. Draw a new kennel with the ▭ tool. Right-click anything for its actions. Take pups out of a kennel by dragging them out, with Delete, or from the right-click menu or their card. That only unfiles them: the session stays in the library and inbox, and rule-based kennels won't pull it back. Tools: `V` select, `H` hand (or hold Space), `R` kennel. |
+| 🌗 **Light and dark** | A day office and a night office. The 🖥 Auto / ☀️ Light / 🌙 Dark switch in the top bar (or `Shift+T`, or View → Appearance in the Mac app) is shared by every open window. |
 | 📥 **Inbox** | The newest sessions that aren't filed yet, in a strip above the map. Drag one onto a kennel. |
 | 📚 **Library** | Every past session: filter by date, agent, kennel or theme, group by day, week, theme, kennel, repo or agent, sort, and move many at once. |
 | ✨ **Themes** | Automatic categories from an LLM, Cloudflare Workers AI or your `claude` haiku. Only titles, first asks and recaps are sent. |
@@ -44,8 +45,8 @@ Sessions are **pups**: Claude Code corgis ▼•ᴥ•▼, Codex huskies ▲•�
 <tr><td align="center">the office, with the inbox strip</td><td align="center">📚 library, grouped by ✨ theme</td></tr>
 <tr><td><img src="docs/img/web-edit.png" alt="resizing a room"></td><td><img src="docs/img/web-card.png" alt="pup card"></td></tr>
 <tr><td align="center">✋ select a room, drag handles to resize</td><td align="center">a pup's card: state and every action</td></tr>
-<tr><td><img src="docs/img/web-build.png" alt="build mode"></td><td><img src="docs/img/web-search.png" alt="search"></td></tr>
-<tr><td align="center">🔨 build mode</td><td align="center">🔎 search with snippets</td></tr>
+<tr><td><img src="docs/img/web-build.png" alt="build mode"></td><td><img src="docs/img/web-dark.png" alt="dark mode"></td></tr>
+<tr><td align="center">🔨 build mode</td><td align="center">🌙 the night office</td></tr>
 <tr><td><img src="docs/img/web-ask.png" alt="ask"></td><td><img src="docs/img/web-projects.png" alt="projects floor"></td></tr>
 <tr><td align="center">💬 Ask, with citations</td><td align="center">one room per project</td></tr>
 <tr><td><img src="docs/img/web-gear.png" alt="gear"></td><td><img src="docs/img/web-jobs.png" alt="jobs and things"></td></tr>
@@ -79,7 +80,7 @@ kennel digest -since 168h
 kennel -demo                        # try it on synthetic sessions
 ```
 
-**Keys in the office:** `/` search · `V` `H` `R` tools · Space-drag pan · `+` `-` `Shift+1` zoom · `Delete` archive selected · `l` library · `b` build · `D` digest · `X` interact · `⌘Z` undo · `Esc` close.
+**Keys in the office:** `/` search · `V` `H` `R` tools · Space-drag pan · `+` `-` `Shift+1` zoom · `Delete` remove from kennel (archive elsewhere) · `Shift+T` light/dark · `l` library · `b` build · `D` digest · `X` interact · `⌘Z` undo · `Esc` close.
 **Keys in the Mac app** follow Ghostty's defaults:
 
 | | |

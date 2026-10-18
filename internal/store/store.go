@@ -115,6 +115,7 @@ func (s *Store) migrate() error {
 	// Columns added after first release; metadata tables are never dropped.
 	for _, col := range []struct{ table, name, def string }{
 		{"pup_meta", "theme", "TEXT NOT NULL DEFAULT ''"},
+		{"pup_meta", "unfiled", "INTEGER NOT NULL DEFAULT 0"},
 	} {
 		var n int
 		_ = s.DB.QueryRow(`SELECT count(*) FROM pragma_table_info(?) WHERE name=?`, col.table, col.name).Scan(&n)

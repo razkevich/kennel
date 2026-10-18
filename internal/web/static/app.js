@@ -224,10 +224,36 @@ const pupOf = (id) => app.state && app.state.pups[id];
 const thingOf = (id) => app.state && app.state.things[id];
 
 // ---------- data ----------
+// ---------- appearance: "" follows the system, or pinned "light" / "dark" ----------
+const systemDark = matchMedia("(prefers-color-scheme: dark)");
+let appearance = "";
+try { appearance = localStorage.getItem("kennel.appearance") || ""; } catch (_) {}
+const isDark = () => appearance === "dark" || (appearance === "" && systemDark.matches);
+const APPEARANCE_LABEL = { "": "🖥 Auto", light: "☀️ Light", dark: "🌙 Dark" };
+
+function applyAppearance(a) {
+  appearance = a || "";
+  if (appearance) document.documentElement.dataset.theme = appearance;
+  else delete document.documentElement.dataset.theme;
+  PAL = isDark() ? NIGHT : DAY;
+  const b = $("#themebtn");
+  b.textContent = APPEARANCE_LABEL[appearance];
+  b.title = `Appearance: ${APPEARANCE_LABEL[appearance].slice(3)} — click to switch (Shift+T)`;
+  try { localStorage.setItem("kennel.appearance", appearance); } catch (_) {}
+  if (native) native.postMessage({ type: "appearance", dark: isDark() });
+}
+
+async function cycleAppearance() {
+  const next = { "": "light", light: "dark", dark: "" }[appearance];
+  applyAppearance(next);
+  try { await api("/api/appearance", { method: "POST", body: JSON.stringify({ appearance: next }) }); } catch (e) { toast(e.message, true); }
+}
+
 async function loadState() {
   const res = await api(app.floor === null ? "/api/state" : `/api/state?floor=${app.floor}`);
   app.state = await res.json();
   app.floor = app.state.floor;
+  if ((app.state.appearance || "") !== appearance) applyAppearance(app.state.appearance);
   layout(app.state);
   renderFloors();
   renderCounts();
@@ -406,6 +432,7 @@ function renderCard() {
     btn("⬇ Export", () => act("export", p.id));
     btn("📜 Read", () => openTranscript(p.id));
     btn(p.starred ? "★ Unstar" : "☆ Star", () => act("star", p.id));
+    if (p.kennel) btn("✕ Remove from " + p.kennel, () => unfile([p.id]));
     btn(p.archived ? "↩ Restore" : "🗑 Archive", () => act("archive", p.id));
     if (p.pane) btn("💬 Reply", () => { const text = prompt(`Reply to ${p.title}`); if (text) act("reply", p.id, { text }); });
     const move = el("label", "move", "🏠 kennel");
@@ -940,7 +967,11 @@ async function dropPups(d, w) {
   const target = roomAt(w.x, w.y);
   const from = d.ent.room;
   const back = () => { for (const g of d.group) { g.ent.dragging = false; if (g.ent.home) { g.ent.tx = g.ent.home.x; g.ent.ty = g.ent.home.y; } } };
-  if (!target) { back(); toast("drop pups inside a room", true); return; }
+  if (!target) {
+    const out = d.group.map((g) => g.ent.id).filter(inKennel);
+    if (out.length) { for (const g of d.group) g.ent.dragging = false; await unfile(out); return; }
+    back(); toast("drop pups inside a room", true); return;
+  }
   if (target === from) {
     const st = styleOf(target);
     st.spots = st.spots || {};
@@ -965,6 +996,26 @@ async function dropPups(d, w) {
   toast(`🏠 ${d.group.length > 1 ? d.group.length + " pups" : "filed"} into ${target.icon} ${target.title}`, false, true);
   app.multi.clear();
   loadInbox();
+}
+
+const inKennel = (id) => { const e = app.ents.get(id); return !!(e && e.room && e.room.key.startsWith("kennel:")); };
+
+// Removing a pup from a kennel only unfiles it: the session stays in the library and inbox.
+async function unfile(ids) {
+  const names = [...new Set(ids.map((id) => pupOf(id) && pupOf(id).kennel).filter(Boolean))];
+  const one = ids.length === 1 && pupOf(ids[0]) ? pupOf(ids[0]).title : `${ids.length} pups`;
+  for (const id of ids) await act("move", id, { kennel: 0 });
+  app.multi.clear();
+  toast(`✕ removed ${one} from ${names.join(", ") || "its kennel"}`, false, true);
+  loadInbox();
+}
+
+// Delete takes pups out of the kennel they're in; anywhere else it archives them.
+async function deletePups(ids) {
+  const filed = ids.filter(inKennel), loose = ids.filter((id) => !inKennel(id));
+  if (filed.length) await unfile(filed);
+  for (const id of loose) await act("archive", id);
+  app.multi.clear();
 }
 
 async function createKennel(d) {
@@ -1040,6 +1091,11 @@ function pupMenu(ent) {
   if (kennels.length) items.push(["—"], ...kennels.slice(0, 12).map((k) => [`→ ${k.icon || "🏠"} ${k.name}`, async () => { for (const id of ids) await act("move", id, { kennel: k.id }); toast(`🏠 filed ${ids.length > 1 ? ids.length + " pups " : ""}into ${k.name}`, false, true); app.multi.clear(); loadInbox(); }]));
   const r = ent.room;
   if (r && r.style && r.style.spots && ids.some((id) => r.style.spots[id])) items.push(["—"], ["↺ Back to its slot", () => { for (const id of ids) delete r.style.spots[id]; saveStyle(r, true); }]);
+  const filed = ids.filter(inKennel);
+  if (filed.length) {
+    const names = [...new Set(filed.map((id) => pupOf(id) && pupOf(id).kennel).filter(Boolean))];
+    items.push(["—"], [`✕ Remove from ${names.length === 1 ? names[0] : "kennels"}${filed.length > 1 ? " (" + filed.length + ")" : ""}`, () => unfile(filed)]);
+  }
   items.push(["—"], [`🧹 Archive${ids.length > 1 ? " " + ids.length : ""}`, async () => { for (const id of ids) await act("archive", id); app.multi.clear(); }]);
   return items;
 }
@@ -1140,9 +1196,10 @@ window.addEventListener("keydown", (e) => {
   if (e.key === "-" && !e.metaKey) { zoomAt(app.cam.z / 1.2); return; }
   if ((e.key === "Delete" || e.key === "Backspace") && (app.multi.size || (app.sel && pupOf(app.sel)))) {
     const ids = app.multi.size ? [...app.multi] : [app.sel];
-    (async () => { for (const id of ids) await act("archive", id); app.multi.clear(); })();
+    deletePups(ids);
     return;
   }
+  if (e.key === "T") { cycleAppearance(); return; }
   if (e.key === "b") { setBuild(!build.on); return; }
   if (e.key === "l" || e.key === "L") { lib.open ? closeLibrary() : openLibrary(); return; }
   if (e.key === "D") { openDigest(); return; }
@@ -1229,6 +1286,37 @@ window.addEventListener("resize", () => { resize(); if (app.state) { layout(app.
 // ---------- the office, drawn in Gather's style ----------
 // Light walls, carpets, small pixel furniture, translucent room names, dark name tags.
 
+// The office by day and by night; PAL switches with the appearance.
+const DAY = {
+  stage: "#e9e1d4", hall: ["#efe6d8", "#eadfcf"], hallLine: "#dfd2bf", backWall: "#e4e2ec", backCap: "#8f8ca6",
+  window: "#b9dcf2", shine: "#ffffff", carpet: "#ffffff",
+  grass: "#bfe6a6", blades: ["#9fd486", "#a9da90"], wood: "#ead4b4", woodLine: "#dcc19c", pool: "#cfe7f6", poolLine: "#b5d9ef",
+  rug: "#d8b8c0", rugLine: "#c39aa5", stone: "#ddd8cf", stoneLine: "#cbc4b8", metal: "#d7dae2", metalLine: "#c3c7d2",
+  label: "#ffffffd9", labelInk: "#5f6480", labelLine: "#282d4f14", empty: "#9a9db3", picket: "#ffffff", picketShade: "#d9d4c8",
+  desk: "#f3f2f6", deskEdge: "#c9c7d4",
+  walls: {
+    rounded: { face: "#efe7da", cap: "#a08a70", trim: "#d9c9b0" },
+    thick: { face: "#efd9d0", cap: "#a8655a", trim: "#d9b0a5" },
+    double: { face: "#f4efe0", cap: "#b39443", trim: "#e6cd7d" },
+    normal: { face: "#e8e7ef", cap: "#8f8ca6", trim: "#cfcddc" },
+  },
+};
+const NIGHT = {
+  stage: "#141728", hall: ["#24273d", "#212438"], hallLine: "#2b2f4c", backWall: "#2b2f4a", backCap: "#12152a",
+  window: "#1d3152", shine: "#3c5a8a", carpet: "#1b1e31",
+  grass: "#2d5338", blades: ["#3a6a45", "#346140"], wood: "#4a3a2c", woodLine: "#3c2f23", pool: "#1e3850", poolLine: "#294a66",
+  rug: "#55384a", rugLine: "#6c4a5c", stone: "#383640", stoneLine: "#45434e", metal: "#343846", metalLine: "#414657",
+  label: "#1b1e31d9", labelInk: "#c4c7e3", labelLine: "#ffffff14", empty: "#6f7496", picket: "#b9bcd6", picketShade: "#7f83a1",
+  desk: "#c9cbe0", deskEdge: "#8d90a8",
+  walls: {
+    rounded: { face: "#3a3342", cap: "#18131e", trim: "#4b4253" },
+    thick: { face: "#41303a", cap: "#271318", trim: "#563b46" },
+    double: { face: "#3c392f", cap: "#5c4d22", trim: "#7a6830" },
+    normal: { face: "#30344d", cap: "#12152a", trim: "#3d4262" },
+  },
+};
+let PAL = DAY;
+
 const STATUS_DOT = { working: "#2fb36b", waiting: "#f2b01e", done: "#4f8de0", idle: "#2fb3a4", offline: "#9a9db3" };
 
 function px(x, y, w, h, c) { ctx.fillStyle = c; ctx.fillRect(Math.round(x), Math.round(y), Math.round(w), Math.round(h)); }
@@ -1237,18 +1325,19 @@ function drawHallway() {
   const { w, h } = app.world;
   // Warm checker tiles like Gather's office floor.
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-    px(x * TILE, y * TILE, TILE, TILE, (x + y) % 2 ? "#efe6d8" : "#eadfcf");
+    px(x * TILE, y * TILE, TILE, TILE, PAL.hall[(x + y) % 2]);
   }
-  ctx.strokeStyle = "#dfd2bf"; ctx.lineWidth = 1;
+  ctx.strokeStyle = PAL.hallLine; ctx.lineWidth = 1;
   for (let x = 0; x <= w; x++) { ctx.beginPath(); ctx.moveTo(x * TILE + .5, 0); ctx.lineTo(x * TILE + .5, h * TILE); ctx.stroke(); }
   for (let y = 0; y <= h; y++) { ctx.beginPath(); ctx.moveTo(0, y * TILE + .5); ctx.lineTo(w * TILE, y * TILE + .5); ctx.stroke(); }
   // The building's back wall, with windows.
-  px(0, 0, w * TILE, TILE * 1.2, "#e4e2ec");
-  px(0, 0, w * TILE, 6, "#8f8ca6");
+  px(0, 0, w * TILE, TILE * 1.2, PAL.backWall);
+  px(0, 0, w * TILE, 6, PAL.backCap);
   for (let x = 2; x < w - 2; x += 6) {
-    px(x * TILE, 10, TILE * 2, TILE * 0.8, "#b9dcf2");
-    px(x * TILE, 10, TILE * 2, 3, "#ffffff");
-    px(x * TILE + TILE - 1, 10, 2, TILE * 0.8, "#e4e2ec");
+    px(x * TILE, 10, TILE * 2, TILE * 0.8, PAL.window);
+    px(x * TILE, 10, TILE * 2, 3, PAL.shine);
+    if (PAL === NIGHT) { px(x * TILE + 12, 18, 2, 2, "#fff6c8"); px(x * TILE + 44, 24, 2, 2, "#ffffff"); }
+    px(x * TILE + TILE - 1, 10, 2, TILE * 0.8, PAL.backWall);
   }
   // Plants along the hallway.
   for (let x = 4; x < w - 1; x += 9) plant(x * TILE + 16, (h - 0.6) * TILE, 0.9);
@@ -1258,24 +1347,24 @@ function drawHallway() {
 function floorPattern(r, x0, y0) {
   const W = r.w * TILE, H = (r.h - WALL) * TILE;
   const f = r.look.Floor || " ";
-  const tint = (t) => mixHex(r.color, "#ffffff", t);
+  const tint = (t) => mixHex(r.color, PAL.carpet, t);
   ctx.save();
   ctx.beginPath(); ctx.rect(x0, y0, W, H); ctx.clip();
   switch (f) {
     case "⠂": { // grass, with paths and flowers
-      px(x0, y0, W, H, "#bfe6a6");
+      px(x0, y0, W, H, PAL.grass);
       for (let i = 0; i < W * H / 700; i++) {
         const gx = x0 + ((i * 137) % W), gy = y0 + ((i * 251 + i * i * 7) % H);
-        px(gx, gy, 2, 4, "#9fd486"); px(gx + 3, gy + 1, 2, 3, "#a9da90");
+        px(gx, gy, 2, 4, PAL.blades[0]); px(gx + 3, gy + 1, 2, 3, PAL.blades[1]);
       }
       for (let i = 0; i < W * H / 9000; i++) { const fx = x0 + ((i * 331) % W), fy = y0 + ((i * 173) % H); px(fx, fy, 3, 3, ["#ffffff", "#ffd36b", "#f5a3c7"][i % 3]); }
       break;
     }
     case " ": { // light wood planks
-      px(x0, y0, W, H, "#ead4b4");
+      px(x0, y0, W, H, PAL.wood);
       for (let y = y0, i = 0; y < y0 + H; y += 16, i++) {
-        px(x0, y, W, 1, "#dcc19c");
-        for (let x = x0 + (i % 3) * 22; x < x0 + W; x += 64) px(x, y, 1, 16, "#dcc19c");
+        px(x0, y, W, 1, PAL.woodLine);
+        for (let x = x0 + (i % 3) * 22; x < x0 + W; x += 64) px(x, y, 1, 16, PAL.woodLine);
       }
       break;
     }
@@ -1286,20 +1375,20 @@ function floorPattern(r, x0, y0) {
       break;
     }
     case "~": { // pool-blue carpet
-      px(x0, y0, W, H, "#cfe7f6");
-      ctx.strokeStyle = "#b5d9ef"; ctx.lineWidth = 2;
+      px(x0, y0, W, H, PAL.pool);
+      ctx.strokeStyle = PAL.poolLine; ctx.lineWidth = 2;
       for (let y = y0 + 8; y < y0 + H; y += 14) { ctx.beginPath(); for (let x = x0; x <= x0 + W; x += 8) ctx.lineTo(x, y + Math.sin((x + app.t * 30) / 10) * 2); ctx.stroke(); }
       break;
     }
     case "▒": { // a rug in the middle — things get swept under it
       px(x0, y0, W, H, tint(0.8));
-      px(x0 + 20, y0 + 14, W - 40, H - 28, "#d8b8c0");
-      ctx.strokeStyle = "#c39aa5"; ctx.lineWidth = 3; ctx.strokeRect(x0 + 26, y0 + 20, W - 52, H - 40);
+      px(x0 + 20, y0 + 14, W - 40, H - 28, PAL.rug);
+      ctx.strokeStyle = PAL.rugLine; ctx.lineWidth = 3; ctx.strokeRect(x0 + 26, y0 + 20, W - 52, H - 40);
       break;
     }
     case "∴": case "▪": { // stone / metal
-      px(x0, y0, W, H, f === "▪" ? "#d7dae2" : "#ddd8cf");
-      ctx.strokeStyle = f === "▪" ? "#c3c7d2" : "#cbc4b8"; ctx.lineWidth = 1;
+      px(x0, y0, W, H, f === "▪" ? PAL.metal : PAL.stone);
+      ctx.strokeStyle = f === "▪" ? PAL.metalLine : PAL.stoneLine; ctx.lineWidth = 1;
       for (let y = y0; y < y0 + H; y += 32) for (let x = x0; x < x0 + W; x += 32) ctx.strokeRect(x + .5, y + .5, 31, 31);
       break;
     }
@@ -1313,19 +1402,14 @@ function floorPattern(r, x0, y0) {
 
 const WALL = 1.6; // tiles of back wall above each room's floor
 
-const WALLS = {
-  rounded: { face: "#efe7da", cap: "#a08a70", trim: "#d9c9b0" },   // wood
-  thick: { face: "#efd9d0", cap: "#a8655a", trim: "#d9b0a5" },     // brick
-  double: { face: "#f4efe0", cap: "#b39443", trim: "#e6cd7d" },    // gold trim
-  normal: { face: "#e8e7ef", cap: "#8f8ca6", trim: "#cfcddc" },    // plain
-};
+
 
 function drawRoom(r) {
   const x0 = r.x * TILE, y0 = r.y * TILE, W = r.w * TILE, H = r.h * TILE;
   const wallH = WALL * TILE;
   const style = r.look.Border;
   floorPattern(r, x0, y0 + wallH);
-  const wl = WALLS[style] || WALLS.normal;
+  const wl = PAL.walls[style] || PAL.walls.normal;
   if (style !== "hidden") {
     // Back wall: a pale face with a dark cap, like Gather's top-down walls.
     px(x0 - 6, y0, W + 12, wallH, wl.face);
@@ -1336,7 +1420,7 @@ function drawRoom(r) {
     // A framed picture or window on the wall.
     const fx = x0 + W - 70;
     px(fx, y0 + 14, 40, 22, wl.cap);
-    px(fx + 3, y0 + 17, 34, 16, style === "thick" ? "#f6d38b" : "#b9dcf2");
+    px(fx + 3, y0 + 17, 34, 16, style === "thick" ? "#f6d38b" : PAL.window);
     // Thin side and front walls with a door gap in front.
     px(x0 - 6, y0, 6, H, wl.cap);
     px(x0 + W, y0, 6, H, wl.cap);
@@ -1344,9 +1428,9 @@ function drawRoom(r) {
     px(x0 + W / 2 + TILE, y0 + H, W / 2 - TILE + 6, 6, wl.cap);
   } else {
     // A white picket fence for gardens.
-    for (let x = 2; x < W; x += 12) { px(x0 + x, y0 + wallH - 22, 6, 22, "#ffffff"); px(x0 + x, y0 + wallH - 22, 6, 2, "#d9d4c8"); }
-    px(x0, y0 + wallH - 14, W, 3, "#ffffff");
-    for (const [x, y] of [[x0 - 4, y0], [x0 + W, y0]]) px(x, y + wallH - 24, 4, H - wallH + 24, "#ffffff");
+    for (let x = 2; x < W; x += 12) { px(x0 + x, y0 + wallH - 22, 6, 22, PAL.picket); px(x0 + x, y0 + wallH - 22, 6, 2, PAL.picketShade); }
+    px(x0, y0 + wallH - 14, W, 3, PAL.picket);
+    for (const [x, y] of [[x0 - 4, y0], [x0 + W, y0]]) px(x, y + wallH - 24, 4, H - wallH + 24, PAL.picket);
   }
   autoDecor(r, x0, y0 + wallH, W, H - wallH);
   // Room name: a translucent pill on the back wall, clear of the pups' name tags.
@@ -1354,10 +1438,10 @@ function drawRoom(r) {
   ctx.font = "600 14px Inter, system-ui, sans-serif";
   const tw = Math.min(W - 90, ctx.measureText(label).width + 24);
   const lx = x0 + 14, ly = y0 + (wallH - 24) / 2 + 2;
-  ctx.fillStyle = "#ffffffd9"; roundRect(lx, ly, tw, 24, 12); ctx.fill();
-  ctx.strokeStyle = "#282d4f14"; ctx.lineWidth = 1; ctx.stroke();
+  ctx.fillStyle = PAL.label; roundRect(lx, ly, tw, 24, 12); ctx.fill();
+  ctx.strokeStyle = PAL.labelLine; ctx.lineWidth = 1; ctx.stroke();
   ctx.save(); ctx.beginPath(); ctx.rect(lx, ly, tw - 8, 24); ctx.clip();
-  ctx.fillStyle = "#5f6480"; ctx.fillText(label, lx + 12, ly + 17); ctx.restore();
+  ctx.fillStyle = PAL.labelInk; ctx.fillText(label, lx + 12, ly + 17); ctx.restore();
   const unread = r.pups.filter((id) => pupOf(id) && pupOf(id).unread).length;
   if (unread) {
     ctx.font = "700 12px Inter, system-ui";
@@ -1366,7 +1450,7 @@ function drawRoom(r) {
   }
   const n = r.pups.length + r.things.length;
   if (!n) {
-    ctx.fillStyle = "#9a9db3"; ctx.font = "italic 13px Inter, system-ui";
+    ctx.fillStyle = PAL.empty; ctx.font = "italic 13px Inter, system-ui";
     ctx.textAlign = "center"; ctx.fillText(r.blurb && !r.blurb.startsWith("/") ? r.blurb : "empty", x0 + W / 2, y0 + wallH + 62); ctx.textAlign = "left";
   }
   if (app.dropRoom === r.key) {
@@ -1396,7 +1480,7 @@ function autoDecor(r, x0, y0, W, H) {
   plant(x0 + 16, y0 + 30, 1); plant(x0 + W - 16, y0 + 30, 1);
   if (W >= 260) bookshelf(x0 + 40, y0 + 4, Math.min(84, W / 4));
   if (f === "▒") return;
-  if (r.key === "lobby" || f === "~") { sofa(x0 + W / 2 - 40, y0 + H - 26); rug(x0 + W / 2, y0 + H - 46, 110, 36, "#e7e2f7"); }
+  if (r.key === "lobby" || f === "~") { sofa(x0 + W / 2 - 40, y0 + H - 26); rug(x0 + W / 2, y0 + H - 46, 110, 36, PAL === NIGHT ? "#3a355e" : "#e7e2f7"); }
   if (H > 160 && W >= 220) plant(x0 + W - 18, y0 + H - 14, 0.8);
 }
 
@@ -1435,7 +1519,7 @@ function bench(x, y) { px(x, y - 8, 48, 6, "#a87a52"); px(x + 2, y - 2, 4, 8, "#
 
 // A Gather-style desk pod: white desk, monitor, chair (drawn under working pups).
 function desk(x, y, phase) {
-  px(x - 28, y - 4, 56, 14, "#f3f2f6"); px(x - 28, y + 10, 56, 3, "#c9c7d4");
+  px(x - 28, y - 4, 56, 14, PAL.desk); px(x - 28, y + 10, 56, 3, PAL.deskEdge);
   px(x - 11, y - 18, 22, 14, "#2d3142"); px(x - 9, y - 16, 18, 10, Math.floor(app.t * 4 + phase) % 2 ? "#8fd3ff" : "#a9e5c0");
   px(x - 2, y - 4, 4, 2, "#2d3142");
   px(x + 14, y - 1, 8, 4, "#9a9db3");
@@ -1614,7 +1698,7 @@ function drawOverlays() {
 function render() {
   const dpr = devicePixelRatio;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.fillStyle = "#e9e1d4";
+  ctx.fillStyle = PAL.stage;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   if (!app.state) return;
   ctx.setTransform(dpr * app.cam.z, 0, 0, dpr * app.cam.z, -app.cam.x * dpr * app.cam.z, -app.cam.y * dpr * app.cam.z);
@@ -2324,6 +2408,7 @@ $("#digest").addEventListener("click", (e) => { if (e.target.id === "digest") $(
 // Exposed for end-to-end tests: screen positions of entities.
 window.kennel = {
   app,
+  setAppearance: async (a) => { applyAppearance(a); await api("/api/appearance", { method: "POST", body: JSON.stringify({ appearance: a }) }); },
   toast,
   lib,
   fileInto: (key, id) => fileInto(roomByKey(key), id),
@@ -2365,6 +2450,9 @@ window.kennel = {
 };
 
 $("#buildbtn").onclick = () => setBuild(!build.on);
+$("#themebtn").onclick = cycleAppearance;
+systemDark.addEventListener("change", () => applyAppearance(appearance));
+applyAppearance(appearance);
 $("#helpbtn").onclick = () => toast("drag pups to place or file them · drag a room’s wall to move it · select a room, drag handles to resize · right-click for actions · V/H/R tools · Space-drag pans · ⌘-scroll zooms · ⌘Z undo");
 resize();
 Promise.all([loadCatalog(), loadState(), loadTreats()]).then(() => { listen(); requestAnimationFrame(frame); }).catch((e) => toast(e.message, true));

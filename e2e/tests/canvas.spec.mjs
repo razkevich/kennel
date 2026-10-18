@@ -152,3 +152,47 @@ test("toolbar, zoom controls, space-pan and context menu on empty floor", async 
   await page.keyboard.press("Escape");
   await expect(page.locator("#ctxmenu")).toBeHidden();
 });
+
+test("remove pups from a kennel: right-click, Delete, drag out, card button; undo puts them back", async ({ page }) => {
+  await toFloor(page, "Kennels", 2);
+  const k = await post(page, "/api/kennels", { Name: "Removal yard", Icon: "🧺" });
+  const key = "kennel:" + k.ID;
+  const ids = await page.evaluate(() => fetch("/api/inbox?n=4", { headers: { "X-Kennel-Token": "e2e" } }).then((r) => r.json()).then((l) => l.map((p) => p.id)));
+  expect(ids.length).toBe(4);
+  for (const id of ids) await post(page, `/api/pup/${id}/move`, { kennel: k.ID });
+  await page.reload();
+  await page.waitForFunction((kk) => window.kennel && window.kennel.app.rooms.some((r) => r.key === kk && r.pups.length === 4), key);
+  const members = () => page.evaluate((kk) => window.kennel.app.rooms.find((r) => r.key === kk)?.pups.length ?? 0, key);
+  const at = async (id) => { await center(page, key); return page.evaluate((i) => window.kennel.screenPos(i), id); };
+
+  // Right-click → Remove from …
+  let p = await at(ids[0]);
+  await page.mouse.click(p.x, p.y, { button: "right" });
+  await page.locator("#ctxmenu button", { hasText: "Remove from Removal yard" }).click();
+  await expect(page.locator("#toast")).toContainText("removed");
+  await expect.poll(members).toBe(3);
+  await page.keyboard.press("Meta+z");
+  await expect.poll(members).toBe(4);
+
+  // Select + Delete.
+  p = await at(ids[1]);
+  await page.mouse.click(p.x, p.y);
+  await page.keyboard.press("Delete");
+  await expect.poll(members).toBe(3);
+  expect(await page.evaluate((i) => window.kennel.app.state.pups[i]?.archived ?? false, ids[1])).toBe(false);
+
+  // Drag out onto the empty floor.
+  p = await at(ids[2]);
+  const r = await page.evaluate((kk) => window.kennel.app.rooms.find((x) => x.key === kk), key);
+  const outside = await page.evaluate(([x, y]) => window.kennel.worldPos(x, y), [r.x + r.w + 1.2, r.y + r.h / 2]);
+  await dragTo(page, p, outside);
+  await expect.poll(members).toBe(2);
+
+  // The card's button.
+  p = await at(ids[3]);
+  await page.mouse.click(p.x, p.y);
+  await page.locator("#card button", { hasText: "Remove from Removal yard" }).click();
+  await expect.poll(members).toBe(1);
+  await expect(page.locator(`#inboxlist .inpup[data-id="${ids[3]}"]`)).toHaveCount(1);
+  await page.locator("#floors button", { hasText: "Campus" }).click();
+});

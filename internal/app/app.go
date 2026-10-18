@@ -428,10 +428,19 @@ func (a *App) SetNote(id, note string) error {
 	return nil
 }
 
+// MoveTo files a pup into a kennel; kennel 0 takes it out of any kennel, which is an
+// explicit choice, so rule-based kennels won't adopt it back.
 func (a *App) MoveTo(id string, kennelID int64) error {
 	if p := a.Pup(id); p != nil {
-		prev := p.Meta.KennelID
-		a.remember("move "+p.Title(), func() error { return a.MoveTo(id, prev) })
+		prev, prevUnfiled := p.Meta.KennelID, p.Meta.Unfiled
+		a.remember("move "+p.Title(), func() error { return a.setKennel(id, prev, prevUnfiled) })
+	}
+	return a.setKennel(id, kennelID, kennelID == 0)
+}
+
+func (a *App) setKennel(id string, kennelID int64, unfiled bool) error {
+	if err := a.updateMeta(id, "unfiled", func(m *store.PupMeta) any { m.Unfiled = unfiled; return unfiled }); err != nil {
+		return err
 	}
 	if err := a.updateMeta(id, "kennel_id", func(m *store.PupMeta) any {
 		m.KennelID = kennelID

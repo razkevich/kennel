@@ -84,7 +84,7 @@ func Build(sessions []*claude.Session, meta map[string]store.PupMeta, kennels []
 		}
 		if k := byID[p.Meta.KennelID]; k != nil {
 			p.Kennel = k
-		} else {
+		} else if !p.Meta.Unfiled {
 			for i := range kennels {
 				if kennels[i].Rules.Matches(s.Cwd, p.Title(), strings.Join(s.Branches, " ")) {
 					p.Kennel = &kennels[i]

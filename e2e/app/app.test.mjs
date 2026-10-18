@@ -170,6 +170,16 @@ test("⌘K clears the screen and scrollback", async () => {
   await waitFor(async () => (await tabs()).length === 1, "closed");
 });
 
+test("dark mode: the Kennel tab's window chrome follows the page", async () => {
+  await backToKennel();
+  await call("POST", "/jsasync", { code: `await window.kennel.setAppearance("dark"); return true` });
+  await waitFor(async () => (await state()).kennelDark === true, "dark chrome");
+  assert.equal(await js(`document.documentElement.dataset.theme`), "dark");
+  await call("POST", "/jsasync", { code: `await window.kennel.setAppearance("light"); return true` });
+  await waitFor(async () => (await state()).kennelDark === false, "light chrome");
+  await call("POST", "/jsasync", { code: `await window.kennel.setAppearance(""); return true` });
+});
+
 test("in the Kennel tab, ⌘= / ⌘0 zoom the page and ⌘D does nothing", async () => {
   await backToKennel();
   await key("=");

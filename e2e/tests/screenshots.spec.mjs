@@ -46,6 +46,16 @@ test("web screenshots", async ({ page }) => {
   await page.screenshot({ path: out("web-ask") });
 });
 
+test("dark screenshot", async ({ browser }) => {
+  const ctx = await browser.newContext({ colorScheme: "dark", viewport: { width: 1440, height: 860 } });
+  const page = await ctx.newPage();
+  await page.goto("/?t=e2e");
+  await page.waitForFunction(() => window.kennel && window.kennel.app.ents.size > 0);
+  await page.waitForTimeout(1200);
+  await page.screenshot({ path: out("web-dark") });
+  await ctx.close();
+});
+
 test("editing screenshot", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 860 });
   await page.goto("/?t=e2e");

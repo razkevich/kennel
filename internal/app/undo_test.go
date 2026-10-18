@@ -70,3 +70,28 @@ func TestUndo(t *testing.T) {
 		t.Fatalf("kennel and membership not restored")
 	}
 }
+
+func TestRemovedPupStaysOutOfRuleKennel(t *testing.T) {
+	a := demoApp(t)
+	p := a.Find("RATE-LIMITS")
+	k := store.Kennel{Name: "Limits", Rules: store.Rules{Match: "RATE"}}
+	a.SaveKennel(&k)
+	if got := a.Pup(p.ID).Kennel; got == nil || got.ID != k.ID {
+		t.Fatalf("rule should adopt the pup, got %+v", got)
+	}
+	if err := a.MoveTo(p.ID, 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.Pup(p.ID).Kennel; got != nil {
+		t.Fatalf("removed pup was adopted again by %s", got.Name)
+	}
+	a.Undo()
+	if got := a.Pup(p.ID).Kennel; got == nil || got.ID != k.ID {
+		t.Fatal("undo should bring the pup back under its rule")
+	}
+	a.MoveTo(p.ID, 0)
+	a.MoveTo(p.ID, k.ID)
+	if q := a.Pup(p.ID); q.Kennel == nil || q.Meta.Unfiled {
+		t.Fatalf("filing again clears the opt-out: %+v", q.Meta)
+	}
+}
