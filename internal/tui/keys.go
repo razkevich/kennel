@@ -119,6 +119,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "u":
 		return m.jumpUnread()
+	case "U":
+		label, err := m.app.Undo()
+		if err != nil {
+			m.setToast(err.Error(), true)
+			return m, nil
+		}
+		m.rebuildScopes()
+		m.enterTab()
+		return m, tea.Batch(m.refreshResults(), toast("↶ undid "+label, false))
 	case "d":
 		d := digest.Build(m.app.Pups(), m.app.Now(), 24*time.Hour)
 		m.modal = &modal{title: "📰 the last 24 hours", help: "kennel digest -since 168h for a week", confirm: false, info: d.Lines(),
@@ -329,6 +338,7 @@ func (m Model) mapKeys(key string) (tea.Model, tea.Cmd) {
 	case "F":
 		m.floor = (m.floor + 1) % len(floors)
 		m.mapSel = ""
+		_ = m.app.Store.Set("tui_floor", fmt.Sprint(m.floor))
 	case "N":
 		m.modal = newThingModal("")
 	default:

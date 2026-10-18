@@ -38,3 +38,9 @@ func (s *Store) DeleteTreat(id int64) error {
 	_, err := s.DB.Exec(`DELETE FROM treats WHERE id=?`, id)
 	return err
 }
+
+// RestoreTreat puts back a removed treat under its original id.
+func (s *Store) RestoreTreat(t treats.Treat) error {
+	_, err := s.DB.Exec(`INSERT INTO treats(id, name, kind, value, created) VALUES(?,?,?,?,?)`, t.ID, t.Name, string(t.Kind), t.Value, time.Now().UnixMilli())
+	return err
+}

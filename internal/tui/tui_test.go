@@ -43,7 +43,8 @@ func TestMapWalkAndFloors(t *testing.T) {
 	h.key("F")
 	h.contains("📁 atlas", "📁 infra", "📁 mobile")
 	h.key("F")
-	h.contains("Strays", "No kennels yet")
+	h.contains("Your first kennel", "No kennels yet")
+	h.lacks("Strays")
 }
 
 func TestClickPupOnMapSelectsAndDoubleClickOpens(t *testing.T) {

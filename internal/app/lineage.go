@@ -22,6 +22,9 @@ func ProjectDirName(cwd string) string {
 	return nonAlnum.ReplaceAllString(cwd, "-")
 }
 
+// NewSessionID returns a fresh UUID suitable for claude --session-id.
+func NewSessionID() string { return newUUID() }
+
 func newUUID() string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)
@@ -81,6 +84,10 @@ func (a *App) Clone(id, targetCwd, title string) (string, error) {
 	if _, err := a.Sync(context.Background(), nil); err != nil {
 		return newID, err
 	}
+	a.remember("clone "+p.Title(), func() error {
+		_, err := a.Trash(newID)
+		return err
+	})
 	return newID, nil
 }
 

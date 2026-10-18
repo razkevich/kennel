@@ -22,10 +22,23 @@ func (a *App) AddTreat(name, value string) (treats.Treat, error) {
 		return treats.Treat{}, fmt.Errorf("a treat needs a value: a path, link, #channel, ticket or note")
 	}
 	t := treats.New(name, ExpandHome(strings.TrimSpace(value)))
-	return t, a.Store.SaveTreat(&t)
+	if err := a.Store.SaveTreat(&t); err != nil {
+		return t, err
+	}
+	id := t.ID
+	a.remember("add treat "+t.Name, func() error { return a.Store.DeleteTreat(id) })
+	return t, nil
 }
 
-func (a *App) DeleteTreat(id int64) error { return a.Store.DeleteTreat(id) }
+func (a *App) DeleteTreat(id int64) error {
+	for _, t := range a.Treats() {
+		if t.ID == id {
+			t := t
+			a.remember("remove treat "+t.Name, func() error { return a.Store.RestoreTreat(t) })
+		}
+	}
+	return a.Store.DeleteTreat(id)
+}
 
 // FeedLive hands a message to a running pup through its herdr pane. ok is false
 // when the pup is asleep and has to be woken up with FeedTarget instead.

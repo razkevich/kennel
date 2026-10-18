@@ -1,8 +1,13 @@
 import { test, expect } from "@playwright/test";
 
+// Every test starts on the campus floor; the server remembers the last floor between tests.
 const open = async (page) => {
   await page.goto("/?t=e2e");
-  await page.waitForFunction(() => window.kennel && window.kennel.app.state && window.kennel.app.ents.size > 0);
+  await page.waitForFunction(() => window.kennel && window.kennel.app.state);
+  if (await page.evaluate(() => window.kennel.app.state.floor) !== 0) {
+    await page.locator("#floors button", { hasText: "Campus" }).click();
+  }
+  await page.waitForFunction(() => window.kennel.app.state.floor === 0 && window.kennel.app.ents.size > 0);
 };
 
 const pupId = (page, title) =>
@@ -128,8 +133,15 @@ test("floors switch between campus, projects and kennels", async ({ page }) => {
   expect(projects).toEqual(expect.arrayContaining(["atlas", "infra", "mobile", "dotfiles"]));
   await page.locator("#floors button", { hasText: "Kennels" }).click();
   await page.waitForFunction(() => window.kennel.app.state.floor === 2);
-  const kennels = await page.evaluate(() => window.kennel.app.rooms.map((r) => r.title));
-  expect(kennels).toEqual(expect.arrayContaining(["Your first kennel", "Strays"]));
+  const keys = await page.evaluate(() => window.kennel.app.rooms.map((r) => r.key));
+  expect(keys.length).toBeGreaterThan(0);
+  expect(keys.every((k) => k.startsWith("kennel:") || k === "new-kennel")).toBeTruthy();
+  // The floor is remembered: a reload comes back to the kennels.
+  await page.goto("/?t=e2e");
+  await page.waitForFunction(() => window.kennel && window.kennel.app.state);
+  await expect(page.locator("#floors button.on")).toHaveText("🏠 Kennels");
+  await page.locator("#floors button", { hasText: "Campus" }).click();
+  await page.waitForFunction(() => window.kennel.app.state.floor === 0);
 });
 
 test("api rejects requests without the token", async ({ request }) => {
@@ -174,8 +186,7 @@ test("codex and cursor pups: breeds, convert and export", async ({ page }) => {
 test("treats: drag a saved treat or a desktop file onto a pup", async ({ page }) => {
   await open(page);
   await page.evaluate(() => fetch("/api/treats", { method: "POST", headers: { "X-Kennel-Token": "e2e" }, body: JSON.stringify({ name: "runbook", value: "/Users/demo/docs/runbook.md" }) }));
-  await page.reload();
-  await page.waitForFunction(() => window.kennel && window.kennel.app.ents.size > 0);
+  await open(page);
   const chip = page.locator("#treatlist .treat", { hasText: "runbook" });
   await expect(chip).toBeVisible();
 

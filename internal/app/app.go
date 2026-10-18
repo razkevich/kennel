@@ -54,6 +54,10 @@ type App struct {
 	live    map[string]claude.Live
 	things  []things.Thing
 	styles  map[string]store.Style
+
+	undoMu  sync.Mutex
+	undo    []undoEntry
+	undoing bool
 	panes   []things.HerdrPane
 	procs   []things.Proc
 }
@@ -373,11 +377,29 @@ func (a *App) updateMeta(id, column string, f func(*store.PupMeta) any) error {
 }
 
 func (a *App) ToggleStar(id string) error {
-	return a.updateMeta(id, "starred", func(m *store.PupMeta) any { m.Starred = !m.Starred; return m.Starred })
+	if err := a.updateMeta(id, "starred", func(m *store.PupMeta) any { m.Starred = !m.Starred; return m.Starred }); err != nil {
+		return err
+	}
+	p := a.Pup(id)
+	verb := "unstar "
+	if p.Meta.Starred {
+		verb = "star "
+	}
+	a.remember(verb+p.Title(), func() error { return a.ToggleStar(id) })
+	return nil
 }
 
 func (a *App) ToggleArchive(id string) error {
-	return a.updateMeta(id, "archived", func(m *store.PupMeta) any { m.Archived = !m.Archived; return m.Archived })
+	if err := a.updateMeta(id, "archived", func(m *store.PupMeta) any { m.Archived = !m.Archived; return m.Archived }); err != nil {
+		return err
+	}
+	p := a.Pup(id)
+	verb := "restore "
+	if p.Meta.Archived {
+		verb = "archive "
+	}
+	a.remember(verb+p.Title(), func() error { return a.ToggleArchive(id) })
+	return nil
 }
 
 // SetArchived is the idempotent form used by automation (chutes).
@@ -390,10 +412,23 @@ func (a *App) MarkSeen(id string) error {
 }
 
 func (a *App) SetNote(id, note string) error {
-	return a.updateMeta(id, "note", func(m *store.PupMeta) any { m.Note = note; return note })
+	p := a.Pup(id)
+	if p == nil {
+		return fmt.Errorf("unknown session %s", id)
+	}
+	prev := p.Meta.Note
+	if err := a.updateMeta(id, "note", func(m *store.PupMeta) any { m.Note = note; return note }); err != nil {
+		return err
+	}
+	a.remember("note on "+p.Title(), func() error { return a.SetNote(id, prev) })
+	return nil
 }
 
 func (a *App) MoveTo(id string, kennelID int64) error {
+	if p := a.Pup(id); p != nil {
+		prev := p.Meta.KennelID
+		a.remember("move "+p.Title(), func() error { return a.MoveTo(id, prev) })
+	}
 	if err := a.updateMeta(id, "kennel_id", func(m *store.PupMeta) any {
 		m.KennelID = kennelID
 		if kennelID == 0 {
@@ -413,14 +448,33 @@ func (a *App) Rename(id, title string) error {
 	if p == nil {
 		return fmt.Errorf("unknown session %s", id)
 	}
+	prevAlias, prevCustom, prevTitle := p.Meta.Alias, p.CustomTitle, p.Title()
 	if err := a.updateMeta(id, "alias", func(m *store.PupMeta) any { m.Alias = title; return title }); err != nil {
 		return err
 	}
 	// Only Claude transcripts take a custom-title record; other agents keep the kennel alias.
-	if p.Status.Live() || title == "" || p.AgentKind() != "claude" {
+	wrote := !p.Status.Live() && title != "" && p.AgentKind() == "claude"
+	a.remember("rename "+prevTitle, func() error {
+		alias := prevAlias
+		if wrote && prevCustom != "" {
+			if err := a.appendTitle(p.Path, id, prevCustom); err != nil {
+				return err
+			}
+		} else if wrote {
+			// The transcript now carries the new title; the alias keeps the old name showing.
+			alias = prevTitle
+		}
+		return a.updateMeta(id, "alias", func(m *store.PupMeta) any { m.Alias = alias; return alias })
+	})
+	if !wrote {
 		return nil
 	}
-	f, err := os.OpenFile(p.Path, os.O_APPEND|os.O_RDWR, 0)
+	return a.appendTitle(p.Path, id, title)
+}
+
+// appendTitle writes the records /rename writes, starting on a fresh line.
+func (a *App) appendTitle(path, id, title string) error {
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_RDWR, 0)
 	if err != nil {
 		return err
 	}
@@ -461,9 +515,14 @@ func (a *App) Trash(id string) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return "", err
 	}
+	if _, err := os.Stat(dst); err == nil {
+		return "", fmt.Errorf("%s is already in the trash", dst)
+	}
 	if err := os.Rename(p.Path, dst); err != nil {
 		return "", err
 	}
+	orig, title := p.Path, p.Title()
+	a.remember("trash "+title, func() error { return a.untrash(dst, orig) })
 	if err := a.Store.RemovePath(p.Path); err != nil {
 		return dst, err
 	}
@@ -471,15 +530,54 @@ func (a *App) Trash(id string) (string, error) {
 }
 
 func (a *App) SaveKennel(k *store.Kennel) error {
+	var prev *store.Kennel
+	for _, old := range a.Kennels() {
+		if old.ID == k.ID {
+			o := old
+			prev = &o
+		}
+	}
 	if err := a.Store.SaveKennel(k); err != nil {
 		return err
+	}
+	id := k.ID
+	if prev == nil {
+		a.remember("build kennel "+k.Name, func() error { return a.DeleteKennel(id) })
+	} else {
+		a.remember("edit kennel "+prev.Name, func() error { return a.SaveKennel(prev) })
 	}
 	return a.Reload()
 }
 
 func (a *App) DeleteKennel(id int64) error {
+	var gone *store.Kennel
+	for _, k := range a.Kennels() {
+		if k.ID == id {
+			k := k
+			gone = &k
+		}
+	}
+	var members []string
+	for _, p := range a.Pups() {
+		if p.Meta.KennelID == id {
+			members = append(members, p.ID)
+		}
+	}
 	if err := a.Store.DeleteKennel(id); err != nil {
 		return err
+	}
+	if gone != nil {
+		a.remember("tear down "+gone.Name, func() error {
+			if err := a.Store.RestoreKennel(*gone); err != nil {
+				return err
+			}
+			for _, pid := range members {
+				if err := a.Store.SetMetaField(pid, "kennel_id", id); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
 	}
 	return a.Reload()
 }
@@ -592,15 +690,38 @@ func (a *App) SaveThing(t *things.Thing) error {
 	if t.Kind == "" {
 		t.Kind = things.Infer(t.Command)
 	}
+	var prev *things.Thing
+	if t.ID != 0 {
+		saved, _ := a.Store.Things()
+		for _, o := range saved {
+			if o.ID == t.ID {
+				o := o
+				prev = &o
+			}
+		}
+	}
 	if err := a.Store.SaveThing(t); err != nil {
 		return err
+	}
+	id := t.ID
+	if prev == nil {
+		a.remember("save "+t.Name, func() error { return a.DeleteThing(id) })
+	} else {
+		a.remember("change "+prev.Name, func() error { return a.SaveThing(prev) })
 	}
 	return a.Reload()
 }
 
 func (a *App) DeleteThing(id int64) error {
+	saved, _ := a.Store.Things()
 	if err := a.Store.DeleteThing(id); err != nil {
 		return err
+	}
+	for _, t := range saved {
+		if t.ID == id {
+			t := t
+			a.remember("forget "+t.Name, func() error { return a.Store.RestoreThing(t) })
+		}
 	}
 	return a.Reload()
 }
@@ -651,6 +772,7 @@ func (a *App) Style(key string) store.Style {
 }
 
 func (a *App) SaveStyle(key string, st store.Style) error {
+	a.rememberStyle(key, "change room")
 	if err := a.Store.SaveStyle(key, st); err != nil {
 		return err
 	}
@@ -658,10 +780,21 @@ func (a *App) SaveStyle(key string, st store.Style) error {
 }
 
 func (a *App) ResetStyle(key string) error {
+	a.rememberStyle(key, "reset room")
 	if err := a.Store.DeleteStyle(key); err != nil {
 		return err
 	}
 	return a.Reload()
+}
+
+func (a *App) rememberStyle(key, label string) {
+	prev, had := a.Styles()[key]
+	a.remember(label, func() error {
+		if had {
+			return a.Store.SaveStyle(key, prev)
+		}
+		return a.Store.DeleteStyle(key)
+	})
 }
 
 // withMagnets folds magnet blocks into each kennel's adoption rules.
@@ -691,4 +824,19 @@ func ExpandHome(p string) string {
 		return home + p[1:]
 	}
 	return p
+}
+
+// DefaultFloor is the last floor a UI showed (saved under key), else your
+// kennels when you have some, else the campus. Indexes match floor.Names.
+func (a *App) DefaultFloor(key string) int {
+	if v := a.Store.Get(key); v != "" {
+		var f int
+		if _, err := fmt.Sscan(v, &f); err == nil && f >= 0 && f < 3 {
+			return f
+		}
+	}
+	if len(a.Kennels()) > 0 {
+		return 2
+	}
+	return 0
 }

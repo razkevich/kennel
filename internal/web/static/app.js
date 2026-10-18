@@ -136,7 +136,7 @@ const HUMAN_PAL = { H: "#5b3a29", S: "#f6c9a4", E: "#1e1e2e", M: "#d4776b", C: "
 // ---------- state ----------
 const app = {
   state: null,
-  floor: 0,
+  floor: null,
   rooms: [],
   world: { w: 40, h: 30 },
   ents: new Map(), // id -> {kind, id, x, y, tx, ty, home, room, phase}
@@ -212,8 +212,9 @@ const thingOf = (id) => app.state && app.state.things[id];
 
 // ---------- data ----------
 async function loadState() {
-  const res = await api(`/api/state?floor=${app.floor}`);
+  const res = await api(app.floor === null ? "/api/state" : `/api/state?floor=${app.floor}`);
   app.state = await res.json();
+  app.floor = app.state.floor;
   layout(app.state);
   renderFloors();
   renderCounts();
@@ -350,6 +351,7 @@ function select(id, fly) {
 
 function renderCard() {
   const card = $("#card");
+  if (app.sel && app.sel.startsWith("room:")) { renderRoomCard(app.sel.slice(5)); return; }
   const p = pupOf(app.sel), t = thingOf(app.sel);
   if (!p && !t) { card.hidden = true; return; }
   card.innerHTML = "";
@@ -383,7 +385,13 @@ function renderCard() {
     btn(p.starred ? "★ Unstar" : "☆ Star", () => act("star", p.id));
     btn(p.archived ? "↩ Restore" : "🗑 Archive", () => act("archive", p.id));
     if (p.pane) btn("💬 Reply", () => { const text = prompt(`Reply to ${p.title}`); if (text) act("reply", p.id, { text }); });
-    card.append(row, el("div", "meta", meta.filter(Boolean).join(" · ")), el("div", "snip", p.snippet), actions);
+    const move = el("label", "move", "🏠 kennel");
+    const sel = el("select");
+    sel.appendChild(new Option("— none —", "0"));
+    for (const k of app.state.kennels || []) sel.appendChild(new Option(`${k.icon} ${k.name}`, String(k.id), false, k.name === p.kennel));
+    sel.onchange = () => act("move", p.id, { kennel: Number(sel.value) });
+    move.appendChild(sel);
+    card.append(row, el("div", "meta", meta.filter(Boolean).join(" · ")), el("div", "snip", p.snippet), actions, move);
   } else {
     const row = el("div", "row");
     const ic = el("span", "", t.icon); ic.style.fontSize = "22px";
@@ -400,12 +408,72 @@ function renderCard() {
   }
 }
 
+// renderRoomCard lets you start a pup in a room, or pull any session into it.
+function renderRoomCard(key) {
+  const card = $("#card");
+  const r = roomByKey(key);
+  if (!r) { card.hidden = true; return; }
+  card.innerHTML = "";
+  card.hidden = false;
+  const row = el("div", "row");
+  row.append(el("span", "title", `${r.icon} ${r.title}`), el("span", "meta", `${r.pups.length} pups`));
+  const close = el("button", "x", "✕");
+  close.onclick = () => { app.sel = null; card.hidden = true; };
+  row.appendChild(close);
+  const actions = el("div", "actions");
+  const isKennel = r.key.startsWith("kennel:");
+  const b1 = el("button", "primary", "🐣 New pup here");
+  b1.onclick = async () => {
+    const title = prompt(`Name the new pup in ${r.title} (optional)`, "");
+    if (title === null) return;
+    const first = prompt("First thing to ask it (optional)", "") || "";
+    try {
+      const res = await api("/api/room/new", { method: "POST", body: JSON.stringify({ key: r.key, title, prompt: first }) });
+      toast((await res.json()).message || "🐣 started");
+    } catch (e) { toast(e.message, true); }
+  };
+  actions.appendChild(b1);
+  const b3 = el("button", "", "🔨 Shape");
+  b3.onclick = () => { setBuild(true); build.room = r.key; renderBuilder(); };
+  actions.appendChild(b3);
+  card.append(row, el("div", "snip", r.blurb && !r.blurb.startsWith("/") ? r.blurb : (isKennel ? "Your kennel." : "")), actions);
+  if (isKennel) {
+    const kid = Number(r.key.slice(7));
+    const box = el("div", "addpups");
+    const q = el("input");
+    q.placeholder = "＋ add pups: search any session…";
+    const list = el("div", "addlist");
+    let seq = 0;
+    q.oninput = async () => {
+      const mine = ++seq;
+      if (!q.value.trim()) { list.innerHTML = ""; return; }
+      const items = await (await api(`/api/search?q=${encodeURIComponent(q.value)}`)).json();
+      if (mine !== seq) return;
+      list.innerHTML = "";
+      for (const it of items.slice(0, 8)) {
+        const p = it.pup;
+        const rowp = el("div", "addrow");
+        rowp.append(miniDog(p.fur, p.status, p.agent), el("span", "", p.title), el("span", "m", p.kennel ? "🏠 " + p.kennel : p.repo));
+        const add = el("button", "", p.kennel === r.title ? "✓" : "＋");
+        add.disabled = p.kennel === r.title;
+        add.onclick = async () => { await act("move", p.id, { kennel: kid }); q.oninput(); };
+        rowp.appendChild(add);
+        list.appendChild(rowp);
+      }
+    };
+    box.append(q, list);
+    card.appendChild(box);
+  }
+}
+
 async function act(action, id, body) {
   try {
     const res = await api(`/api/pup/${id}/${action}`, { method: "POST", body: JSON.stringify(body || {}) });
     const out = await res.json();
-    if (out.message) toast(out.message);
     await loadState();
+    const verbs = { star: "★ starred", archive: "🗑 archived", rename: "✏️ renamed", clone: "", note: "📝 noted", move: "" };
+    const msg = out.message || verbs[action] || "";
+    if (msg) toast(msg, false, action in verbs);
   } catch (e) { toast(e.message, true); }
 }
 
@@ -419,13 +487,28 @@ async function thingAct(action, key) {
 }
 
 let toastTimer;
-function toast(text, err) {
+function toast(text, err, undoable) {
   const t = $("#toast");
   t.textContent = text;
   t.className = err ? "err" : "";
+  if (undoable && app.state && app.state.undo) {
+    const b = el("button", "undo", "↶ Undo");
+    b.title = "undo " + app.state.undo + " (⌘Z)";
+    b.onclick = (e) => { e.stopPropagation(); undo(); };
+    t.appendChild(b);
+  }
   t.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (t.hidden = true), 3500);
+  toastTimer = setTimeout(() => (t.hidden = true), undoable ? 6000 : 3500);
+}
+
+async function undo() {
+  try {
+    const res = await api("/api/undo", { method: "POST" });
+    const out = await res.json();
+    await Promise.all([loadState(), loadTreats()]);
+    toast(out.message, false, true);
+  } catch (e) { toast(e.message, true); }
 }
 
 // ---------- search ----------
@@ -669,6 +752,8 @@ window.addEventListener("mouseup", (e) => {
   if (build.on && drag && !drag.moved && e.target === canvas) {
     const rc = canvas.getBoundingClientRect();
     const w = screenToWorld(e.clientX - rc.left, e.clientY - rc.top);
+    const hit = !build.carry && entityAt(e.clientX - rc.left, e.clientY - rc.top);
+    if (hit) { select(hit.id, false); drag = null; return; }
     const r = roomAt(w.x, w.y);
     if (r && build.carry && build.room === r.key) {
       const box = interior(r);
@@ -694,7 +779,12 @@ window.addEventListener("mouseup", (e) => {
       app.lastClick = { id: hit.id, at: now };
       select(hit.id, false);
       if (dbl) interact(hit);
-    } else { app.sel = null; $("#card").hidden = true; }
+    } else {
+      const w = screenToWorld(e.clientX - r.left, e.clientY - r.top);
+      const room = roomAt(w.x, w.y);
+      app.sel = room ? "room:" + room.key : null;
+      renderCard();
+    }
   }
   drag = null;
   canvas.classList.remove("dragging");
@@ -728,6 +818,7 @@ window.addEventListener("keydown", (e) => {
   if (typing) return;
   if (e.key === "Escape") { $("#transcript").hidden = true; app.sel = null; $("#card").hidden = true; if (build.carry) { build.carry = null; renderBuilder(); } return; }
   if (e.key === "b") { setBuild(!build.on); return; }
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") { e.preventDefault(); undo(); return; }
   const k = e.key.toLowerCase();
   if (["arrowup", "arrowdown", "arrowleft", "arrowright", "w", "a", "s", "d"].includes(k)) {
     e.preventDefault();
@@ -1136,11 +1227,12 @@ function roomAt(wx, wy) {
   return app.rooms.find((r) => wx >= r.x && wx <= r.x + r.w && wy >= r.y && wy <= r.y + r.h);
 }
 
-async function saveStyle(r) {
+async function saveStyle(r, quiet) {
   try {
     await api("/api/room/style", { method: "POST", body: JSON.stringify({ key: r.key, style: r.style || {} }) });
   } catch (e) { toast(e.message, true); }
   await loadState();
+  if (!quiet && app.state.undo) toast("🔨 " + r.title + " updated", false, true);
 }
 
 const decorIcon = (k) => (catalog.decor.find((d) => d.key === k) || { icon: "❓" }).icon;
@@ -1321,7 +1413,7 @@ function renderBuilder() {
       inp.value = (b.config || {})[f.key] || "";
       inp.placeholder = f.placeholder;
       inp.dataset.field = f.key;
-      inp.onchange = () => { b.config = b.config || {}; b.config[f.key] = inp.value; saveStyle(r); };
+      inp.onchange = () => { b.config = b.config || {}; b.config[f.key] = inp.value; saveStyle(r, true); };
       c.appendChild(inp);
     }
     box.appendChild(c);
@@ -1371,7 +1463,9 @@ function renderTreats() {
       e.preventDefault();
       if (!confirm(`Remove treat ${t.name}?`)) return;
       await api(`/api/treats/${t.id}/delete`, { method: "POST" });
-      loadTreats();
+      await loadTreats();
+      await loadState();
+      toast("removed " + t.name, false, true);
     });
     box.appendChild(c);
   }
@@ -1381,7 +1475,9 @@ $("#addtreat").onclick = async () => {
   const value = prompt("A file path, link, #slack-channel, TICKET-123 or a note:");
   if (!value) return;
   try { await api("/api/treats", { method: "POST", body: JSON.stringify({ value }) }); } catch (e) { toast(e.message, true); }
-  loadTreats();
+  await loadTreats();
+  await loadState();
+  toast("🦴 treat saved", false, true);
 };
 
 const dropTargetAt = (clientX, clientY) => {

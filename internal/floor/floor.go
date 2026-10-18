@@ -15,6 +15,9 @@ import (
 
 var Names = []string{"🏡 Campus", "📁 Projects", "🏠 Kennels"}
 
+// KennelsFloor is the curated floor: only rooms you built, holding only pups you chose.
+const KennelsFloor = 2
+
 const (
 	peach    = "#fab387"
 	lavender = "#b4befe"
@@ -157,16 +160,7 @@ func rooms(a *app.App, floor int) []Room {
 			rooms = append(rooms, Room{Key: "new-kennel", Title: "Your first kennel", Icon: "＋", Color: peach,
 				Look: pack.Look{Border: "hidden", Floor: " ", Decor: "🔨"}, Blurb: "No kennels yet — press K to build one"})
 		}
-		strays := Room{Key: "strays", Title: "Strays", Icon: "🐾", Color: "#6c7086", Look: pack.Look{Border: "hidden", Floor: "⠂", Wide: true}, Blurb: "recent pups without a kennel — m to move one in"}
-		for _, p := range pups {
-			if p.Kennel == nil && !p.Meta.Archived && !p.Empty() && (p.Status.Live() || now.Sub(p.Updated) < 7*24*time.Hour) {
-				strays.Pups = append(strays.Pups, p)
-			}
-		}
-		rooms = append(rooms, strays)
-		if ws := homeless(allThings, homed); len(ws.Things) > 0 {
-			rooms = append(rooms, ws)
-		}
+		// The kennels floor shows only what you've chosen: no strays, no unassigned things.
 	}
 	return rooms
 }

@@ -208,3 +208,26 @@ func (s *Store) Set(k, v string) error {
 	_, err := s.DB.Exec(`INSERT INTO kv(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v`, k, v)
 	return err
 }
+
+// RestoreKennel puts back a deleted kennel under its original id.
+func (s *Store) RestoreKennel(k Kennel) error {
+	rules := ""
+	if !k.Rules.Empty() {
+		b, _ := json.Marshal(k.Rules)
+		rules = string(b)
+	}
+	_, err := s.DB.Exec(`INSERT INTO kennels(id, name, icon, color, cwd, rules, sort, created) VALUES(?,?,?,?,?,?,?,?)`,
+		k.ID, k.Name, k.Icon, k.Color, k.Cwd, rules, k.Sort, time.Now().UnixMilli())
+	return err
+}
+
+// RestoreThing puts back a forgotten thing under its original id.
+func (s *Store) RestoreThing(t things.Thing) error {
+	var kennel any
+	if t.KennelID != 0 {
+		kennel = t.KennelID
+	}
+	_, err := s.DB.Exec(`INSERT INTO things(id, name, command, cwd, kind, kennel_id, created) VALUES(?,?,?,?,?,?,?)`,
+		t.ID, t.Name, t.Command, t.Cwd, string(t.Kind), kennel, time.Now().UnixMilli())
+	return err
+}

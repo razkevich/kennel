@@ -184,6 +184,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/treats", s.guard(s.handleAddTreat))
 	mux.HandleFunc("POST /api/treats/{id}/delete", s.guard(s.handleDeleteTreat))
 	mux.HandleFunc("POST /api/drop", s.guard(s.handleDrop))
+	mux.HandleFunc("POST /api/undo", s.guard(s.handleUndo))
+	mux.HandleFunc("POST /api/kennels", s.guard(s.handleAddKennel))
 	mux.HandleFunc("POST /api/room/{action}", s.guard(s.handleRoom))
 	return s.hostCheck(mux)
 }
@@ -301,6 +303,15 @@ type StateJSON struct {
 	Demo    bool                 `json:"demo"`
 	// Indexing reports first-run progress ("12/230"); empty when idle.
 	Indexing string `json:"indexing"`
+	// Undo names the action ⌘Z would reverse; empty when there's nothing to undo.
+	Undo    string       `json:"undo"`
+	Kennels []KennelJSON `json:"kennels"`
+}
+
+type KennelJSON struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+	Icon string `json:"icon"`
 }
 
 var statusNames = map[claude.Status]string{claude.Offline: "offline", claude.Idle: "idle", claude.Done: "done", claude.Working: "working", claude.Waiting: "waiting"}
@@ -350,6 +361,11 @@ func (s *Server) State(fl int) StateJSON {
 		st.Counts[statusNames[p.Status]]++
 	}
 	st.Indexing, _ = s.indexing.Load().(string)
+	st.Undo = s.App.UndoLabel()
+	st.Kennels = []KennelJSON{}
+	for _, k := range s.App.Kennels() {
+		st.Kennels = append(st.Kennels, KennelJSON{k.ID, k.Name, k.Icon})
+	}
 	for _, r := range floor.Rooms(s.App, fl) {
 		rj := RoomJSON{Key: r.Key, Style: r.Style, MinCols: r.MinCols, MinRows: r.MinRows, Title: r.Title, Icon: r.Icon, Color: r.Color, Look: r.Look, Blurb: r.Blurb, Pups: []string{}, Things: []string{}}
 		for _, p := range r.Pups {
@@ -366,8 +382,11 @@ func (s *Server) State(fl int) StateJSON {
 }
 
 func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
-	fl := 0
-	fmt.Sscan(r.URL.Query().Get("floor"), &fl)
+	fl := s.App.DefaultFloor("web_floor")
+	if v := r.URL.Query().Get("floor"); v != "" {
+		fmt.Sscan(v, &fl)
+		_ = s.App.Store.Set("web_floor", fmt.Sprint(fl))
+	}
 	writeJSON(w, s.State(fl))
 }
 
@@ -495,13 +514,14 @@ func (s *Server) handlePupAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Title string   `json:"title"`
-		Text  string   `json:"text"`
-		Cwd   string   `json:"cwd"`
-		With  []string `json:"with"`
-		Agent string   `json:"agent"`
-		Treat int64    `json:"treat"`
-		Value string   `json:"value"`
+		Title  string   `json:"title"`
+		Text   string   `json:"text"`
+		Cwd    string   `json:"cwd"`
+		With   []string `json:"with"`
+		Agent  string   `json:"agent"`
+		Treat  int64    `json:"treat"`
+		Value  string   `json:"value"`
+		Kennel int64    `json:"kennel"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	var msg string
@@ -548,6 +568,9 @@ func (s *Server) handlePupAction(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+	case "move":
+		err = s.App.MoveTo(p.ID, body.Kennel)
+		msg = "🚚 moved " + p.Title()
 	case "feed":
 		var tr treats.Treat
 		if body.Treat != 0 {
@@ -670,6 +693,7 @@ func (s *Server) handleRoom(w http.ResponseWriter, r *http.Request) {
 		Template string      `json:"template"`
 		Index    int         `json:"index"`
 		Prompt   string      `json:"prompt"`
+		Title    string      `json:"title"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Key == "" {
 		fail(w, errors.New("missing room key"), http.StatusBadRequest)
@@ -692,6 +716,22 @@ func (s *Server) handleRoom(w http.ResponseWriter, r *http.Request) {
 		}
 	case "reset":
 		err = s.App.ResetStyle(body.Key)
+	case "new":
+		room, ok := floor.FindRoom(s.App, body.Key)
+		if !ok {
+			err = errors.New("no such room")
+			break
+		}
+		var t opener.Target
+		if t, err = floor.NewPupIn(s.App, room, body.Title, body.Prompt); err == nil {
+			if err = s.App.CheckCwd(t.Cwd); err == nil {
+				if opener.Resolve(s.App.Cfg.Opener) == opener.Inline {
+					msg = t.ShellCommand()
+				} else if msg, err = s.App.Opener().Open(t); err == nil {
+					msg = "🐣 " + msg
+				}
+			}
+		}
 	case "door":
 		room, ok := floor.FindRoom(s.App, body.Key)
 		doors := room.Style.OfKind(blocks.Door)
@@ -783,4 +823,29 @@ func (s *Server) handleDrop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]string{"path": path})
+}
+
+func (s *Server) handleUndo(w http.ResponseWriter, r *http.Request) {
+	label, err := s.App.Undo()
+	if err != nil {
+		fail(w, err, http.StatusBadRequest)
+		return
+	}
+	s.touch()
+	writeJSON(w, map[string]any{"ok": true, "message": "↶ undid " + label, "undo": s.App.UndoLabel()})
+}
+
+func (s *Server) handleAddKennel(w http.ResponseWriter, r *http.Request) {
+	var k store.Kennel
+	if err := json.NewDecoder(r.Body).Decode(&k); err != nil || strings.TrimSpace(k.Name) == "" {
+		fail(w, errors.New("a kennel needs a name"), http.StatusBadRequest)
+		return
+	}
+	k.ID = 0
+	if err := s.App.SaveKennel(&k); err != nil {
+		fail(w, err, http.StatusBadRequest)
+		return
+	}
+	s.touch()
+	writeJSON(w, k)
 }

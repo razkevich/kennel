@@ -103,7 +103,7 @@ func TargetFor(a *app.App, p *pack.Pup, fork, remote bool) opener.Target {
 func Spawn(a *app.App, room Room, door store.Block) (opener.Target, error) {
 	cwd := app.ExpandHome(strings.TrimSpace(door.Get("cwd")))
 	if cwd == "" {
-		cwd = roomCwd(a, room)
+		cwd = RoomCwd(a, room)
 	}
 	if cwd == "" {
 		return opener.Target{}, fmt.Errorf("the door in %s needs a folder", room.Title)
@@ -116,7 +116,8 @@ func Spawn(a *app.App, room Room, door store.Block) (opener.Target, error) {
 	return t, nil
 }
 
-func roomCwd(a *app.App, room Room) string {
+// RoomCwd is where new pups in a room start.
+func RoomCwd(a *app.App, room Room) string {
 	if root, ok := strings.CutPrefix(room.Key, "project:"); ok {
 		return root
 	}
@@ -167,4 +168,26 @@ func ApplyTemplate(a *app.App, key string, tp blocks.Template) error {
 		st.Blocks = append(st.Blocks, store.Block{Kind: kind, X: 0.9, Y: 0.25 + 0.25*float64(i), Config: cfg})
 	}
 	return a.SaveStyle(key, st)
+}
+
+// NewPupIn builds a target for a fresh session in a room. In your own kennels the
+// session id is chosen up front and assigned, so the pup shows up in that kennel.
+func NewPupIn(a *app.App, room Room, title, prompt string) (opener.Target, error) {
+	cwd := RoomCwd(a, room)
+	if cwd == "" {
+		return opener.Target{}, fmt.Errorf("%s has no folder yet — add a pup or set a cwd= rule first", room.Title)
+	}
+	t := opener.Target{Cwd: cwd, Title: strings.TrimSpace(title), Prompt: strings.TrimSpace(prompt), New: true}
+	for _, p := range room.Style.OfKind(blocks.Portal) {
+		t.Workspace = strings.TrimSpace(p.Get("workspace"))
+	}
+	if id, ok := strings.CutPrefix(room.Key, "kennel:"); ok {
+		var kid int64
+		fmt.Sscan(id, &kid)
+		t.SessionID = app.NewSessionID()
+		if err := a.Store.SetMetaField(t.SessionID, "kennel_id", kid); err != nil {
+			return opener.Target{}, err
+		}
+	}
+	return t, nil
 }

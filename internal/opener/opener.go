@@ -53,8 +53,11 @@ type Target struct {
 func (t Target) ClaudeArgs() []string {
 	var args []string
 	if t.New {
+		if t.SessionID != "" {
+			args = append(args, "--session-id", t.SessionID)
+		}
 		if t.Title != "" {
-			args = []string{"-n", t.Title}
+			args = append(args, "-n", t.Title)
 		}
 		if t.Model != "" {
 			args = append(args, "--model", t.Model)

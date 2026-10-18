@@ -131,6 +131,7 @@ func New(a *app.App, opts Options) Model {
 	}
 	m := Model{app: a, opts: opts, query: q, askInput: ai, tab: opts.StartTab,
 		syncDone: &atomic.Int64{}, syncTotal: &atomic.Int64{}, w: 120, h: 40}
+	m.floor = a.DefaultFloor("tui_floor")
 	m.rebuildScopes()
 	m.refreshResults()
 	return m

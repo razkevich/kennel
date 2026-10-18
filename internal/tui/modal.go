@@ -342,6 +342,22 @@ func gearToggleModal(it gear.Item) *modal {
 		if err := it.Toggle(); err != nil {
 			return toast(err.Error(), true)
 		}
+		claudeDir := m.app.Cfg.ClaudeDir
+		m.app.Remember(verb+" "+it.Name, func() error {
+			// The item moved (e.g. skills/ ↔ skills-disabled/); find it again and flip it back.
+			var roots []string
+			for _, pr := range m.app.Projects() {
+				roots = append(roots, pr.Root)
+			}
+			for _, sc := range gear.Inventory(claudeDir, roots) {
+				for _, cur := range sc.Items {
+					if cur.Kind == it.Kind && cur.Name == it.Name && cur.Level == it.Level && cur.Toggle != nil {
+						return cur.Toggle()
+					}
+				}
+			}
+			return fmt.Errorf("%s isn't there anymore", it.Name)
+		})
 		m.enterTab()
 		return toast(fmt.Sprintf("%sd %s", verb, it.Name), false)
 	})
