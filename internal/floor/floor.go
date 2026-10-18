@@ -3,7 +3,6 @@ package floor
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/razkevich/kennel/internal/app"
@@ -112,11 +111,11 @@ func Rooms(a *app.App, floorID int64) []Room {
 			space = f.Space
 		}
 	}
-	// In a project's space, smart rooms only pick from that project.
+	// In a project linked to a folder, smart rooms only pick from that folder.
 	pups := a.Pups()
 	allThings := a.Things()
-	inSpace := func(p *pack.Pup) bool { return space == "" || app.ProjectRoot(p.Cwd) == space }
-	thingInSpace := func(t things.Thing) bool { return space == "" || strings.HasPrefix(t.Cwd, space) }
+	inSpace := func(p *pack.Pup) bool { return a.InSpace(p, space) }
+	thingInSpace := func(t things.Thing) bool { return a.ThingInSpace(t, space) }
 	placed := map[string]bool{}
 
 	var rooms []Room

@@ -208,7 +208,8 @@ const itemOf = (id) => (typeof id === "string" && id.startsWith("item:") ? treat
 // Your own kennels hold the pups you file; smart ones fill themselves.
 const isOwnKennel = (r) => !!(r && r.kennel && !r.smart);
 const ownKennels = () => (app.state.kennels || []).filter((k) => !k.smart);
-const inSpace = (p) => !app.state.space || p.project === app.state.space;
+// A project linked to a folder holds that folder's sessions; otherwise all of them.
+const inSpace = (p) => !app.state.spaceRoot || p.project === app.state.spaceRoot;
 const thingOf = (id) => app.state && app.state.things[id];
 
 // ---------- data ----------
@@ -284,7 +285,11 @@ const FLOOR_ICONS = ["🏢", "🏠", "🧪", "🔥", "💼", "🛠", "🌱", "�
 
 function renderFloors() {
   const nav = $("#floors");
-  if (nav.querySelector("input")) return; // don't redraw under someone typing a name
+  // Redraw only on change, and never under someone typing a name or dragging a floor.
+  if (nav.querySelector("input") || app.draggingFloor) return;
+  const sig = JSON.stringify([app.state.floor, app.state.floors]);
+  if (sig === nav.dataset.sig && nav.children.length) return;
+  nav.dataset.sig = sig;
   nav.innerHTML = "";
   for (const f of app.state.floors) {
     const b = el("div", "floor" + (f.id === app.state.floor ? " on" : ""));
@@ -299,7 +304,8 @@ function renderFloors() {
     b.onclick = () => goFloor(f.id);
     b.ondblclick = (e) => { e.preventDefault(); editFloorName(b, f); };
     b.oncontextmenu = (e) => { e.preventDefault(); showMenu(e, floorMenu(f)); };
-    b.addEventListener("dragstart", (e) => { e.dataTransfer.setData("application/x-kennel-floor", String(f.id)); e.dataTransfer.effectAllowed = "move"; });
+    b.addEventListener("dragstart", (e) => { app.draggingFloor = true; e.dataTransfer.setData("application/x-kennel-floor", String(f.id)); e.dataTransfer.effectAllowed = "move"; });
+    b.addEventListener("dragend", () => { app.draggingFloor = false; });
     // Dropping on the top half of a floor puts the dragged one above it, the bottom half below.
     const below = (e) => e.clientY > b.getBoundingClientRect().top + b.offsetHeight / 2;
     b.addEventListener("dragover", (e) => {
@@ -330,21 +336,30 @@ async function orderFloors(ids) {
   } catch (e) { toast(e.message, true); }
 }
 
-// Names are edited in place: Enter saves, Esc cancels.
-function editFloorName(row, f) {
+// Names are edited in place: Enter (or clicking away) saves, Esc cancels.
+function editInline(row, value, placeholder, save, cancel) {
   const inp = el("input", "fedit");
-  inp.value = f ? f.name : "";
-  inp.placeholder = "Floor name";
-  const text = row.querySelector(".ftext") || row;
-  text.replaceWith(inp);
+  inp.value = value;
+  inp.placeholder = placeholder;
+  const text = row.querySelector(".ftext");
+  if (text) text.replaceWith(inp); else row.appendChild(inp);
   inp.focus(); inp.select();
   let done = false;
-  const finish = async (save) => {
+  const finish = (keep) => {
     if (done) return;
     done = true;
     const name = inp.value.trim();
     inp.remove();
-    if (!save || !name || (f && name === f.name)) { renderFloors(); return; }
+    if (keep && name && name !== value) save(name);
+    else { (cancel || (() => { $("#floors").dataset.sig = ""; $("#spaces").dataset.sig = ""; renderFloors(); renderProjects(); }))(); }
+  };
+  inp.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter") finish(true); if (e.key === "Escape") finish(false); };
+  inp.onblur = () => finish(true);
+  inp.onclick = (e) => e.stopPropagation();
+}
+
+function editFloorName(row, f) {
+  editInline(row, f ? f.name : "", "Floor name", async (name) => {
     try {
       if (f) {
         await api(`/api/floors/${f.id}/rename`, { method: "POST", body: JSON.stringify({ name }) });
@@ -355,11 +370,8 @@ function editFloorName(row, f) {
         goFloor(nf.ID);
         toast(`🏢 built ${nf.Name}`, false, true);
       }
-    } catch (e) { toast(e.message, true); renderFloors(); }
-  };
-  inp.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter") finish(true); if (e.key === "Escape") finish(false); };
-  inp.onblur = () => finish(true);
-  inp.onclick = (e) => e.stopPropagation();
+    } catch (e) { toast(e.message, true); $("#floors").dataset.sig = ""; renderFloors(); }
+  });
 }
 
 function goFloor(id) {
@@ -412,14 +424,68 @@ function floorTabAt(x, y) {
 }
 
 function renderProjects() {
-  const sel = $("#projectsel");
-  const v = app.state.space;
-  sel.innerHTML = "";
-  sel.appendChild(new Option("🌐 All projects", ""));
-  for (const pr of app.state.projects) sel.appendChild(new Option(`📁 ${pr.name} · ${pr.count}`, pr.root));
-  if (v && !app.state.projects.some((pr) => pr.root === v)) sel.appendChild(new Option(`📁 ${v.split("/").pop()}`, v));
-  sel.value = v;
-  sel.classList.toggle("on", !!v);
+  const nav = $("#spaces");
+  if (nav.querySelector("input")) return;
+  const sig = JSON.stringify([app.state.space, app.state.spaces]);
+  if (sig === nav.dataset.sig && nav.children.length) return;
+  nav.dataset.sig = sig;
+  nav.innerHTML = "";
+  for (const sp of app.state.spaces) {
+    const row = el("div", "floor space" + (sp.key === app.state.space ? " on" : ""));
+    row.dataset.space = sp.key;
+    row.title = (sp.root ? `sessions from ${sp.root}` : "every session") + " · double-click to rename";
+    const text = el("div", "ftext");
+    text.append(el("span", "fname", `${sp.icon || "📁"} ${sp.name}`),
+      el("span", "fcount", `${sp.floors} floor${sp.floors === 1 ? "" : "s"} · ${sp.kennels} kennel${sp.kennels === 1 ? "" : "s"}${sp.root ? " · " + sp.root.split("/").pop() + "/" : ""}`));
+    row.append(text, menuButton(() => spaceMenu(sp)));
+    row.onclick = () => { if (sp.key !== app.state.space) goSpace(sp.key); };
+    row.ondblclick = (e) => { e.preventDefault(); editInline(row, sp.name, "Project name", (name) => editSpace(sp, { name })); };
+    row.oncontextmenu = (e) => { e.preventDefault(); showMenu(e, spaceMenu(sp)); };
+    nav.appendChild(row);
+  }
+}
+
+async function editSpace(sp, body, quiet) {
+  try {
+    await api(`/api/spaces/${sp.id}/edit`, { method: "POST", body: JSON.stringify(body) });
+    await loadState();
+    if (!quiet) toast(`📁 ${body.name || sp.name}`, false, true);
+  } catch (e) { toast(e.message, true); }
+}
+
+function spaceMenu(sp) {
+  const items = [["✎ Rename", () => { const row = document.querySelector(`#spaces .space[data-space="${sp.key}"]`); if (row) editInline(row, sp.name, "Project name", (name) => editSpace(sp, { name })); }]];
+  items.push(["🎨 Icon", () => showMenu({ clientX: 220, clientY: 120 }, PROJECT_ICONS.map((ic) => [`${ic}  ${ic === sp.icon ? "✓" : ""}`, () => editSpace(sp, { icon: ic })]))]);
+  items.push(["📂 Folder…", () => showMenu({ clientX: 220, clientY: 120 }, [
+    [`${sp.root ? "" : "✓ "}No folder: every session`, () => editSpace(sp, { root: "" })],
+    ...app.state.projects.slice(0, 20).map((pr) => [`${sp.root === pr.root ? "✓ " : ""}📁 ${pr.name}  (${pr.count})`, () => editSpace(sp, { root: pr.root })]),
+    ["Other folder…", () => { const v = prompt("Folder for this project", sp.root || "~/code/"); if (v !== null) editSpace(sp, { root: v.trim() }); }],
+  ])]);
+  items.push(["—"], ["🗑 Remove project", async () => {
+    if (app.state.spaces.length < 2) { toast("keep at least one project", true); return; }
+    const to = app.state.spaces.find((x) => x.key !== sp.key);
+    if (sp.kennels && !confirm(`Remove ${sp.name}? Its floors and ${sp.kennels} kennel${sp.kennels === 1 ? "" : "s"} move to ${to.name}.`)) return;
+    try {
+      await api(`/api/spaces/${sp.id}/delete`, { method: "POST", body: "{}" });
+      if (sp.key === app.state.space) goSpace(to.key); else await loadState();
+      toast(`🗑 removed ${sp.name}`, false, true);
+    } catch (e) { toast(e.message, true); }
+  }]);
+  return items;
+}
+
+const PROJECT_ICONS = ["📁", "💼", "🧪", "🔥", "🛠", "🌱", "🎮", "📚", "🚀", "💳", "📈", "🎬", "🏠", "🤖"];
+
+function newProject() {
+  const row = el("div", "floor space new");
+  $("#spaces").appendChild(row);
+  editInline(row, "", "New project name", async (name) => {
+    try {
+      const sp = await (await api("/api/spaces", { method: "POST", body: JSON.stringify({ Name: name, Icon: "📁" }) })).json();
+      goSpace(sp.key);
+      toast(`📁 started ${sp.name}`, false, true);
+    } catch (e) { toast(e.message, true); $("#spaces").dataset.sig = ""; renderProjects(); }
+  }, () => { $("#spaces").dataset.sig = ""; renderProjects(); });
 }
 
 // Each project has its own space: floors, kennels and smart rooms of its own.
@@ -3274,7 +3340,7 @@ $("#sort .apply").onclick = applySort;
 $("#sort .cancel").onclick = () => ($("#sort").hidden = true);
 $("#sort").addEventListener("click", (e) => { if (e.target.id === "sort") $("#sort").hidden = true; });
 app.space = null;
-$("#projectsel").onchange = () => goSpace($("#projectsel").value);
+$("#addspacebtn").onclick = newProject;
 $("#themebtn").onclick = cycleAppearance;
 systemDark.addEventListener("change", () => applyAppearance(appearance));
 applyAppearance(appearance);

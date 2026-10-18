@@ -198,7 +198,10 @@ func (s *Server) fingerprint() uint64 {
 		fmt.Fprintf(h, "k%d|%s|%s|%d|%s;", k.ID, k.Name, k.Icon, k.Floor, k.Smart)
 	}
 	for _, f := range s.App.Floors() {
-		fmt.Fprintf(h, "f%d|%s|%s|%d;", f.ID, f.Name, f.Icon, f.Sort)
+		fmt.Fprintf(h, "f%d|%s|%s|%d|%s;", f.ID, f.Name, f.Icon, f.Sort, f.Space)
+	}
+	for _, sp := range s.App.Spaces() {
+		fmt.Fprintf(h, "sp%d|%s|%s|%s;", sp.ID, sp.Name, sp.Icon, sp.Root)
 	}
 	for _, t := range s.App.Treats() {
 		fmt.Fprintf(h, "t%d|%d|%s;", t.ID, t.Kennel, t.Name)
@@ -250,6 +253,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/kennels", s.guard(s.handleAddKennel))
 	mux.HandleFunc("POST /api/kennels/{id}/{action}", s.guard(s.handleKennel))
 	mux.HandleFunc("POST /api/floors", s.guard(s.handleAddFloor))
+	mux.HandleFunc("POST /api/spaces", s.guard(s.handleAddSpace))
+	mux.HandleFunc("POST /api/spaces/{id}/{action}", s.guard(s.handleSpace))
 	mux.HandleFunc("POST /api/floors/suggest", s.guard(s.handleSuggestFloors))
 	mux.HandleFunc("POST /api/floors/organize", s.guard(s.handleOrganizeFloors))
 	mux.HandleFunc("POST /api/floors/order", s.guard(s.handleFloorOrder))
@@ -385,12 +390,14 @@ type RoomJSON struct {
 type StateJSON struct {
 	Version int64 `json:"version"`
 	Now     int64 `json:"now"`
-	// Space is the project root whose map this is, or "" for all projects.
-	Space  string             `json:"space"`
-	Floor  int64              `json:"floor"`
-	Floors []FloorJSON        `json:"floors"`
-	Rooms  []RoomJSON         `json:"rooms"`
-	Pups   map[string]PupJSON `json:"pups"`
+	// Space is the project whose map this is; SpaceRoot its folder, if linked.
+	Space     string             `json:"space"`
+	SpaceRoot string             `json:"spaceRoot"`
+	Spaces    []SpaceJSON        `json:"spaces"`
+	Floor     int64              `json:"floor"`
+	Floors    []FloorJSON        `json:"floors"`
+	Rooms     []RoomJSON         `json:"rooms"`
+	Pups      map[string]PupJSON `json:"pups"`
 	// Tray lists recent and live pups from every floor, newest first, for the side panel.
 	Tray     []string             `json:"tray"`
 	Projects []ProjectJSON        `json:"projects"`
@@ -415,6 +422,16 @@ type KennelJSON struct {
 	Icon  string `json:"icon"`
 	Floor int64  `json:"floor"`
 	Smart string `json:"smart"`
+}
+
+type SpaceJSON struct {
+	Key     string `json:"key"`
+	ID      int64  `json:"id"`
+	Name    string `json:"name"`
+	Icon    string `json:"icon"`
+	Root    string `json:"root"`
+	Floors  int    `json:"floors"`
+	Kennels int    `json:"kennels"`
 }
 
 type FloorJSON struct {
@@ -488,8 +505,21 @@ func furColor(id, c string) string {
 func (s *Server) State(space string, fl int64) StateJSON {
 	st := StateJSON{Version: s.Version(), Now: s.App.Now().UnixMilli(), Pups: map[string]PupJSON{}, Things: map[string]ThingJSON{},
 		Counts: map[string]int{}, Demo: s.App.Cfg.Demo, Floors: []FloorJSON{}, Tray: []string{}, Projects: []ProjectJSON{}, Rooms: []RoomJSON{},
-		Space: space, Prefs: map[string]string{}}
-	floors, _ := s.App.OpenSpace(space)
+		Prefs: map[string]string{}, Spaces: []SpaceJSON{}}
+	space, floors, _ := s.App.OpenSpace(space)
+	st.Space = space
+	if sp, ok := s.App.Space(space); ok {
+		st.SpaceRoot = sp.Root
+	}
+	for _, sp := range s.App.Spaces() {
+		sj := SpaceJSON{Key: sp.Key(), ID: sp.ID, Name: sp.Name, Icon: sp.Icon, Root: sp.Root, Floors: len(s.App.FloorsIn(sp.Key()))}
+		for _, k := range s.App.Kennels() {
+			if s.App.SpaceOf(k) == sp.Key() {
+				sj.Kennels++
+			}
+		}
+		st.Spaces = append(st.Spaces, sj)
+	}
 	for _, f := range floors {
 		fj := FloorJSON{ID: f.ID, Name: f.Name, Icon: f.Icon}
 		for _, r := range floor.Rooms(s.App, f.ID) {
@@ -512,7 +542,7 @@ func (s *Server) State(space string, fl int64) StateJSON {
 	now := s.App.Now()
 	for _, p := range s.App.Pups() {
 		st.Counts[statusNames[p.Status]]++
-		if !p.Meta.Archived && !p.Empty() && (p.Status.Live() || now.Sub(p.Updated) < floor.Recent) && (space == "" || app.ProjectRoot(p.Cwd) == space) {
+		if !p.Meta.Archived && !p.Empty() && (p.Status.Live() || now.Sub(p.Updated) < floor.Recent) && s.App.InSpace(p, space) {
 			st.Tray = append(st.Tray, p.ID)
 			st.Pups[p.ID] = s.pupJSON(p)
 		}
@@ -765,7 +795,27 @@ func (s *Server) handlePupAction(w http.ResponseWriter, r *http.Request) {
 	case "archive":
 		err = s.App.ToggleArchive(p.ID)
 	case "rename":
-		err = s.App.Rename(p.ID, strings.TrimSpace(body.Title))
+		title := strings.TrimSpace(body.Title)
+		if err = s.App.Rename(p.ID, title); err != nil || p.AgentKind() != "claude" || title == "" {
+			break
+		}
+		// A running session gets the same /rename it would get by hand, where kennel can type.
+		rename := "/rename " + opener.SafeArg(title)
+		switch t := s.Terms.Get(p.ID); {
+		case t != nil:
+			if err = t.Write([]byte(rename + "\r")); err == nil {
+				msg = "✏️ renamed " + title + ", in the session too"
+			}
+		case !p.Status.Live():
+			msg = "✏️ renamed " + title + "; claude --resume shows it too"
+		case p.Pane != "":
+			if err = opener.Prompt(s.App.Cfg.Runner, p.Pane, rename); err == nil {
+				msg = "✏️ renamed " + title + ", in the session too"
+			}
+		default:
+			msg = "✏️ renamed " + title + " in kennel; type " + rename + " in its terminal to rename the session too"
+		}
+
 	case "clone":
 		if p.AgentKind() != "claude" {
 			err = errors.New("clone works on Claude sessions; use Convert for other agents")
@@ -1569,6 +1619,67 @@ func (s *Server) handleFloorOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.App.ReorderFloors(body.Space, body.IDs); err != nil {
+		fail(w, err, http.StatusBadRequest)
+		return
+	}
+	s.touch()
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleAddSpace(w http.ResponseWriter, r *http.Request) {
+	var sp store.Space
+	if err := json.NewDecoder(r.Body).Decode(&sp); err != nil {
+		fail(w, err, http.StatusBadRequest)
+		return
+	}
+	sp.ID = 0
+	sp.Name = strings.TrimSpace(sp.Name)
+	if sp.Icon == "" {
+		sp.Icon = "📁"
+	}
+	if err := s.App.SaveSpace(&sp); err != nil {
+		fail(w, err, http.StatusBadRequest)
+		return
+	}
+	s.touch()
+	writeJSON(w, map[string]any{"key": sp.Key(), "name": sp.Name})
+}
+
+// handleSpace edits (name, icon, folder) or removes a project.
+func (s *Server) handleSpace(w http.ResponseWriter, r *http.Request) {
+	var id int64
+	fmt.Sscan(r.PathValue("id"), &id)
+	sp, ok := s.App.Space(fmt.Sprintf("space:%d", id))
+	if !ok {
+		fail(w, errors.New("no such project"), http.StatusNotFound)
+		return
+	}
+	var body struct {
+		Name *string `json:"name"`
+		Icon *string `json:"icon"`
+		Root *string `json:"root"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	var err error
+	switch r.PathValue("action") {
+	case "edit":
+		if body.Name != nil {
+			sp.Name = strings.TrimSpace(*body.Name)
+		}
+		if body.Icon != nil {
+			sp.Icon = *body.Icon
+		}
+		if body.Root != nil {
+			sp.Root = app.ExpandHome(strings.TrimSpace(*body.Root))
+		}
+		err = s.App.SaveSpace(&sp)
+	case "delete":
+		err = s.App.DeleteSpace(id)
+	default:
+		fail(w, errors.New("unknown action"), http.StatusNotFound)
+		return
+	}
+	if err != nil {
 		fail(w, err, http.StatusBadRequest)
 		return
 	}

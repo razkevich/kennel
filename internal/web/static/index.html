@@ -13,7 +13,6 @@
   <div class="logo"><span class="face">▼•ᴥ•▼</span> kennel</div>
 
   <div id="counts"></div>
-  <select id="projectsel" title="Switch space: each project has its own floors and kennels"><option value="">🌐 All projects</option></select>
   <button id="themebtn" type="button" title="Appearance">🖥 Auto</button>
   <div class="search">
     <input id="q" type="search" placeholder="Search names, prompts, transcripts…  ( / )" autocomplete="off" spellcheck="false">
@@ -41,7 +40,10 @@
       <div class="libsel" id="libsel" hidden><span id="libselcount"></span><select id="libmove"></select><button id="libdo">move</button><button id="libclear">clear</button></div>
       <div id="libbody"></div>
     </div>
-    <aside id="floornav" aria-label="floors">
+    <aside id="floornav" aria-label="projects and floors">
+      <div class="fhead"><b>📁 Projects</b><button id="addspacebtn" title="start a project">＋</button></div>
+      <nav id="spaces"></nav>
+      <div class="fsep"></div>
       <div class="fhead"><b>🏢 Floors</b><button id="addfloorbtn" title="new floor">＋</button></div>
       <nav id="floors"></nav>
       <button id="organizefloors" title="Let the model group your kennels into floors; you review before anything moves">✨ Organize into floors</button>

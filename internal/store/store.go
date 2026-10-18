@@ -49,6 +49,13 @@ func (s *Store) Close() error { return s.DB.Close() }
 
 const metaSchema = `
 CREATE TABLE IF NOT EXISTS kv(k TEXT PRIMARY KEY, v TEXT);
+CREATE TABLE IF NOT EXISTS spaces(
+	id INTEGER PRIMARY KEY,
+	name TEXT NOT NULL,
+	icon TEXT NOT NULL DEFAULT '',
+	root TEXT NOT NULL DEFAULT '',
+	sort INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS floors(
 	id INTEGER PRIMARY KEY,
 	name TEXT NOT NULL,
@@ -139,6 +146,9 @@ func (s *Store) migrate() error {
 		}
 	}
 	if err := s.firstFloor(); err != nil {
+		return err
+	}
+	if err := s.firstSpaces(); err != nil {
 		return err
 	}
 	var v string

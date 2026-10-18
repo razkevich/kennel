@@ -17,10 +17,13 @@ test("web screenshots", async ({ page }) => {
   await page.waitForTimeout(1200);
   await page.screenshot({ path: out("web-map") });
 
-  await page.locator("#projectsel").selectOption("/Users/demo/code/atlas");
+  await page.locator("#addspacebtn").click();
+  await page.locator("#spaces .fedit").fill("Atlas");
+  await page.locator("#spaces .fedit").press("Enter");
+  await page.waitForFunction(() => window.kennel.app.state.spaces.some((x) => x.name === "Atlas"));
   await page.waitForTimeout(1200);
   await page.screenshot({ path: out("web-projects") });
-  await page.locator("#projectsel").selectOption("");
+  await page.locator("#spaces .space", { hasText: "My work" }).click();
   await page.waitForTimeout(800);
 
   const id = await page.evaluate(() => Object.values(window.kennel.app.state.pups).find((p) => p.title === "FLAKY-CI").id);

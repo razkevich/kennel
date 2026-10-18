@@ -323,8 +323,6 @@ main { display: flex; height: calc(100% - 60px); }
 #pack .empty { color: var(--dim); padding: 24px 8px; text-align: center; }
 
 /* ---------- floors and project filter ---------- */
-#projectsel { height: 32px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--sub); padding: 0 10px; font-weight: 600; font-size: 12.5px; max-width: 220px; }
-#projectsel.on { background: var(--accent2); color: var(--accent); border-color: var(--accent); }
 
 /* ---------- builder ---------- */
 .smartgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
@@ -484,3 +482,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .lookpick .furs button { width: 24px; height: 24px; border-radius: 50%; border: 2px solid var(--card); box-shadow: 0 0 0 1px var(--line); font-size: 9px; padding: 0; }
 .lookpick .furs button:first-child { width: auto; border-radius: 8px; padding: 0 6px; font-size: 11px; background: var(--card); }
 .lookpick button.on { box-shadow: 0 0 0 2px var(--accent); border-color: var(--accent); }
+
+#spaces { display: flex; flex-direction: column; gap: 3px; }
+#floornav .fsep { height: 1px; background: var(--line); margin: 2px 4px; }
+#spaces .floor.on { background: var(--green-bg); border-color: var(--green-line); }

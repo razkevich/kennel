@@ -3,7 +3,6 @@ package app
 import (
 	"errors"
 	"fmt"
-	"path/filepath"
 
 	"github.com/razkevich/kennel/internal/store"
 )
@@ -15,20 +14,20 @@ func (a *App) Floors() []store.Floor {
 }
 
 // FloorOf is the floor a kennel stands on; kennels without one belong to the
-// first floor of the all-projects space.
+// first floor of the first project.
 func (a *App) FloorOf(k store.Kennel) int64 {
 	for _, f := range a.Floors() {
 		if f.ID == k.Floor {
 			return f.ID
 		}
 	}
-	if fs := a.FloorsIn(""); len(fs) > 0 {
+	if fs := a.FloorsIn(a.FirstSpace()); len(fs) > 0 {
 		return fs[0].ID
 	}
 	return 0
 }
 
-// FloorsIn lists a space's floors: a project root, or "" for all projects.
+// FloorsIn lists a project's floors.
 func (a *App) FloorsIn(space string) []store.Floor {
 	var out []store.Floor
 	for _, f := range a.Floors() {
@@ -50,21 +49,6 @@ func (a *App) SpaceOf(k store.Kennel) string {
 	return ""
 }
 
-// OpenSpace makes sure a project's space has a floor, named after the project.
-func (a *App) OpenSpace(space string) ([]store.Floor, error) {
-	if fs := a.FloorsIn(space); len(fs) > 0 || space == "" {
-		return fs, nil
-	}
-	f := store.Floor{Name: filepath.Base(space), Icon: "📁", Space: space}
-	if err := a.Store.SaveFloor(&f); err != nil {
-		return nil, err
-	}
-	if err := a.Reload(); err != nil {
-		return nil, err
-	}
-	return a.FloorsIn(space), nil
-}
-
 func (a *App) floor(id int64) (store.Floor, bool) {
 	for _, f := range a.Floors() {
 		if f.ID == id {
@@ -76,6 +60,9 @@ func (a *App) floor(id int64) (store.Floor, bool) {
 
 // SaveFloor creates or renames a floor.
 func (a *App) SaveFloor(f *store.Floor) error {
+	if f.Space == "" {
+		f.Space = a.FirstSpace()
+	}
 	prev, existed := a.floor(f.ID)
 	if err := a.Store.SaveFloor(f); err != nil {
 		return err

@@ -54,6 +54,7 @@ type App struct {
 	pups    []*pack.Pup
 	kennels []store.Kennel
 	floors  []store.Floor
+	spaces  []store.Space
 	jobs    []claude.Job
 	herdr   []opener.HerdrAgent
 	live    map[string]claude.Live
@@ -153,6 +154,10 @@ func (a *App) Reload() error {
 	if err != nil {
 		return err
 	}
+	spaces, err := a.Store.Spaces()
+	if err != nil {
+		return err
+	}
 	styles, err := a.Store.Styles()
 	if err != nil {
 		return err
@@ -169,7 +174,7 @@ func (a *App) Reload() error {
 		return err
 	}
 	a.mu.Lock()
-	a.pups, a.kennels, a.live, a.jobs, a.styles, a.floors = pups, kennels, live, jobs, styles, floors
+	a.pups, a.kennels, a.live, a.jobs, a.styles, a.floors, a.spaces = pups, kennels, live, jobs, styles, floors, spaces
 	a.things = things.Resolve(saved, a.panes, a.procs)
 	a.mu.Unlock()
 	return nil
