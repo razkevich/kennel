@@ -250,6 +250,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/kennels", s.guard(s.handleAddKennel))
 	mux.HandleFunc("POST /api/kennels/{id}/{action}", s.guard(s.handleKennel))
 	mux.HandleFunc("POST /api/floors", s.guard(s.handleAddFloor))
+	mux.HandleFunc("POST /api/floors/suggest", s.guard(s.handleSuggestFloors))
+	mux.HandleFunc("POST /api/floors/organize", s.guard(s.handleOrganizeFloors))
 	mux.HandleFunc("POST /api/floors/{id}/{action}", s.guard(s.handleFloor))
 	mux.HandleFunc("GET /api/library", s.guard(s.handleLibrary))
 	mux.HandleFunc("POST /api/themes/run", s.guard(s.handleThemes))
@@ -415,6 +417,10 @@ type FloorJSON struct {
 	ID   int64  `json:"id"`
 	Name string `json:"name"`
 	Icon string `json:"icon"`
+	// What's on the floor, for the navigator.
+	Kennels int `json:"kennels"`
+	Pups    int `json:"pups"`
+	Waiting int `json:"waiting"`
 }
 
 type ProjectJSON struct {
@@ -469,7 +475,17 @@ func (s *Server) State(space string, fl int64) StateJSON {
 		Space: space, Prefs: map[string]string{}}
 	floors, _ := s.App.OpenSpace(space)
 	for _, f := range floors {
-		st.Floors = append(st.Floors, FloorJSON{f.ID, f.Name, f.Icon})
+		fj := FloorJSON{ID: f.ID, Name: f.Name, Icon: f.Icon}
+		for _, r := range floor.Rooms(s.App, f.ID) {
+			fj.Kennels++
+			fj.Pups += len(r.Pups)
+			for _, p := range r.Pups {
+				if p.Status == claude.Waiting {
+					fj.Waiting++
+				}
+			}
+		}
+		st.Floors = append(st.Floors, fj)
 		if f.ID == fl {
 			st.Floor = fl
 		}
@@ -1491,3 +1507,34 @@ func (s *Server) handleTermStream(w http.ResponseWriter, r *http.Request) {
 }
 
 func shellQuote(v string) string { return "'" + strings.ReplaceAll(v, "'", `'\''`) + "'" }
+
+func (s *Server) handleSuggestFloors(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Space string `json:"space"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	plan, err := s.App.SuggestFloors(r.Context(), body.Space)
+	if err != nil {
+		fail(w, err, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, plan)
+}
+
+func (s *Server) handleOrganizeFloors(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Space string          `json:"space"`
+		Plan  []app.FloorPlan `json:"plan"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		fail(w, err, http.StatusBadRequest)
+		return
+	}
+	n, err := s.App.OrganizeFloors(body.Space, body.Plan)
+	if err != nil {
+		fail(w, err, http.StatusBadRequest)
+		return
+	}
+	s.touch()
+	writeJSON(w, map[string]any{"ok": true, "message": fmt.Sprintf("🏢 moved %d kennels onto their floors", n)})
+}

@@ -281,17 +281,16 @@ function renderFloors() {
   const nav = $("#floors");
   nav.innerHTML = "";
   for (const f of app.state.floors) {
-    const b = el("button", f.id === app.state.floor ? "on" : "", `${f.icon || "🏢"} ${f.name}`);
+    const b = el("button", f.id === app.state.floor ? "on" : "");
     b.dataset.floor = f.id;
     b.title = "right-click to rename or remove · drop a kennel here to move it";
+    const top = el("span", "fname", `${f.icon || "🏢"} ${f.name}`);
+    if (f.waiting) top.appendChild(el("span", "fwait", `❗${f.waiting}`));
+    b.append(top, el("span", "fcount", `${f.kennels} kennel${f.kennels === 1 ? "" : "s"} · ${f.pups} pup${f.pups === 1 ? "" : "s"}`));
     b.onclick = () => goFloor(f.id);
     b.oncontextmenu = (e) => { e.preventDefault(); showMenu(e, floorMenu(f)); };
     nav.appendChild(b);
   }
-  const add = el("button", "addfloor", "＋");
-  add.title = "new floor";
-  add.onclick = newFloor;
-  nav.appendChild(add);
 }
 
 function goFloor(id) {
@@ -525,7 +524,7 @@ function frameWorld() {
   const st = $("#stage");
   const vw = st.clientWidth, vh = st.clientHeight;
   const W = app.world.w * TILE, H = app.world.h * TILE;
-  const gutter = 56; // keeps the tool palette off the leftmost rooms
+  const gutter = 210; // keeps the floor navigator off the leftmost rooms
   app.cam.z = Math.max(0.75, Math.min(1.25, (vw - gutter) / W));
   app.cam.x = W * app.cam.z < vw - gutter ? -(vw / app.cam.z - W) / 2 : -gutter / app.cam.z;
   app.cam.y = H * app.cam.z < vh ? -(vh / app.cam.z - H) / 2 : 0;
@@ -1511,6 +1510,51 @@ function detachTerm() {
   termUI = { id: null, xterm: null, fit: null, es: null, q: Promise.resolve(), ro: null };
 }
 
+// Organizing kennels into floors: the model proposes floors; you pick per kennel, then apply.
+async function openFloorSheet() {
+  const sheet = $("#floorsheet");
+  const body = sheet.querySelector(".body");
+  sheet.hidden = false;
+  body.innerHTML = "";
+  body.appendChild(el("div", "empty", "✨ Thinking about floors…"));
+  sheet.querySelector(".apply").disabled = true;
+  let plan;
+  try { plan = await (await api("/api/floors/suggest", { method: "POST", body: JSON.stringify({ space: app.state.space }) })).json(); }
+  catch (e) { body.innerHTML = ""; body.appendChild(el("div", "empty", e.message)); return; }
+  const names = [...new Set([...app.state.floors.map((f) => f.name), ...plan.map((p) => p.floor)])];
+  const where = new Map();
+  for (const p of plan) for (const id of p.kennels) where.set(id, p.floor);
+  body.innerHTML = "";
+  const current = (k) => (app.state.floors.find((f) => f.id === k.floor) || {}).name;
+  for (const k of app.state.kennels) {
+    const row = el("div", "sortrow");
+    const sel = el("select");
+    sel.dataset.id = k.id;
+    for (const n of names) sel.appendChild(new Option(app.state.floors.some((f) => f.name === n) ? `🏢 ${n}` : `＋ ${n} (new)`, n));
+    sel.value = where.get(k.id) || current(k) || names[0];
+    row.append(el("span", "t", `${k.icon || "🏠"} ${k.name}`), el("span", "from", current(k) ? `now on ${current(k)}` : ""), sel);
+    body.appendChild(row);
+  }
+  sheet.querySelector(".apply").disabled = false;
+}
+
+async function applyFloorSheet() {
+  const sheet = $("#floorsheet");
+  const by = new Map();
+  for (const sel of sheet.querySelectorAll(".body select")) {
+    if (!by.has(sel.value)) by.set(sel.value, []);
+    by.get(sel.value).push(Number(sel.dataset.id));
+  }
+  const plan = [...by.entries()].map(([floor, kennels]) => ({ floor, kennels }));
+  try {
+    const res = await (await api("/api/floors/organize", { method: "POST", body: JSON.stringify({ space: app.state.space, plan }) })).json();
+    sheet.hidden = true;
+    app.ents.clear();
+    await loadState();
+    toast(res.message, false, true);
+  } catch (e) { toast(e.message, true); }
+}
+
 // Sorting new sessions: the model suggests a kennel for each; you adjust, then file them all.
 async function openSort(ids) {
   const sheet = $("#sort");
@@ -1653,7 +1697,7 @@ window.addEventListener("keydown", (e) => {
   if ((e.key === "/" && !typing) || ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f")) { e.preventDefault(); $("#q").focus(); $("#q").select(); return; }
   if (typing) return;
   if (e.key === "Escape" && lib.open) { closeLibrary(); return; }
-  if (e.key === "Escape") { $("#sort").hidden = true; hideMenu(); app.multi.clear(); setTool("select"); $("#transcript").hidden = true; app.sel = null; $("#card").hidden = true; if (build.carry) { build.carry = null; renderBuilder(); } return; }
+  if (e.key === "Escape") { $("#sort").hidden = true; $("#floorsheet").hidden = true; hideMenu(); app.multi.clear(); setTool("select"); $("#transcript").hidden = true; app.sel = null; $("#card").hidden = true; if (build.carry) { build.carry = null; renderBuilder(); } return; }
   if (e.key === " " && !e.repeat) { e.preventDefault(); spaceHeld = true; canvas.style.cursor = "grab"; return; }
   if (e.key === "v" || e.key === "1") { setTool("select"); return; }
   if (e.key === "h" || e.key === "2") { setTool("hand"); return; }
@@ -3031,6 +3075,11 @@ window.kennel = {
 };
 
 $("#buildbtn").onclick = () => setBuild(!build.on);
+$("#addfloorbtn").onclick = newFloor;
+$("#organizefloors").onclick = openFloorSheet;
+$("#floorsheet .apply").onclick = applyFloorSheet;
+$("#floorsheet .cancel").onclick = () => ($("#floorsheet").hidden = true);
+$("#floorsheet").addEventListener("click", (e) => { if (e.target.id === "floorsheet") $("#floorsheet").hidden = true; });
 // Drag the side panel's left edge to resize it; the width is remembered.
 (() => {
   const grip = $("#sidegrip");

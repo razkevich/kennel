@@ -111,3 +111,39 @@ func TestSortIntoKennels(t *testing.T) {
 		}
 	}
 }
+
+func TestOrganizeFloors(t *testing.T) {
+	a := demoApp(t)
+	a.Cfg.ThemeLLM = ask.Fake{}
+	plan, err := a.SuggestFloors(context.Background(), "")
+	if err != nil || len(plan) < 2 {
+		t.Fatalf("%+v %v", plan, err)
+	}
+	before := len(a.Floors())
+	if _, err := a.OrganizeFloors("", plan); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.Floors()) != before+len(plan) {
+		t.Fatalf("want %d new floors, have %d", len(plan), len(a.Floors())-before)
+	}
+	for _, p := range plan {
+		for _, kid := range p.Kennels {
+			for _, k := range a.Kennels() {
+				if k.ID == kid {
+					if f, _ := a.floor(a.FloorOf(k)); f.Name != p.Floor {
+						t.Fatalf("%s on %s, want %s", k.Name, f.Name, p.Floor)
+					}
+				}
+			}
+		}
+	}
+	a.Undo()
+	if len(a.Floors()) != before {
+		t.Fatal("undo removes the floors it built")
+	}
+	for _, k := range a.Kennels() {
+		if f, _ := a.floor(a.FloorOf(k)); f.Name != "Main" {
+			t.Fatalf("%s should be back on Main", k.Name)
+		}
+	}
+}

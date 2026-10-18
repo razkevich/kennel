@@ -68,7 +68,7 @@ test("kennel tool draws a new kennel; pups dragged onto it are filed; marquee mo
   const app = await page.evaluate(() => ({ w: window.kennel.app.world.w, h: window.kennel.app.world.h }));
   await page.evaluate(() => { const a = window.kennel.app; a.cam.x = 0; a.cam.y = 0; a.cam.z = 1; });
   // Draw it to the right of everything, then pan there.
-  await page.evaluate(([x]) => { window.kennel.app.cam.x = (x - 2) * 32; }, [app.w]);
+  await page.evaluate(([x]) => { window.kennel.app.cam.x = (x - 10) * 32; }, [app.w]);
   const from = await page.evaluate(([x, y]) => window.kennel.worldPos(x, y), [app.w + 2, 4]);
   await dragTo(page, from, { x: from.x + 12 * 32, y: from.y + 8 * 32 });
   await expect(page.locator("#toast")).toContainText("built Drawn kennel");
@@ -123,7 +123,7 @@ test("toolbar, zoom controls, space-pan and context menu on empty floor", async 
   await page.keyboard.press("v");
   // Right-click empty hallway offers building a kennel.
   await page.evaluate(() => { const a = window.kennel.app; a.cam.x = -400; a.cam.y = -300; });
-  await page.mouse.click(box.x + 60, box.y + 120, { button: "right" });
+  await page.mouse.click(box.x + 320, box.y + 120, { button: "right" });
   await expect(page.locator("#ctxmenu")).toBeVisible();
   await expect(page.locator("#ctxmenu")).toContainText("New kennel here");
   await page.keyboard.press("Escape");

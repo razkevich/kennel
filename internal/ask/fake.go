@@ -12,6 +12,21 @@ func (Fake) Complete(_ context.Context, _ string, prompt string, onText func(str
 	if strings.Contains(prompt, "Propose 8-14 short themes") {
 		return "Payments, Infra, Mobile, Search, Tooling, Incidents", nil
 	}
+	if strings.Contains(prompt, "into 2-5 floors of a building") {
+		var work, rest []string
+		for _, line := range strings.Split(prompt, "\n") {
+			name, _, ok := strings.Cut(strings.TrimPrefix(line, "- "), " (e.g.")
+			if !ok || !strings.HasPrefix(line, "- ") {
+				continue
+			}
+			if strings.Contains(strings.ToLower(line), "payment") || strings.Contains(strings.ToLower(line), "infra") {
+				work = append(work, name)
+			} else {
+				rest = append(rest, name)
+			}
+		}
+		return "Work: " + strings.Join(work, ", ") + "\nEverything else: " + strings.Join(rest, ", "), nil
+	}
 	if strings.Contains(prompt, "Assign each coding-assistant session") {
 		var out []string
 		for _, line := range strings.Split(prompt, "\n") {
