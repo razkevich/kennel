@@ -7,6 +7,7 @@ import WebKit
 ///
 ///   GET  /state                      tabs, selection, status item, page loaded
 ///   POST /key       {key, mods}      press a shortcut through the real menus
+///   POST /keydown   {key, mods}      a real key press in the selected window (return, a, …)
 ///   POST /select    {index}          select a tab
 ///   POST /type      {text}           type into the selected terminal
 ///   GET  /text?index=N[&pane=K]      a terminal tab's text (its focused split, or split K in order)
@@ -130,6 +131,24 @@ public final class Automation {
                                       characters: key, charactersIgnoringModifiers: key, isARepeat: false, keyCode: virtualKeyCode(key))!
             let handled = NSApp.mainMenu?.performKeyEquivalent(with: ev) ?? false
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { reply(200, ["handled": handled]) }
+        case ("POST", "/keydown"):
+            let key = r.json["key"] as? String ?? ""
+            var flags: NSEvent.ModifierFlags = []
+            for m in r.json["mods"] as? [String] ?? [] {
+                switch m {
+                case "shift": flags.insert(.shift)
+                case "alt": flags.insert(.option)
+                case "ctrl": flags.insert(.control)
+                case "cmd": flags.insert(.command)
+                default: break
+                }
+            }
+            let chars = key == "return" ? "\r" : key
+            guard let w = c.selectedWindow, let ev = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
+                                                                     windowNumber: w.windowNumber, context: nil, characters: chars, charactersIgnoringModifiers: chars,
+                                                                     isARepeat: false, keyCode: virtualKeyCode(chars)) else { return reply(400, ["error": "no window"]) }
+            NSApp.sendEvent(ev)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { reply(200, ["ok": true]) }
         case ("POST", "/select"):
             let i = r.json["index"] as? Int ?? 0
             let ws = c.orderedWindows

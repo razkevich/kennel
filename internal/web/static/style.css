@@ -381,7 +381,7 @@ button.dots:hover { background: var(--card2); color: var(--ink); }
 #sidegrip:hover, body.resizing #sidegrip { background: var(--accent2); }
 body.resizing { cursor: col-resize; user-select: none; }
 #card .role { font-size: 16px; }
-#term { display: flex; flex-direction: column; gap: 6px; padding-bottom: 12px; }
+#term { display: flex; flex-direction: column; gap: 6px; padding-bottom: 12px; min-height: 0; overflow: hidden; }
 #term[hidden] { display: none; }
 #term .termhead { display: flex; align-items: center; gap: 8px; padding: 2px 2px 4px; }
 #term .termhead b { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -389,7 +389,8 @@ body.resizing { cursor: col-resize; user-select: none; }
 #term .termhead .st.working { color: var(--green); }
 #term .termhead .st.waiting { color: var(--warm-ink); }
 #term .termhead button { border: 1px solid var(--line); background: var(--card); border-radius: 8px; font-size: 12px; padding: 3px 9px; }
-#term .screen { flex: 1; min-height: 260px; background: #1e1e2e; border-radius: 12px; padding: 8px; overflow: hidden; }
+/* The screen takes its height from the panel, never from its rows, so a fit can't push it past the bottom. */
+#term .screen { flex: 1 1 0; min-height: 200px; background: #1e1e2e; border-radius: 12px; padding: 8px; overflow: hidden; }
 #term .screen .xterm { height: 100%; }
 #term .msgs { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; }
 #term .m { font-size: 12.5px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }

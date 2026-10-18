@@ -632,3 +632,23 @@ test("pups talk: drag one onto another to pass its latest reply; they stay linke
   expect(await page.evaluate(([x, y]) => window.kennel.app.state.handoffs.some((h) => h.from === x && h.to === y), [from, to])).toBe(true);
   await page.locator("#term button", { hasText: "Stop" }).click();
 });
+
+test("terminal panel: Shift+Enter is a new line for the agent, and the screen fits the panel", async ({ page }) => {
+  await open(page);
+  const id = await pupId(page, "RATE-LIMITS");
+  await clickEntity(page, id);
+  await page.locator("#term button", { hasText: /Resume here|Continue here/ }).click();
+  await expect.poll(() => page.evaluate(() => window.kennel.termText())).toContain("would run");
+  await page.keyboard.type("first");
+  await page.keyboard.press("Shift+Enter");
+  await page.keyboard.type("second");
+  await page.keyboard.press("Enter");
+  // The tty echoes the ESC that comes before the Return as ^[.
+  await expect.poll(() => page.evaluate(() => window.kennel.termText())).toContain("first^[");
+  const fits = await page.evaluate(() => {
+    const scr = document.querySelector("#term .screen").getBoundingClientRect(), side = document.querySelector("#side").getBoundingClientRect();
+    return scr.bottom <= side.bottom + 1 && scr.height > 150;
+  });
+  expect(fits).toBe(true);
+  await page.locator("#term button", { hasText: "Stop" }).click();
+});

@@ -99,6 +99,22 @@ test("⌘T opens a shell tab you can type into; ⌘W closes it; the Kennel tab c
   assert.equal((await tabs()).length, 1, "kennel tab is pinned");
 });
 
+test("Shift+Return in a terminal is a new line for the agent, not a submit", async () => {
+  await key("t");
+  await waitFor(async () => (await tabs()).length === 2, "shell tab");
+  await sleep(600);
+  await call("POST", "/type", { text: "cat -v\n" });
+  await sleep(400);
+  await call("POST", "/type", { text: "first" });
+  await call("POST", "/keydown", { key: "return", mods: ["shift"] });
+  await call("POST", "/type", { text: "second\n" });
+  // cat -v shows the ESC that comes before the Return as ^[.
+  await waitFor(async () => (await text(1)).includes("first^["), "ESC+Return sent");
+  await call("POST", "/type", { text: "\u0004" });
+  await key("w");
+  await waitFor(async () => (await tabs()).length === 1, "closed");
+});
+
 test("Ghostty splits: ⌘D / ⌘⇧D split, ⌘⌥arrows and ⌘[ ] move focus, ⌘⌃ resize and equalize, ⌘⇧↩ zoom, ⌘W closes a split", async () => {
   await key("t");
   await waitFor(async () => (await tabs()).length === 2, "shell tab");

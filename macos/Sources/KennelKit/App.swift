@@ -32,6 +32,15 @@ public final class AppController: NSObject, NSApplicationDelegate, NSWindowDeleg
         // Under automation the app never takes focus away from the person using the Mac.
         NSApp.setActivationPolicy(automated ? .accessory : .regular)
         buildMenu()
+        // Shift+Return in a terminal is a new line in the agent's prompt, not a submit:
+        // agents read ESC+Return (what Option+Return sends) as a line break.
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard event.keyCode == 36, event.modifierFlags.intersection([.shift, .command, .control, .option]) == .shift,
+                  let view = event.window?.firstResponder as? LocalProcessTerminalView,
+                  self?.tabs.contains(where: { $0.orderedPanes.contains { $0.view === view } }) == true else { return event }
+            view.send(txt: "\u{1b}\r")
+            return nil
+        }
         buildKennelWindow()
         buildStatusItem()
         if let port = env["KENNEL_APP_AUTOMATION"].flatMap(UInt16.init) {

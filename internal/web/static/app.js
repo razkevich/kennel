@@ -1884,7 +1884,17 @@ function mountXterm(id, screen, focus) {
   fit.fit();
   termUI = { id, xterm: x, fit, es: null, q: Promise.resolve(), ro: null };
   // Keystrokes go in order: each POST waits for the one before.
-  x.onData((d) => { termUI.q = termUI.q.then(() => api(`/api/term/${id}/input`, { method: "POST", body: JSON.stringify({ data: d }) })).catch(() => {}); });
+  const send = (d) => { termUI.q = termUI.q.then(() => api(`/api/term/${id}/input`, { method: "POST", body: JSON.stringify({ data: d }) })).catch(() => {}); };
+  x.onData(send);
+  // Shift+Enter is a new line in the prompt, not a submit: agents read ESC+Return
+  // (what Option+Enter sends) as a line break.
+  x.attachCustomKeyEventHandler((e) => {
+    if (e.key === "Enter" && e.shiftKey && !e.metaKey && !e.ctrlKey) {
+      if (e.type === "keydown") send("\x1b\r");
+      return false;
+    }
+    return true;
+  });
   x.onResize(({ cols, rows }) => api(`/api/term/${id}/resize`, { method: "POST", body: JSON.stringify({ cols, rows }) }).catch(() => {}));
   termUI.ro = new ResizeObserver(() => { try { fit.fit(); } catch (_) {} });
   termUI.ro.observe(screen);
