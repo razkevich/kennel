@@ -472,8 +472,10 @@ func (s *Server) handlePupAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Title string `json:"title"`
-		Text  string `json:"text"`
+		Title string   `json:"title"`
+		Text  string   `json:"text"`
+		Cwd   string   `json:"cwd"`
+		With  []string `json:"with"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	var msg string
@@ -500,6 +502,37 @@ func (s *Server) handlePupAction(w http.ResponseWriter, r *http.Request) {
 	case "reply":
 		err = s.App.Prompt(p, body.Text)
 		msg = "sent"
+	case "clone":
+		var id string
+		if id, err = s.App.Clone(p.ID, app.ExpandHome(strings.TrimSpace(body.Cwd)), strings.TrimSpace(body.Title)); err == nil {
+			msg = "⧉ cloned as " + s.App.Pup(id).Title()
+			if opener.Resolve(s.App.Cfg.Opener) != opener.Inline {
+				var opened string
+				if opened, err = s.App.Opener().Open(s.App.Target(s.App.Pup(id), false, false)); err == nil {
+					msg += " · " + opened
+				}
+			}
+		}
+	case "merge", "distill":
+		ids := []string{p.ID}
+		for _, ref := range body.With {
+			o := s.App.Find(ref)
+			if o == nil {
+				err = fmt.Errorf("no pup matches %q", ref)
+				break
+			}
+			ids = append(ids, o.ID)
+		}
+		if err == nil {
+			var t opener.Target
+			if t, err = s.App.MergeTarget(ids, "", strings.TrimSpace(body.Title)); err == nil {
+				if opener.Resolve(s.App.Cfg.Opener) == opener.Inline {
+					msg = t.ShellCommand()
+				} else {
+					msg, err = s.App.Opener().Open(t)
+				}
+			}
+		}
 	default:
 		fail(w, errors.New("unknown action"), http.StatusNotFound)
 		return

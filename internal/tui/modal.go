@@ -8,7 +8,9 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/razkevich/kennel/internal/app"
 	"github.com/razkevich/kennel/internal/gear"
+	"github.com/razkevich/kennel/internal/opener"
 	"github.com/razkevich/kennel/internal/pack"
 	"github.com/razkevich/kennel/internal/store"
 	"github.com/razkevich/kennel/internal/things"
@@ -29,6 +31,8 @@ type modal struct {
 	choices []choice
 	cursor  int
 	confirm bool
+	// info is read-only text; any key closes the dialog.
+	info []string
 	// onSubmit receives the input text and the chosen value (if any).
 	onSubmit func(m *Model, text, value string) tea.Cmd
 }
@@ -72,6 +76,10 @@ func (md *modal) filtered() []choice {
 
 func (m Model) updateModal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	md := m.modal
+	if md.info != nil {
+		m.modal = nil
+		return m, nil
+	}
 	switch msg.String() {
 	case "esc":
 		m.modal = nil
@@ -131,6 +139,9 @@ func (md *modal) view(w int) string {
 	}
 	if md.confirm {
 		b.WriteString(hint("y", "yes") + "   " + hint("n/esc", "no"))
+	}
+	for _, l := range md.info {
+		b.WriteString(sText.Width(width-6).Render(l) + "\n")
 	}
 	if md.choices != nil {
 		f := md.filtered()
@@ -446,4 +457,62 @@ func (m *Model) moveThingModal(t things.Thing) *modal {
 		}
 		return toast("🚚 moved "+t.Name, false)
 	})
+}
+
+func (m *Model) cloneModal(p *pack.Pup) *modal {
+	choices := []choice{{label: "📁 same project", detail: shortPath(app.ProjectRoot(p.Cwd)), value: p.Cwd}}
+	for _, pr := range m.app.Projects() {
+		if pr.Root != app.ProjectRoot(p.Cwd) {
+			choices = append(choices, choice{label: "📁 " + pr.Name, detail: shortPath(pr.Root), value: pr.Root})
+		}
+	}
+	return pickerModal("⧉ clone "+p.Title()+" into…", choices, func(m *Model, _, cwd string) tea.Cmd {
+		id, err := m.app.Clone(p.ID, cwd, "")
+		if err != nil {
+			return toast(err.Error(), true)
+		}
+		m.rebuildScopes()
+		m.refreshResults()
+		clone := m.app.Pup(id)
+		if clone == nil {
+			return toast("cloned, but couldn't find the copy", true)
+		}
+		m.selectPup(id)
+		return tea.Batch(toast("⧉ cloned as "+clone.Title(), false), m.open(clone, false, false))
+	})
+}
+
+func (m *Model) mergeModal(p *pack.Pup) *modal {
+	var choices []choice
+	for _, o := range m.app.Pups() {
+		if o.ID != p.ID && !o.Empty() {
+			choices = append(choices, choice{label: "▼•ᴥ•▼ " + o.Title(), detail: o.Repo() + " · " + ago(m.app.Now(), o.Updated), value: o.ID})
+		}
+	}
+	return pickerModal("⇄ merge "+p.Title()+" with…", choices, func(m *Model, _, other string) tea.Cmd {
+		o := m.app.Pup(other)
+		m.modal = textModal("⇄ name the merged pup", "starts in "+shortPath(m.app.Target(p, false, false).Cwd)+" with a brief of both sessions", p.Title()+"+"+o.Title(), "NAME",
+			func(m *Model, text, _ string) tea.Cmd { return m.startMerged([]string{p.ID, other}, text) })
+		return nil
+	})
+}
+
+func (m *Model) startMerged(ids []string, name string) tea.Cmd {
+	t, err := m.app.MergeTarget(ids, "", name)
+	if err != nil {
+		return toast(err.Error(), true)
+	}
+	if err := m.app.CheckCwd(t.Cwd); err != nil {
+		return toast(err.Error(), true)
+	}
+	if opener.Resolve(m.app.Cfg.Opener) == opener.Inline {
+		return tea.ExecProcess(opener.InlineCmd(t), func(err error) tea.Msg {
+			return openedMsg{text: "back in the kennel 🐾", err: err}
+		})
+	}
+	o := m.app.Opener()
+	return func() tea.Msg {
+		text, err := o.Open(t)
+		return openedMsg{text: "⇄ " + text, err: err}
+	}
 }

@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/razkevich/kennel/internal/ask"
 	"github.com/razkevich/kennel/internal/claude"
+	"github.com/razkevich/kennel/internal/digest"
 	"github.com/razkevich/kennel/internal/pack"
 	"github.com/razkevich/kennel/internal/things"
 )
@@ -117,6 +119,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "u":
 		return m.jumpUnread()
+	case "d":
+		d := digest.Build(m.app.Pups(), m.app.Now(), 24*time.Hour)
+		m.modal = &modal{title: "📰 the last 24 hours", help: "kennel digest -since 168h for a week", confirm: false, info: d.Lines(),
+			onSubmit: func(*Model, string, string) tea.Cmd { return nil }}
+		return m, nil
 	case "B":
 		if md := m.buildModal(); md != nil {
 			m.modal = md
@@ -189,6 +196,16 @@ func (m Model) pupActions(key string, p *pack.Pup) (tea.Model, tea.Cmd, bool) {
 		return m, m.open(p, true, false), true
 	case "R":
 		return m, m.open(p, false, true), true
+	case "C":
+		m.modal = m.cloneModal(p)
+		return m, nil, true
+	case "M":
+		m.modal = m.mergeModal(p)
+		return m, nil, true
+	case "Z":
+		m.modal = textModal("✨ distill "+p.Title(), "a fresh pup that starts from a brief of this one (recap, asks, PRs, transcript path)", p.Title()+"-FRESH", "NAME",
+			func(m *Model, text, _ string) tea.Cmd { return m.startMerged([]string{p.ID}, text) })
+		return m, nil, true
 	case "s":
 		if err := m.app.ToggleStar(p.ID); err != nil {
 			return m, toast(err.Error(), true), true

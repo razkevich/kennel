@@ -17,6 +17,7 @@ import (
 	"github.com/razkevich/kennel/internal/app"
 	"github.com/razkevich/kennel/internal/ask"
 	"github.com/razkevich/kennel/internal/demo"
+	"github.com/razkevich/kennel/internal/digest"
 	"github.com/razkevich/kennel/internal/indexer"
 	"github.com/razkevich/kennel/internal/opener"
 	"github.com/razkevich/kennel/internal/tui"
@@ -33,7 +34,11 @@ usage:
   kennel search <query>       search names and transcripts  (-json)
   kennel ask <question>       answer from past sessions, with sources
   kennel ls [query]           list sessions                 (-json)
+  kennel digest [-since 24h]  what happened: touched, shipped, waiting, under the rug
   kennel open <id|name>       resume a session              (-fork, -remote, -opener herdr|ghostty|inline|print)
+  kennel clone <ref> [-to dir] copy a session (optionally into another project) and resume it
+  kennel merge <ref> <ref>... start a new pup seeded with a brief of several sessions (-name, -cwd)
+  kennel distill <ref>        start a fresh pup from a brief of one long session
   kennel index                (re)index transcripts now     (-rebuild)
   kennel demo [dir]           write synthetic sessions to dir and print env to use them
   kennel version
@@ -118,6 +123,12 @@ func run(args []string) error {
 		return runAsk(cfg, args)
 	case "open":
 		return runOpen(cfg, args)
+	case "digest":
+		return runDigest(cfg, args)
+	case "clone":
+		return runClone(cfg, args)
+	case "merge", "distill":
+		return runMerge(cfg, args)
 	}
 	return fmt.Errorf("unknown command %q\n\n%s", cmd, usage)
 }
@@ -328,4 +339,93 @@ func runMap(cfg app.Config, args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	return web.Serve(ctx, a, fmt.Sprintf("127.0.0.1:%d", *port), !*noOpen, *token)
+}
+
+func runDigest(cfg app.Config, args []string) error {
+	fs := flag.NewFlagSet("digest", flag.ExitOnError)
+	since := fs.Duration("since", 24*time.Hour, "window to summarize")
+	fs.Parse(args)
+	a, err := openApp(cfg, true)
+	if err != nil {
+		return err
+	}
+	defer a.Close()
+	d := digest.Build(a.Pups(), a.Now(), *since)
+	window := strings.TrimSuffix(strings.TrimSuffix(since.String(), "0s"), "0m")
+	if *since%(24*time.Hour) == 0 {
+		window = fmt.Sprintf("%d day(s)", *since/(24*time.Hour))
+	}
+	fmt.Printf("▼•ᴥ•▼ kennel digest — last %s\n\n", window)
+	for _, l := range d.Lines() {
+		fmt.Println("  " + l)
+	}
+	return nil
+}
+
+func runClone(cfg app.Config, args []string) error {
+	fs := flag.NewFlagSet("clone", flag.ExitOnError)
+	to := fs.String("to", "", "project folder for the copy (default: same project)")
+	name := fs.String("name", "", "title for the copy")
+	fs.Parse(args)
+	if fs.NArg() == 0 {
+		return errors.New("usage: kennel clone <id|name> [-to dir]")
+	}
+	a, err := openApp(cfg, true)
+	if err != nil {
+		return err
+	}
+	defer a.Close()
+	p := a.Find(strings.Join(fs.Args(), " "))
+	if p == nil {
+		return fmt.Errorf("no session matches %q", strings.Join(fs.Args(), " "))
+	}
+	id, err := a.Clone(p.ID, app.ExpandHome(*to), *name)
+	if err != nil {
+		return err
+	}
+	c := a.Pup(id)
+	fmt.Printf("⧉ cloned %s → %s (%s)\n  %s\n", p.Title(), c.Title(), id, a.Target(c, false, false).ShellCommand())
+	return nil
+}
+
+func runMerge(cfg app.Config, args []string) error {
+	fs := flag.NewFlagSet("merge", flag.ExitOnError)
+	name := fs.String("name", "", "title for the new pup")
+	cwd := fs.String("cwd", "", "folder to start in (default: the first session's)")
+	kind := fs.String("opener", "", "herdr | ghostty | inline | print")
+	fs.Parse(args)
+	if fs.NArg() == 0 {
+		return errors.New("usage: kennel merge <ref> <ref>... | kennel distill <ref>")
+	}
+	if *kind != "" {
+		cfg.Opener = opener.Kind(*kind)
+	}
+	a, err := openApp(cfg, true)
+	if err != nil {
+		return err
+	}
+	defer a.Close()
+	var ids []string
+	for _, ref := range fs.Args() {
+		p := a.Find(ref)
+		if p == nil {
+			return fmt.Errorf("no session matches %q", ref)
+		}
+		ids = append(ids, p.ID)
+	}
+	t, err := a.MergeTarget(ids, app.ExpandHome(*cwd), *name)
+	if err != nil {
+		return err
+	}
+	if opener.Resolve(cfg.Opener) == opener.Inline {
+		c := opener.InlineCmd(t)
+		c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
+		return c.Run()
+	}
+	msg, err := a.Opener().Open(t)
+	if err != nil {
+		return err
+	}
+	fmt.Println(msg)
+	return nil
 }

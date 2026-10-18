@@ -336,6 +336,9 @@ function renderCard() {
     const btn = (label, fn, primary) => { const b = el("button", primary ? "primary" : "", label); b.onclick = fn; actions.appendChild(b); };
     btn(p.status === "offline" ? "▶ Resume" : "↗ Go to", () => act("open", p.id), true);
     btn("⑂ Fork", () => act("fork", p.id));
+    btn("⧉ Clone", () => { const cwd = prompt(`Clone ${p.title} into which folder?`, p.cwd); if (cwd) act("clone", p.id, { cwd }); });
+    btn("⇄ Merge", () => { const other = prompt(`Merge ${p.title} with which pup? (name or id)`); if (other) act("merge", p.id, { with: [other] }); });
+    btn("✨ Distill", () => act("distill", p.id));
     btn("📜 Read", () => openTranscript(p.id));
     btn(p.starred ? "★ Unstar" : "☆ Star", () => act("star", p.id));
     btn(p.archived ? "↩ Restore" : "🗑 Archive", () => act("archive", p.id));

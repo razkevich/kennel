@@ -422,3 +422,33 @@ func TestSuggestName(t *testing.T) {
 		t.Fatalf("suggestion %q", v)
 	}
 }
+
+func TestCloneMergeDistill(t *testing.T) {
+	h := newHarness(t, opener.Print)
+	h.key("2", "/")
+	h.typeText("pg-upgrade")
+	h.key("enter", "C")
+	h.contains("clone PG-UPGRADE into", "same project", "mobile")
+	h.typeText("mobile")
+	h.key("enter")
+	h.contains("PG-UPGRADE-CLONE")
+	if h.selectedTitle() != "PG-UPGRADE-CLONE" {
+		t.Fatalf("clone should be selected, got %q", h.selectedTitle())
+	}
+
+	h.key("esc", "/")
+	h.typeText("dark-mode")
+	h.key("enter", "M")
+	h.typeText("ios-crash")
+	h.key("enter")
+	h.contains("name the merged pup")
+	h.key("enter")
+	if !strings.Contains(h.screen(), "claude -n DARK-MODE+IOS-CRASH") {
+		t.Fatalf("merge should start a new pup:\n%s", h.screen())
+	}
+
+	h.key("Z", "enter")
+	if !strings.Contains(h.screen(), "claude -n DARK-MODE-FRESH") {
+		t.Fatalf("distill:\n%s", h.screen())
+	}
+}
