@@ -18,9 +18,8 @@ test("web screenshots", async ({ page }) => {
   await page.screenshot({ path: out("web-map") });
 
   await page.locator("#addspacebtn").click();
-  await page.locator("#spaces .fedit").fill("Atlas");
-  await page.locator("#spaces .fedit").press("Enter");
-  await page.waitForFunction(() => window.kennel.app.state.spaces.some((x) => x.name === "Atlas"));
+  await page.locator("#ctxmenu button", { hasText: "📁 atlas" }).click();
+  await page.waitForFunction(() => window.kennel.app.state.spaces.some((x) => x.name === "atlas"));
   await page.waitForTimeout(1200);
   await page.screenshot({ path: out("web-projects") });
   await page.locator("#spaces .space", { hasText: "My work" }).click();
