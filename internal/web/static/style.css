@@ -414,3 +414,34 @@ body.resizing { cursor: col-resize; user-select: none; }
 .member .side .pill.here { background: var(--accent2); border-color: var(--accent); color: var(--accent); }
 #side.termmode #card .snip, #side.termmode #card .move, #side.termmode #card .meta { display: none; }
 #term .termhead .st.here { color: var(--accent); }
+
+/* ---------- rendered markdown in messages ---------- */
+.md { white-space: normal; }
+.md p { margin: 0 0 6px; }
+.md p:last-child { margin-bottom: 0; }
+.md ul, .md ol { margin: 2px 0 6px; padding-left: 18px; }
+.md li { margin: 1px 0; }
+.md h3, .md h4, .md h5, .md h6 { margin: 6px 0 4px; font-size: 1em; }
+.md code { font: 11.5px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--card2); border: 1px solid var(--line); border-radius: 5px; padding: 0 4px; }
+.md pre { margin: 4px 0 8px; padding: 8px 10px; background: var(--card2); border: 1px solid var(--line); border-radius: 8px; overflow: auto; }
+.md pre code { border: 0; padding: 0; background: none; white-space: pre; }
+.md a { color: var(--accent); }
+#term .m.assistant, #tr-body .md { white-space: normal; }
+
+/* The panel's messages look like the agent's own terminal. */
+#term .msgs { background: #1e1e2e; border-color: #1e1e2e; color: #cdd6f4; font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+#term .m { display: flex; gap: 8px; font: inherit; }
+#term .m > b { flex: none; display: inline; font-size: inherit; text-transform: none; letter-spacing: 0; color: #a6adc8; }
+#term .m.assistant > b { color: #cdd6f4; }
+#term .m.user { color: #a6adc8; }
+#term .m.user > span { background: #313244; border-radius: 3px; padding: 0 4px; }
+#term .m.empty { color: #7f849c; }
+#term .md strong { color: #ffffff; }
+#term .md em { color: #f5c2e7; font-style: italic; }
+#term .md code { background: none; border: 0; padding: 0; color: #b4befe; font-size: inherit; }
+#term .md pre { background: #181825; border: 0; color: #a6e3a1; }
+#term .md h3, #term .md h4, #term .md h5, #term .md h6 { color: #ffffff; }
+#term .md ul { list-style: none; padding-left: 0; }
+#term .md ul > li::before { content: "- "; color: #a6adc8; }
+#term .md ol { padding-left: 2.2ch; }
+#term .md a { color: #89b4fa; }

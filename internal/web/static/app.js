@@ -900,7 +900,7 @@ async function openTranscript(id) {
       const m = el("div", "msg " + c.role);
       if (c.role === "tool") { m.textContent = "⚙ " + c.text; body.appendChild(m); continue; }
       m.appendChild(el("span", "who", { user: "you", assistant: "▼•ᴥ•▼ claude", recap: "✦ recap" }[c.role] || c.role));
-      m.appendChild(el("div", "body", c.text));
+      m.appendChild(c.role === "assistant" || c.role === "recap" ? markdown(c.text) : el("div", "body", c.text));
       body.appendChild(m);
     }
     $("#transcript").hidden = false;
@@ -1355,11 +1355,70 @@ function showTerm() {
     acts.appendChild(el("span", "how", p.agent === "cursor" ? "Cursor opens as an editor, not here." : ""));
     if (p.agent === "cursor") here.disabled = true;
   } else {
-    const go = el("button", "primary", "↗ Go to it");
+    const here = el("button", "primary", "▶ Continue here");
+    here.title = "starts a second copy of it in this panel; the other terminal keeps its own";
+    here.onclick = () => startTerm(p);
+    const go = el("button", "", "↗ Go to it");
     go.onclick = () => act("open", p.id);
-    acts.append(go, el("span", "how", "It's running in another terminal."));
+    acts.append(here, go, el("span", "how", p.pane ? "" : "It's also running in another terminal."));
   }
   box.appendChild(acts);
+}
+
+// Markdown for agent messages, built as DOM nodes (never innerHTML): transcripts are
+// untrusted text. Covers what agents write: headings, lists, code, bold, italics, links.
+function markdown(text) {
+  const root = el("div", "md");
+  const lines = text.replace(/\r/g, "").split("\n");
+  let list = null, para = [];
+  const flush = () => {
+    if (para.length) { const p = el("p"); inline(p, para.join(" ")); root.appendChild(p); para = []; }
+  };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const fence = line.match(/^\s*```/);
+    if (fence) {
+      flush(); list = null;
+      const code = [];
+      for (i++; i < lines.length && !/^\s*```/.test(lines[i]); i++) code.push(lines[i]);
+      const pre = el("pre");
+      pre.appendChild(el("code", "", code.join("\n")));
+      root.appendChild(pre);
+      continue;
+    }
+    const h = line.match(/^(#{1,6})\s+(.*)/);
+    const li = line.match(/^\s*(?:[-*+]|(\d+)[.)])\s+(.*)/);
+    if (h) { flush(); list = null; const n = el("h" + Math.min(6, h[1].length + 2)); inline(n, h[2]); root.appendChild(n); }
+    else if (li) {
+      flush();
+      const kind = li[1] ? "ol" : "ul";
+      if (!list || list.tagName.toLowerCase() !== kind) { list = el(kind); root.appendChild(list); }
+      const item = el("li"); inline(item, li[2]); list.appendChild(item);
+    } else if (!line.trim()) { flush(); list = null; }
+    else { list = null; para.push(line.trim()); }
+  }
+  flush();
+  return root;
+}
+
+function inline(node, text) {
+  const re = /(`[^`]+`)|(\*\*[^*]+\*\*)|(__[^_]+__)|(\*[^*\s][^*]*\*)|(_[^_\s][^_]*_)|(\[[^\]]+\]\(https?:\/\/[^)\s]+\))/g;
+  let last = 0, m;
+  while ((m = re.exec(text))) {
+    if (m.index > last) node.appendChild(document.createTextNode(text.slice(last, m.index)));
+    const t = m[0];
+    if (m[1]) node.appendChild(el("code", "", t.slice(1, -1)));
+    else if (m[2] || m[3]) { const b = el("strong"); inline(b, t.slice(2, -2)); node.appendChild(b); }
+    else if (m[4] || m[5]) { const i = el("em"); inline(i, t.slice(1, -1)); node.appendChild(i); }
+    else {
+      const [, label, href] = t.match(/^\[([^\]]+)\]\((.*)\)$/);
+      const a = el("a", "", label);
+      a.href = href; a.target = "_blank"; a.rel = "noopener noreferrer";
+      node.appendChild(a);
+    }
+    last = m.index + t.length;
+  }
+  if (last < text.length) node.appendChild(document.createTextNode(text.slice(last)));
 }
 
 function paintMsgs(node, p) {
@@ -1367,7 +1426,7 @@ function paintMsgs(node, p) {
   if (!convo.msgs.length) { node.appendChild(el("div", "m empty", p.snippet || "…")); return; }
   for (const m of convo.msgs) {
     const d = el("div", "m " + m.role);
-    d.append(el("b", "", m.role === "user" ? "you" : "pup"), el("span", "", m.text.length > 600 ? m.text.slice(0, 600) + "…" : m.text));
+    d.append(el("b", "", m.role === "user" ? ">" : "⏺"), m.role === "assistant" ? markdown(m.text.length > 1500 ? m.text.slice(0, 1500) + "…" : m.text) : el("span", "", m.text.length > 600 ? m.text.slice(0, 600) + "…" : m.text));
     node.appendChild(d);
   }
   node.scrollTop = node.scrollHeight;
@@ -2930,6 +2989,7 @@ async function renderArt() {
 // Exposed for end-to-end tests: screen positions of entities.
 window.kennel = {
   app,
+  markdown,
   setAppearance: async (a) => { applyAppearance(a); await api("/api/appearance", { method: "POST", body: JSON.stringify({ appearance: a }) }); },
   toast,
   lib,

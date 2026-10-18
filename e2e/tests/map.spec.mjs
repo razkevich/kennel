@@ -365,11 +365,13 @@ test("the terminal panel: messages, resume here, type into it, move to a tab", a
   await expect(screen).toContainText("hello pty");
   await term.locator("button", { hasText: "Stop" }).click();
   await expect.poll(() => page.evaluate((i) => window.kennel.app.state.pups[i].term, id)).toBe(false);
-  // A pup running in another terminal offers Go to instead.
+  // A pup running in another terminal can still continue here (a second copy), or Go to.
   const far = await page.evaluate(() => Object.values(window.kennel.app.state.pups).find((p) => p.status !== "offline" && !p.pane)?.id);
   await clickEntity(page, far);
   await expect(term.locator("button", { hasText: "Go to it" })).toBeVisible();
-  await expect(term.locator("button", { hasText: "Resume here" })).toHaveCount(0);
+  await term.locator("button", { hasText: "Continue here" }).click();
+  await expect(term.locator(".xterm-rows")).toContainText(`would run: claude --resume ${far}`);
+  await term.locator("button", { hasText: "Stop" }).click();
 });
 
 test("sessions list: group and sort", async ({ page }) => {
@@ -396,4 +398,22 @@ test("pups wear their role: a role icon on the card and in the New list", async 
   await clickEntity(page, id);
   await expect(page.locator("#card .role")).toHaveText("🧑‍🚒");
   await expect(page.locator("#pack .member", { hasText: "review infra#91" })).toContainText("🧐");
+});
+
+test("agent messages render as markdown, safely", async ({ page }) => {
+  await open(page);
+  const id = await pupId(page, "FLAKY-CI");
+  await clickEntity(page, id);
+  const msgs = page.locator("#term .msgs");
+  await expect(msgs.locator(".m.assistant code", { hasText: "workerIndex" })).toBeVisible();
+  const html = await page.evaluate(() => {
+    const n = window.kennel.markdown("It's **`gcp-us-east4`**:\n\n- **Zone:** `us-east4-b`\n- [docs](https://example.com)\n\n```\nterraform apply\n```\n<img src=x onerror=alert(1)>");
+    return n.innerHTML;
+  });
+  expect(html).toContain("<strong><code>gcp-us-east4</code></strong>");
+  expect(html).toContain("<li><strong>Zone:</strong> <code>us-east4-b</code></li>");
+  expect(html).toContain('<a href="https://example.com" target="_blank" rel="noopener noreferrer">docs</a>');
+  expect(html).toContain("<pre><code>terraform apply</code></pre>");
+  expect(html).not.toContain("<img");
+  expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
 });

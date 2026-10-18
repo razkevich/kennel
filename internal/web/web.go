@@ -1402,10 +1402,8 @@ func (s *Server) handleTerm(w http.ResponseWriter, r *http.Request) {
 			fail(w, errors.New("no such session"), http.StatusNotFound)
 			return
 		}
-		if p.Status.Live() {
-			fail(w, fmt.Errorf("%s is running in another terminal; go to it there", p.Title()), http.StatusConflict)
-			return
-		}
+		// A session live in another terminal may run here too: a second resume of the
+		// same conversation is what you asked for when you press Continue here.
 		tg := floor.TargetFor(s.App, p, false, false)
 		if err := s.App.CheckCwd(tg.Cwd); err != nil {
 			fail(w, err, http.StatusBadRequest)
