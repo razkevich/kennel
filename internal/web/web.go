@@ -189,7 +189,7 @@ func (s *Server) fingerprint() uint64 {
 		fmt.Fprintf(h, "t%s", p.Meta.Theme)
 	}
 	for _, p := range s.App.Pups() {
-		fmt.Fprintf(h, "%s|%d|%d|%s|%v|%v|%d|%v|%s;", p.ID, p.Status, p.Updated.UnixMilli(), p.Title(), p.Meta.Starred, p.Meta.Archived, p.Meta.KennelID, p.Meta.Unfiled, p.Pane)
+		fmt.Fprintf(h, "%s|%d|%d|%s|%v|%v|%d|%v|%s;", p.ID, p.Status, p.Updated.UnixMilli(), p.Title(), p.Meta.Starred, p.Meta.Archived, p.Meta.KennelID, p.Meta.Unfiled, p.Pane+"|"+p.Meta.LookRole+"|"+p.Meta.LookFur)
 	}
 	for _, t := range s.App.Things() {
 		fmt.Fprintf(h, "%s|%v;", t.Key(), t.Running)
@@ -347,7 +347,10 @@ type PupJSON struct {
 	// Term is set while the pup runs in kennel's own terminal panel.
 	Term bool   `json:"term"`
 	Role string `json:"role"`
-	Note string `json:"note"`
+	// LookRole and LookFur are what the user picked ("" = automatic).
+	LookRole string `json:"lookRole"`
+	LookFur  string `json:"lookFur"`
+	Note     string `json:"note"`
 }
 
 type ThingJSON struct {
@@ -437,6 +440,18 @@ func pupJSON(p *pack.Pup) PupJSON {
 		FirstPrompt: p.FirstPrompt, Recap: p.Recap, Updated: p.Updated.UnixMilli(), Started: p.Started.UnixMilli(), Fur: furColor(p.ID, p.Color),
 		Starred: p.Meta.Starred, Archived: p.Meta.Archived, Remote: p.Remote != "", Crons: len(p.Crons), PRs: p.PRs, Artifacts: len(p.Artifacts),
 		Unread: p.Unread(), Messages: p.NUser, Cost: p.Cost, Pane: p.Pane, Cwd: p.Cwd, Project: app.ProjectRoot(p.Cwd), Role: p.Role(), Note: p.Meta.Note}
+	// A look the user picked wins over the automatic one.
+	switch p.Meta.LookRole {
+	case "":
+	case "none":
+		j.Role = ""
+	default:
+		j.Role = p.Meta.LookRole
+	}
+	if p.Meta.LookFur != "" {
+		j.Fur = p.Meta.LookFur
+	}
+	j.LookRole, j.LookFur = p.Meta.LookRole, p.Meta.LookFur
 	if !p.Live.Since.IsZero() {
 		j.Since = p.Live.Since.UnixMilli()
 	}
@@ -720,6 +735,8 @@ func (s *Server) handlePupAction(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Title  string   `json:"title"`
+		Role   string   `json:"role"`
+		Fur    string   `json:"fur"`
 		Cwd    string   `json:"cwd"`
 		With   []string `json:"with"`
 		Agent  string   `json:"agent"`
@@ -769,6 +786,8 @@ func (s *Server) handlePupAction(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+	case "look":
+		err = s.App.SetLook(p.ID, body.Role, body.Fur)
 	case "move":
 		err = s.App.MoveTo(p.ID, body.Kennel)
 		msg = "🚚 moved " + p.Title()

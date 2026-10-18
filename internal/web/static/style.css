@@ -475,3 +475,12 @@ body.resizing { cursor: col-resize; user-select: none; }
 #floorsheet .foot button { border-radius: 10px; padding: 7px 16px; font-weight: 700; border: 1px solid var(--line); background: var(--card2); }
 #floorsheet .foot .apply { background: var(--accent); border-color: var(--accent); color: #fff; }
 #floorsheet .empty { color: var(--dim); padding: 24px; text-align: center; }
+
+/* ---------- a pup's look ---------- */
+.lookpick { margin-top: 8px; padding: 8px; border: 1px solid var(--line); border-radius: 12px; background: var(--card2); }
+.lookpick h5 { margin: 2px 2px 4px; font-size: 10.5px; letter-spacing: .5px; text-transform: uppercase; color: var(--dim); }
+.lookpick .hats, .lookpick .furs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+.lookpick .hats button { min-width: 32px; height: 30px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); font-size: 15px; }
+.lookpick .furs button { width: 24px; height: 24px; border-radius: 50%; border: 2px solid var(--card); box-shadow: 0 0 0 1px var(--line); font-size: 9px; padding: 0; }
+.lookpick .furs button:first-child { width: auto; border-radius: 8px; padding: 0 6px; font-size: 11px; background: var(--card); }
+.lookpick button.on { box-shadow: 0 0 0 2px var(--accent); border-color: var(--accent); }

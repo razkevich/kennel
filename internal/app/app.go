@@ -433,6 +433,23 @@ func (a *App) SetNote(id, note string) error {
 	return nil
 }
 
+// SetLook dresses a pup: a hat (role key, "none", or "" for automatic) and a fur color ("" for automatic).
+func (a *App) SetLook(id, role, fur string) error {
+	p := a.Pup(id)
+	if p == nil {
+		return fmt.Errorf("unknown session %s", id)
+	}
+	prevRole, prevFur := p.Meta.LookRole, p.Meta.LookFur
+	if err := a.updateMeta(id, "look_role", func(m *store.PupMeta) any { m.LookRole = role; return role }); err != nil {
+		return err
+	}
+	if err := a.updateMeta(id, "look_fur", func(m *store.PupMeta) any { m.LookFur = fur; return fur }); err != nil {
+		return err
+	}
+	a.remember("dress up "+p.Title(), func() error { return a.SetLook(id, prevRole, prevFur) })
+	return nil
+}
+
 // MoveTo files a pup into a kennel; kennel 0 takes it out of any kennel, which is an
 // explicit choice, so rule-based kennels won't adopt it back.
 func (a *App) MoveTo(id string, kennelID int64) error {

@@ -127,6 +127,8 @@ func (s *Store) migrate() error {
 		{"kennels", "smart", "TEXT NOT NULL DEFAULT ''"},
 		{"treats", "kennel_id", "INTEGER REFERENCES kennels(id) ON DELETE SET NULL"},
 		{"floors", "space", "TEXT NOT NULL DEFAULT ''"},
+		{"pup_meta", "look_role", "TEXT NOT NULL DEFAULT ''"},
+		{"pup_meta", "look_fur", "TEXT NOT NULL DEFAULT ''"},
 	} {
 		var n int
 		_ = s.DB.QueryRow(`SELECT count(*) FROM pragma_table_info(?) WHERE name=?`, col.table, col.name).Scan(&n)

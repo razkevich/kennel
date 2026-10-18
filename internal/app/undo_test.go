@@ -96,3 +96,18 @@ func TestRemovedPupStaysOutOfRuleKennel(t *testing.T) {
 		t.Fatalf("filing again clears the opt-out: %+v", q.Meta)
 	}
 }
+
+func TestSetLookUndo(t *testing.T) {
+	a := demoApp(t)
+	p := a.Find("RATE-LIMITS")
+	if err := a.SetLook(p.ID, "firefighter", "#89b4fa"); err != nil {
+		t.Fatal(err)
+	}
+	if m := a.Pup(p.ID).Meta; m.LookRole != "firefighter" || m.LookFur != "#89b4fa" {
+		t.Fatalf("look not saved: %+v", m)
+	}
+	a.Undo()
+	if m := a.Pup(p.ID).Meta; m.LookRole != "" || m.LookFur != "" {
+		t.Fatalf("undo should restore the automatic look: %+v", m)
+	}
+}

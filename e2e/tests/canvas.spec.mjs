@@ -40,10 +40,12 @@ test("select a room, move it by its wall, resize it by a handle", async ({ page 
   await dragTo(page, wall, { x: wall.x + 3 * 32 * z, y: wall.y + 2 * 32 * z });
   await expect.poll(async () => ((await room(page, L)).style.pos || {})[F]).toEqual({ x: before.x + 3, y: before.y + 2 });
   // Resize from the south-east handle.
+  await center(page, L);
   const moved = await room(page, L);
   const se = await page.evaluate(([x, y]) => window.kennel.worldPos(x, y), [moved.x + moved.w, moved.y + moved.h]);
   await dragTo(page, se, { x: se.x + 4 * 32 * z, y: se.y + 3 * 32 * z });
   await expect.poll(async () => (await room(page, L)).style.pos[F].w).toBe(moved.w + 4);
+  await expect.poll(async () => (await room(page, L)).w).toBe(moved.w + 4);
   const sized = await room(page, L);
   expect(sized.w).toBe(moved.w + 4);
   expect(sized.h).toBe(moved.h + 3);

@@ -134,7 +134,7 @@ const app = {
 function layout(state) {
   const viewW = Math.max(18, Math.floor(($("#stage").clientWidth || 1000) / (TILE * 0.85)) - 2);
   const sized = state.rooms.map((r) => {
-    const n = r.pups.length + r.things.length;
+    const n = r.pups.length + r.things.length + itemsIn(r).length;
     const maxCols = r.look.Wide ? 6 : 4;
     const cols = Math.max(2, r.minCols || 0, Math.min(maxCols, Math.ceil(Math.sqrt(n * 1.6)) || 2));
     const rows = Math.max(1, r.minRows || 0, Math.ceil(n / cols));
@@ -177,7 +177,7 @@ function layout(state) {
 
   const seen = new Set();
   for (const r of rooms) {
-    const items = r.pups.map((id) => ({ kind: "pup", id })).concat(r.things.map((id) => ({ kind: "thing", id })));
+    const items = r.pups.map((id) => ({ kind: "pup", id })).concat(r.things.map((id) => ({ kind: "thing", id })), itemsIn(r).map((t) => ({ kind: "item", id: "item:" + t.id })));
     items.forEach((it, i) => {
       let cx = r.x + 1 + (i % r.cols) * SLOT + SLOT / 2;
       let cy = r.y + 3 + Math.floor(i / r.cols) * 3 + 1.4;
@@ -194,14 +194,17 @@ function layout(state) {
       e.room = r;
       if (e.dragging) return;
       if (Math.hypot(e.x - cx, e.y - cy) > 2.5) { e.tx = cx; e.ty = cy; }
-      // Far moves (a room was rebuilt or moved) teleport instead of a long walk.
-      if (it.kind === "thing" || Math.hypot(e.x - cx, e.y - cy) > 6) { e.x = e.tx = cx; e.y = e.ty = cy; }
+      // Only pups walk; things and items, and far moves (a room was rebuilt or moved), jump.
+      if (it.kind !== "pup" || Math.hypot(e.x - cx, e.y - cy) > 6) { e.x = e.tx = cx; e.y = e.ty = cy; }
     });
   }
   for (const id of [...app.ents.keys()]) if (!seen.has(id)) app.ents.delete(id);
 }
 
 const pupOf = (id) => app.state && app.state.pups[id];
+// Things kept in a kennel (links, files, channels, tickets, artifacts) stand in it like pups.
+const itemsIn = (r) => (r && r.kennel ? treatList.filter((t) => t.kennel === r.kennel) : []);
+const itemOf = (id) => (typeof id === "string" && id.startsWith("item:") ? treatList.find((t) => "item:" + t.id === id) : null);
 // Your own kennels hold the pups you file; smart ones fill themselves.
 const isOwnKennel = (r) => !!(r && r.kennel && !r.smart);
 const ownKennels = () => (app.state.kennels || []).filter((k) => !k.smart);
@@ -614,6 +617,8 @@ function select(id, fly) {
 function renderCard() {
   const card = $("#card");
   if (app.sel && app.sel.startsWith("room:")) { renderRoomCard(app.sel.slice(5)); return; }
+  const item = itemOf(app.sel);
+  if (item) { renderItemCard(item); return; }
   const p = pupOf(app.sel), t = thingOf(app.sel);
   if (!p && !t) { card.hidden = true; return; }
   card.innerHTML = "";
@@ -638,6 +643,7 @@ function renderCard() {
     btn("🖥 Terminal", () => showTab("term"));
     btn(p.starred ? "★ Unstar" : "☆ Star", () => act("star", p.id));
     btn("📜 Read", () => openTranscript(p.id));
+    btn("🎨 Look", () => { app.lookOpen = !app.lookOpen; renderCard(); });
     actions.appendChild(menuButton(() => [
       ["⑂ Fork", () => act("fork", p.id)],
       ["⧉ Clone into another folder…", () => { const cwd = prompt(`Clone ${p.title} into which folder?`, p.cwd); if (cwd) act("clone", p.id, { cwd }); }],
@@ -658,7 +664,9 @@ function renderCard() {
     for (const k of ownKennels()) sel.appendChild(new Option(`${k.icon} ${k.name}`, String(k.id), false, k.name === p.kennel));
     sel.onchange = () => act("move", p.id, { kennel: Number(sel.value) });
     move.appendChild(sel);
-    card.append(row, el("div", "meta", meta.filter(Boolean).join(" · ")), el("div", "snip", p.snippet), actions, move);
+    card.append(row, el("div", "meta", meta.filter(Boolean).join(" · ")), el("div", "snip", p.snippet), actions);
+    if (app.lookOpen) card.appendChild(lookPicker(p));
+    card.appendChild(move);
   } else {
     const row = el("div", "row");
     const ic = el("span", "", t.icon); ic.style.fontSize = "22px";
@@ -676,6 +684,48 @@ function renderCard() {
 }
 
 // renderRoomCard lets you start a pup in a room, or pull any session into it.
+const FURS = ["#fab387", "#f9e2af", "#e6c9a8", "#c9a27e", "#f5c2e7", "#b4befe", "#94e2d5", "#eba0ac", "#d9d9d9", "#a6adc8", "#89b4fa", "#a6e3a1", "#6c4a3a", "#3a3a4a"];
+
+// Pick a pup's hat and fur; Auto goes back to what kennel would choose.
+function lookPicker(p) {
+  const box = el("div", "lookpick");
+  const hats = el("div", "hats");
+  const hat = (label, key, title) => {
+    const b = el("button", (p.lookRole || "") === key ? "on" : "", label);
+    b.title = title;
+    b.onclick = () => act("look", p.id, { role: key, fur: p.lookFur || "" });
+    hats.appendChild(b);
+  };
+  hat("Auto", "", "by what it does");
+  hat("🚫", "none", "no hat");
+  for (const [k, r] of Object.entries(ROLES)) hat(r.icon, k, r.name);
+  const furs = el("div", "furs");
+  for (const f of ["", ...FURS]) {
+    const b = el("button", (p.lookFur || "") === f ? "on" : "", f ? "" : "Auto");
+    if (f) { b.style.background = f; b.title = f; }
+    b.onclick = () => act("look", p.id, { role: p.lookRole || "", fur: f });
+    furs.appendChild(b);
+  }
+  box.append(el("h5", "", "hat"), hats, el("h5", "", "fur"), furs);
+  return box;
+}
+
+function renderItemCard(t) {
+  const card = $("#card");
+  card.innerHTML = "";
+  card.hidden = false;
+  const row = el("div", "row");
+  const close = el("button", "x", "✕");
+  close.onclick = () => { app.sel = null; card.hidden = true; };
+  row.append(el("span", "title", `${t.icon || "📌"} ${t.name}`), close);
+  const k = (app.state.kennels || []).find((x) => x.id === t.kennel);
+  const actions = el("div", "actions");
+  const open = el("button", "primary", "↗ Open");
+  open.onclick = () => openItem(t);
+  actions.append(open, menuButton(() => itemMenu(t)));
+  card.append(row, el("div", "meta", `${{ url: "link", file: "file", slack: "channel", ticket: "ticket", text: "note" }[t.kind] || t.kind}${k ? " · in " + k.icon + " " + k.name : ""}`), el("div", "snip", t.value), actions);
+}
+
 function renderRoomCard(key) {
   const card = $("#card");
   const r = roomByKey(key);
@@ -1173,12 +1223,6 @@ function click(sx, sy, w, e) {
     else if (r) { build.room = r.key; app.sel = "room:" + r.key; renderBuilder(); renderCard(); }
     return;
   }
-  const shelfHit = shelfAt(w);
-  if (shelfHit) {
-    if (shelfHit.item) openItem(shelfHit.item);
-    else { app.sel = "room:" + shelfHit.room.key; renderCard(); }
-    return;
-  }
   const hit = entityAt(sx, sy);
   const fx = !hit && fixtureAt(w.x, w.y);
   if (fx) { useFixture(fx); return; }
@@ -1238,6 +1282,13 @@ function spotIn(r, ent) {
 async function dropPups(d, w) {
   app.dropRoom = null;
   const target = roomAt(w.x, w.y);
+  const items = d.group.filter((g) => g.ent.kind === "item");
+  if (items.length) {
+    d.group = d.group.filter((g) => g.ent.kind !== "item");
+    await dropItems(items, target);
+    if (!d.group.length) return;
+    d.ent = d.group[0].ent;
+  }
   const from = d.ent.room;
   const back = () => { for (const g of d.group) { g.ent.dragging = false; if (g.ent.home) { g.ent.tx = g.ent.home.x; g.ent.ty = g.ent.home.y; } } };
   if (!target) {
@@ -1270,6 +1321,29 @@ async function dropPups(d, w) {
   app.multi.clear();
 }
 
+// Items dropped in their own room stay where they're put; on another kennel they
+// move to its shelf; anywhere else they come off the shelf (they're kept, loose).
+async function dropItems(group, target) {
+  for (const g of group) g.ent.dragging = false;
+  const from = group[0].ent.room;
+  if (target && target === from) {
+    const st = styleOf(target);
+    st.spots = st.spots || {};
+    for (const g of group) st.spots[g.ent.id] = spotIn(target, g.ent);
+    await saveStyle(target, true);
+    return;
+  }
+  if (target && target.kennel) {
+    const st = styleOf(target);
+    st.spots = st.spots || {};
+    for (const g of group) st.spots[g.ent.id] = spotIn(target, g.ent);
+    await api("/api/room/style", { method: "POST", body: JSON.stringify({ key: target.key, style: st }) }).catch(() => {});
+    for (const g of group) { const t = itemOf(g.ent.id); if (t) await pinTo(target.kennel, t); }
+    return;
+  }
+  for (const g of group) { const t = itemOf(g.ent.id); if (t) await pinTo(0, t); }
+}
+
 const inKennel = (id) => { const e = app.ents.get(id); return isOwnKennel(e && e.room); };
 
 // Removing a pup from a kennel only unfiles it: the session goes back to 📥 New.
@@ -1283,6 +1357,8 @@ async function unfile(ids) {
 
 // Delete takes pups out of the kennel they're in; anywhere else it archives them.
 async function deletePups(ids) {
+  for (const id of ids.filter((x) => itemOf(x))) await pinTo(0, itemOf(id));
+  ids = ids.filter((x) => !itemOf(x));
   const filed = ids.filter(inKennel), loose = ids.filter((id) => !inKennel(id));
   if (filed.length) await unfile(filed);
   for (const id of loose) await act("archive", id);
@@ -1316,10 +1392,7 @@ function hover(w, sx, sy) {
     const sr = selectedRoom();
     const h = sr && handleAt(sr, w);
     const r = roomAt(w.x, w.y);
-    const sh = shelfAt(w);
-    canvas.title = sh ? (sh.item ? `${sh.item.name}: click to open` : "more on the shelf") : "";
     if (h) cur = CURSORS[h];
-    else if (sh) cur = "pointer";
     else if (entityAt(sx, sy)) cur = "grab";
     else if (r && (onWall(r, w) || sr === r)) cur = "move";
     app.hoverRoom = r ? r.key : null;
@@ -1343,6 +1416,7 @@ canvas.addEventListener("contextmenu", (e) => {
   const hit = entityAt(sx, sy);
   const r = roomAt(w.x, w.y);
   if (hit && hit.kind === "pup") { select(hit.id, false); showMenu(e, pupMenu(hit)); }
+  else if (hit && hit.kind === "item") { select(hit.id, false); const t = itemOf(hit.id); if (t) showMenu(e, itemMenu(t)); }
   else if (hit) { select(hit.id, false); showMenu(e, [["▶ Start", () => thingAct("start", hit.id)], ["■ Stop", () => thingAct("stop", hit.id)]]); }
   else if (r) { app.sel = "room:" + r.key; renderCard(); showMenu(e, roomMenu(r)); }
   else showMenu(e, [
@@ -1759,6 +1833,7 @@ setTool("select");
 
 function interact(e) {
   if (e.kind === "pup") act("open", e.id);
+  else if (e.kind === "item") { const t = itemOf(e.id); if (t) openItem(t); }
   else thingAct("start", e.id);
 }
 
@@ -1775,7 +1850,7 @@ window.addEventListener("keydown", (e) => {
   if (e.key === "!" || (e.shiftKey && e.code === "Digit1")) { zoomFit(); return; }
   if ((e.key === "=" || e.key === "+") && !e.metaKey) { zoomAt(app.cam.z * 1.2); return; }
   if (e.key === "-" && !e.metaKey) { zoomAt(app.cam.z / 1.2); return; }
-  if ((e.key === "Delete" || e.key === "Backspace") && (app.multi.size || (app.sel && pupOf(app.sel)))) {
+  if ((e.key === "Delete" || e.key === "Backspace") && (app.multi.size || (app.sel && (pupOf(app.sel) || itemOf(app.sel))))) {
     const ids = app.multi.size ? [...app.multi] : [app.sel];
     deletePups(ids);
     return;
@@ -2001,13 +2076,12 @@ function drawRoom(r) {
     ctx.fillStyle = "#f2b01e"; roundRect(lx + tw + 6, ly + 2, 24, 20, 10); ctx.fill();
     ctx.fillStyle = "#fff"; ctx.textAlign = "center"; ctx.fillText(`${unread}`, lx + tw + 18, ly + 16); ctx.textAlign = "left";
   }
-  drawShelf(r, lx + tw + (unread ? 38 : 10), ly, x0 + W - 80);
   if (r.older) {
     ctx.font = "600 11px Inter, system-ui"; ctx.fillStyle = PAL.empty; ctx.textAlign = "right";
     ctx.fillText(`+${r.older} older`, x0 + W - 12, y0 + H - 10);
     ctx.textAlign = "left";
   }
-  const n = r.pups.length + r.things.length;
+  const n = r.pups.length + r.things.length + itemsIn(r).length;
   if (!n) {
     ctx.fillStyle = PAL.empty; ctx.font = "italic 13px Inter, system-ui";
     ctx.textAlign = "center"; ctx.fillText(isOwnKennel(r) ? "drag sessions here from the tray →" : r.blurb || "empty", x0 + W / 2, y0 + wallH + 62); ctx.textAlign = "left";
@@ -2028,32 +2102,6 @@ function drawRoom(r) {
 }
 
 // Every room gets a little furniture so the office feels lived in; user decor comes on top.
-// A kennel's shelf: one little tile per saved item on its back wall.
-function drawShelf(r, x, y, maxX) {
-  r.shelf = [];
-  if (!r.kennel) return;
-  const items = shelfOf(r.kennel);
-  if (!items.length) return;
-  ctx.font = "13px system-ui";
-  const fit = Math.max(1, Math.floor((maxX - x) / 28));
-  items.slice(0, fit).forEach((t, i) => {
-    const bx = x + i * 28;
-    const last = i === fit - 1 && items.length > fit;
-    ctx.fillStyle = PAL.label; roundRect(bx, y, 24, 24, 6); ctx.fill();
-    ctx.strokeStyle = PAL.labelLine; ctx.lineWidth = 1; ctx.stroke();
-    ctx.fillStyle = PAL.labelInk; ctx.textAlign = "center";
-    if (last) { ctx.font = "700 11px Inter, system-ui"; ctx.fillText(`+${items.length - fit + 1}`, bx + 12, y + 16); }
-    else ctx.fillText(t.icon || "📄", bx + 12, y + 17);
-    ctx.textAlign = "left";
-    r.shelf.push({ x: bx / TILE, y: y / TILE, w: 24 / TILE, h: 24 / TILE, item: last ? null : t });
-  });
-}
-
-const shelfAt = (w) => {
-  for (const r of app.rooms) for (const s of r.shelf || []) if (w.x >= s.x && w.x <= s.x + s.w && w.y >= s.y && w.y <= s.y + s.h) return { room: r, ...s };
-  return null;
-};
-
 function autoDecor(r, x0, y0, W, H) {
   if ((r.style && (r.style.decor || []).length) || build.on && build.room === r.key && false) return;
   const f = r.look.Floor || " ";
@@ -2202,6 +2250,47 @@ function drawPup(e) {
   if (p.remote) { ctx.font = "12px system-ui"; ctx.fillStyle = "#000"; ctx.fillText("📡", x - 32, top + 14); }
 }
 
+// Kennel items as little props: a poster for a link, a page for a file, a sign for a
+// channel, a ticket stub, an easel for an artifact, a note for text.
+function drawItem(e) {
+  const t = itemOf(e.id);
+  if (!t) return;
+  const x = e.x * TILE, y = e.y * TILE;
+  const selected = app.sel === e.id;
+  ctx.fillStyle = "#2b2f4a24"; ctx.beginPath(); ctx.ellipse(x, y + 2, 16, 4, 0, 0, 7); ctx.fill();
+  const art = /claude\.ai\/.*artifact|\/artifact\//.test(t.value);
+  switch (art ? "art" : t.kind) {
+    case "art": // easel with a canvas
+      px(x - 2, y - 34, 4, 34, "#8a5a36"); px(x - 14, y - 6, 4, 8, "#8a5a36"); px(x + 10, y - 6, 4, 8, "#8a5a36");
+      px(x - 16, y - 40, 32, 24, "#fffaf0"); px(x - 16, y - 40, 32, 2, "#c9a27e");
+      px(x - 12, y - 34, 8, 8, "#ef6f5e"); px(x - 2, y - 30, 10, 10, "#4f8de0"); px(x + 6, y - 36, 6, 6, "#ffd54a");
+      break;
+    case "url": // framed poster on a stand
+      px(x - 15, y - 38, 30, 30, "#3d47db"); px(x - 12, y - 35, 24, 24, "#e8ecff");
+      px(x - 8, y - 30, 16, 3, "#3d47db"); px(x - 8, y - 24, 12, 2, "#9aa4ff"); px(x - 8, y - 20, 14, 2, "#9aa4ff");
+      px(x - 2, y - 8, 4, 8, "#8a8ca3");
+      break;
+    case "file": // a page with a folded corner
+      px(x - 12, y - 34, 24, 32, "#ffffff"); px(x - 12, y - 34, 24, 1, "#c9c7d4"); px(x + 6, y - 34, 6, 6, "#d9d7e4");
+      for (let k = 0; k < 4; k++) px(x - 8, y - 26 + k * 5, 14 - (k % 2) * 4, 2, "#9a9db3");
+      break;
+    case "slack": // a speech-bubble sign
+      px(x - 16, y - 36, 32, 20, "#4a154b"); px(x - 6, y - 16, 6, 6, "#4a154b");
+      px(x - 10, y - 30, 6, 6, "#36c5f0"); px(x - 2, y - 30, 6, 6, "#2eb67d"); px(x + 6, y - 30, 6, 6, "#ecb22e");
+      px(x - 1, y - 10, 2, 10, "#8a8ca3");
+      break;
+    case "ticket": // a ticket stub
+      px(x - 16, y - 24, 32, 18, "#f2b01e"); px(x - 16, y - 17, 3, 4, PAL.carpet); px(x + 13, y - 17, 3, 4, PAL.carpet);
+      for (let k = 0; k < 5; k++) px(x - 10 + k * 5, y - 20, 2, 10, "#c98a00");
+      break;
+    default: // a sticky note
+      px(x - 13, y - 30, 26, 26, "#ffe27a"); px(x - 13, y - 30, 26, 4, "#f5cf4a");
+      for (let k = 0; k < 3; k++) px(x - 9, y - 22 + k * 5, 16, 2, "#c9a83a");
+  }
+  nameTag(x, y - 64, `${t.icon || "📌"} ${t.name}`, selected, null);
+  if (selected) { ctx.strokeStyle = "#3d47db"; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.ellipse(x, y + 2, 22, 7, 0, 0, 7); ctx.stroke(); }
+}
+
 function drawThing(e) {
   const t = thingOf(e.id);
   if (!t) return;
@@ -2310,7 +2399,7 @@ function render() {
   for (const r of app.rooms) drawRoom(r);
   const ents = [...app.ents.values()].sort((a, b) => a.y - b.y);
   for (const e of ents) {
-    if (e.kind === "pup") drawPup(e); else drawThing(e);
+    if (e.kind === "pup") drawPup(e); else if (e.kind === "item") drawItem(e); else drawThing(e);
   }
   drawDropHover();
   drawOverlays();
@@ -2518,6 +2607,8 @@ async function addSmart(k) {
 function renderBuilder() {
   const box = $("#build");
   if (!box || box.hidden) return;
+  // Redrawing under someone typing a block's settings would lose what they typed.
+  if (box.contains(document.activeElement) && document.activeElement.tagName === "INPUT") return;
   box.innerHTML = "";
   const head = el("div", "buildhead");
   const done = el("button", "", "Done");
@@ -2643,6 +2734,7 @@ async function useFixture(f) {
 let treatList = [];
 async function loadTreats() {
   try { treatList = await (await api("/api/treats")).json(); } catch (e) { treatList = []; }
+  if (app.state) layout(app.state);
   if (app.tab === "art") renderArt();
   if (app.sel && app.sel.startsWith("room:")) renderCard();
 }
@@ -3103,6 +3195,14 @@ async function renderArt() {
 // Exposed for end-to-end tests: screen positions of entities.
 window.kennel = {
   app,
+  // The panel terminal's text, from its buffer (painting can lag in a hidden window).
+  termText: () => {
+    const b = termUI.xterm && termUI.xterm.buffer.active;
+    if (!b) return "";
+    const out = [];
+    for (let i = 0; i < b.length; i++) out.push(b.getLine(i).translateToString(true));
+    return out.join("\n");
+  },
   markdown,
   setAppearance: async (a) => { applyAppearance(a); await api("/api/appearance", { method: "POST", body: JSON.stringify({ appearance: a }) }); },
   toast,

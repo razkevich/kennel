@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { open, post, pupId, thingKey, clickEntity } from "./helpers.mjs";
+import { open, post, pupId, thingKey, clickEntity, dragTo } from "./helpers.mjs";
 
 test("shows the office with live counts and the session tray", async ({ page }) => {
   await open(page);
@@ -298,7 +298,7 @@ test("shelves: pin links to kennels from the panel, see them on the wall and the
     app.cam.x = (r.x + r.w / 2) * 32 - st.clientWidth / app.cam.z / 2;
     app.cam.y = (r.y + r.h / 2) * 32 - st.clientHeight / app.cam.z / 2;
   }, key);
-  await expect.poll(() => page.evaluate((k) => (window.kennel.app.rooms.find((r) => r.key === k).shelf || []).length, key)).toBe(1);
+  await expect.poll(() => page.evaluate((k) => [...window.kennel.app.ents.values()].filter((e) => e.kind === "item" && e.room.key === k).length, key)).toBe(1);
   const spot = await page.evaluate((k) => window.kennel.roomPos(k, 0.9, 0.9), key);
   await page.mouse.click(spot.x, spot.y);
   await expect(page.locator("#card .cardshelf")).toContainText("docs.acme.dev");
@@ -453,4 +453,47 @@ test("organize kennels into floors: suggestions, review, apply, one undo", async
   await expect.poll(() => page.evaluate(() => window.kennel.app.state.floors.length)).toBe(floorsBefore);
   await page.locator("#floors .floor[data-floor]").first().click();
   await page.waitForFunction(() => window.kennel.app.rooms.some((r) => r.title === "Payments"));
+});
+
+test("kennel items stand in the room like pups: card, drag to another kennel, drag out", async ({ page }) => {
+  await open(page);
+  const payments = await page.evaluate(() => window.kennel.app.state.kennels.find((k) => k.name === "Payments"));
+  const t = await post(page, "/api/treats", { value: "https://docs.acme.dev/limits", kennel: payments.id });
+  const id = "item:" + t.id;
+  await page.waitForFunction((i) => window.kennel.app.ents.has(i), id);
+  await clickEntity(page, id);
+  await expect(page.locator("#card")).toContainText("docs.acme.dev/limits");
+  await expect(page.locator("#card")).toContainText("in 💳 Payments");
+  // Drag it into another kennel of yours.
+  const other = await post(page, "/api/kennels", { Name: "Limits", Icon: "🚦" });
+  await page.waitForFunction((k) => window.kennel.app.rooms.some((r) => r.key === k), "kennel:" + other.ID);
+  await page.evaluate(() => { window.kennel.app.cam.z = 0.5; });
+  const from = await page.evaluate((i) => { window.kennel.reveal(i); return window.kennel.screenPos(i); }, id);
+  const to = await page.evaluate((k) => window.kennel.roomPos(k, 0.5, 0.6), "kennel:" + other.ID);
+  await dragTo(page, from, to);
+  await expect(page.locator("#toast")).toContainText("pinned to 🚦 Limits");
+  await expect.poll(() => page.evaluate((i) => window.kennel.app.ents.get(i)?.room.title, id)).toBe("Limits");
+  // Right-click → take it off the shelf: it leaves the map but stays in 📎.
+  const pos = await page.evaluate((i) => { window.kennel.reveal(i); return window.kennel.screenPos(i); }, id);
+  await page.mouse.click(pos.x, pos.y, { button: "right" });
+  await page.locator("#ctxmenu button", { hasText: "Take off the shelf" }).click();
+  await expect.poll(() => page.evaluate((i) => window.kennel.app.ents.has(i), id)).toBe(false);
+});
+
+test("a pup's look: pick a hat and fur, Auto puts it back", async ({ page }) => {
+  await open(page);
+  const id = await pupId(page, "ONBOARDING");
+  await clickEntity(page, id);
+  await page.locator("#card button", { hasText: "Look" }).click();
+  const pick = page.locator("#card .lookpick");
+  await pick.locator(".hats button", { hasText: "🧑‍🚒" }).click();
+  await expect.poll(() => page.evaluate((i) => window.kennel.app.state.pups[i].role, id)).toBe("firefighter");
+  await pick.locator(".furs button[title='#89b4fa']").click();
+  await expect.poll(() => page.evaluate((i) => window.kennel.app.state.pups[i].fur, id)).toBe("#89b4fa");
+  expect(await page.evaluate((i) => window.kennel.app.state.pups[i].role, id)).toBe("firefighter");
+  await pick.locator(".hats button", { hasText: "🚫" }).click();
+  await expect.poll(() => page.evaluate((i) => window.kennel.app.state.pups[i].role, id)).toBe("");
+  await pick.locator(".hats button", { hasText: "Auto" }).click();
+  await pick.locator(".furs button", { hasText: "Auto" }).click();
+  await expect.poll(() => page.evaluate((i) => window.kennel.app.state.pups[i].lookFur, id)).toBe("");
 });

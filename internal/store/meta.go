@@ -68,6 +68,10 @@ type PupMeta struct {
 	Theme string
 	// Unfiled means the user took the pup out of its kennel, so kennel rules don't adopt it again.
 	Unfiled bool
+	// LookRole and LookFur are the hat and fur the user picked: "" means automatic,
+	// and LookRole "none" means no hat.
+	LookRole string
+	LookFur  string
 }
 
 func (s *Store) Kennels() ([]Kennel, error) {
@@ -118,7 +122,7 @@ func (s *Store) DeleteKennel(id int64) error {
 }
 
 func (s *Store) Meta() (map[string]PupMeta, error) {
-	rows, err := s.DB.Query(`SELECT session_id, coalesce(kennel_id,0), alias, starred, archived, seen_at, note, theme, unfiled FROM pup_meta`)
+	rows, err := s.DB.Query(`SELECT session_id, coalesce(kennel_id,0), alias, starred, archived, seen_at, note, theme, unfiled, look_role, look_fur FROM pup_meta`)
 	if err != nil {
 		return nil, err
 	}
@@ -127,7 +131,7 @@ func (s *Store) Meta() (map[string]PupMeta, error) {
 	for rows.Next() {
 		var m PupMeta
 		var seen int64
-		if err := rows.Scan(&m.SessionID, &m.KennelID, &m.Alias, &m.Starred, &m.Archived, &seen, &m.Note, &m.Theme, &m.Unfiled); err != nil {
+		if err := rows.Scan(&m.SessionID, &m.KennelID, &m.Alias, &m.Starred, &m.Archived, &seen, &m.Note, &m.Theme, &m.Unfiled, &m.LookRole, &m.LookFur); err != nil {
 			return nil, err
 		}
 		if seen > 0 {
@@ -195,7 +199,7 @@ func (s *Store) DeleteThing(id int64) error {
 	return err
 }
 
-var metaColumns = map[string]bool{"kennel_id": true, "alias": true, "starred": true, "archived": true, "seen_at": true, "note": true, "theme": true, "unfiled": true}
+var metaColumns = map[string]bool{"kennel_id": true, "alias": true, "starred": true, "archived": true, "seen_at": true, "note": true, "theme": true, "unfiled": true, "look_role": true, "look_fur": true}
 
 // SetMetaField upserts a single pup_meta column.
 func (s *Store) SetMetaField(sessionID, column string, value any) error {

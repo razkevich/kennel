@@ -182,17 +182,17 @@ test("dark mode: the Kennel tab's window chrome follows the page", async () => {
 
 test("the terminal panel runs a pup inside the Kennel tab", async () => {
   await backToKennel();
-  const id = await pupId("DARK-MODE");
+  const id = await js(`Object.values(window.kennel.app.state.pups).find((p) => p.status === "offline" && p.agent === "claude").id`);
   await call("POST", "/jsasync", { code: `
     window.kennel.app.sel = ${JSON.stringify(id)};
     document.querySelector('#side .tabs button[data-tab="term"]').click();
     await new Promise((r) => setTimeout(r, 200));
-    [...document.querySelectorAll("#term button")].find((b) => b.textContent.includes("Resume here")).click();
+    [...document.querySelectorAll("#term button")].find((b) => /Resume here|Continue here/.test(b.textContent)).click();
     return true` });
-  await waitFor(() => js(`(document.querySelector("#term .xterm-rows") || {}).textContent?.includes("would run: claude --resume")`), "terminal output");
+  await waitFor(() => js(`window.kennel.termText().includes("would run: claude --resume")`), "terminal output");
   await js(`(() => { const t = document.querySelector("#term textarea"); t && t.focus(); return true })()`);
   await call("POST", "/jsasync", { code: `await fetch("/api/term/${id}/input", { method: "POST", headers: { "X-Kennel-Token": new URLSearchParams(location.search).get("t") }, body: JSON.stringify({ data: "from the app\\r" }) }); return true` });
-  await waitFor(() => js(`document.querySelector("#term .xterm-rows").textContent.includes("from the app")`), "echo");
+  await waitFor(() => js(`window.kennel.termText().includes("from the app")`), "echo");
   assert.equal((await tabs()).length, 1, "no extra tab opened");
   await call("POST", "/jsasync", { code: `await fetch("/api/term/${id}/stop", { method: "POST", headers: { "X-Kennel-Token": new URLSearchParams(location.search).get("t") }, body: "{}" }); document.querySelector('#side .tabs button[data-tab="pack"]').click(); return true` });
 });
