@@ -210,7 +210,7 @@ test("the terminal panel runs a pup inside the Kennel tab", async () => {
   await call("POST", "/jsasync", { code: `await fetch("/api/term/${id}/input", { method: "POST", headers: { "X-Kennel-Token": new URLSearchParams(location.search).get("t") }, body: JSON.stringify({ data: "from the app\\r" }) }); return true` });
   await waitFor(() => js(`window.kennel.termText().includes("from the app")`), "echo");
   assert.equal((await tabs()).length, 1, "no extra tab opened");
-  await call("POST", "/jsasync", { code: `await fetch("/api/term/${id}/stop", { method: "POST", headers: { "X-Kennel-Token": new URLSearchParams(location.search).get("t") }, body: "{}" }); document.querySelector('#side .tabs button[data-tab="pack"]').click(); return true` });
+  await call("POST", "/jsasync", { code: `await fetch("/api/term/${id}/stop", { method: "POST", headers: { "X-Kennel-Token": new URLSearchParams(location.search).get("t") }, body: "{}" }); return true` });
 });
 
 test("in the Kennel tab, ⌘= / ⌘0 zoom the page and ⌘D does nothing", async () => {
@@ -329,7 +329,7 @@ test("the Kennel tab keeps the full web UI: library, panels and search work in t
   await js(`document.querySelector("#libclose").click()`);
   await js(`document.querySelector("#side .tabs button[data-tab=art]").click()`);
   await waitFor(() => js(`document.querySelector("#art").innerText.includes("PG16 cutover runbook")`), "artifacts panel");
-  await js(`document.querySelector("#side .tabs button[data-tab=pack]").click()`);
+  await js(`document.querySelector("#side .tabs button[data-tab=term]").click()`);
   
 });
 

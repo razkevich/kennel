@@ -3,6 +3,8 @@ import { expect } from "@playwright/test";
 // Every test starts on the first floor; the server remembers the last floor between tests.
 export const open = async (page) => {
   await page.goto("/?t=e2e");
+  await post(page, "/api/prefs", { key: "tray", value: "null" });
+  await page.reload();
   // A cold server indexes in the background; rooms reflow until it's done.
   await page.waitForFunction(() => window.kennel && window.kennel.app.state && !window.kennel.app.state.indexing, null, { timeout: 20000 });
   const first = await page.evaluate(() => window.kennel.app.state.floors[0].id);

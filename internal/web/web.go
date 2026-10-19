@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/razkevich/kennel/internal/ghostty"
 	"github.com/razkevich/kennel/internal/term"
 	"hash/fnv"
 	"io/fs"
@@ -268,6 +269,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/appearance", s.guard(s.handleAppearance))
 	mux.HandleFunc("POST /api/prefs", s.guard(s.handlePrefs))
 	mux.HandleFunc("POST /api/term/{id}/{action}", s.guard(s.handleTerm))
+	mux.HandleFunc("GET /api/term-theme", s.guard(s.handleTermTheme))
 	mux.HandleFunc("GET /api/term/{id}/stream", s.guard(s.handleTermStream))
 	return s.hostCheck(mux)
 }
@@ -869,7 +871,7 @@ func (s *Server) handlePupAction(w http.ResponseWriter, r *http.Request) {
 		}
 	case "move":
 		err = s.App.MoveTo(p.ID, body.Kennel)
-		msg = "🚚 moved " + p.Title()
+		msg = "🏠 filed " + p.Title()
 	case "feed":
 		var tr treats.Treat
 		if body.Treat != 0 {
@@ -1765,4 +1767,15 @@ func (s *Server) passOn(to, from *pack.Pup, note string) (msg string, reached bo
 		_ = s.App.RecordHandoff(from.ID, to.ID)
 	}
 	return msg, reached, text, err
+}
+
+// handleTermTheme is the user's Ghostty look, so the panel terminal matches Ghostty;
+// demo data gets Ghostty's defaults rather than whatever this machine has.
+func (s *Server) handleTermTheme(w http.ResponseWriter, r *http.Request) {
+	if s.App.Cfg.Demo {
+		writeJSON(w, ghostty.Defaults())
+		return
+	}
+	home, _ := os.UserHomeDir()
+	writeJSON(w, ghostty.Load(home))
 }

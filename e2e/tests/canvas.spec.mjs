@@ -173,5 +173,5 @@ test("remove pups from a kennel: right-click, Delete, drag out, card button; und
   await page.locator("#card button.dots").click();
   await page.locator("#ctxmenu button", { hasText: "Remove from Removal yard" }).click();
   await expect.poll(members).toBe(1);
-  await expect(page.locator("#pack .group", { hasText: "New" }).locator(`.member[data-id="${ids[3]}"]`)).toHaveCount(1);
+  await expect(page.locator(`#chats .chat[data-id="${ids[3]}"] .new`)).toHaveCount(1);
 });

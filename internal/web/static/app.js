@@ -250,14 +250,19 @@ async function loadState() {
   loadTreats();
   if (!app.laidOut) {
     app.laidOut = true;
-    const l = readPref("layout");
-    if (l && l.side) { document.documentElement.style.setProperty("--side", l.side + "px"); resize(); }
+    const l = readPref("layout") || {};
+    app.layout = l;
+    const root = document.documentElement.style;
+    if (l.side) root.setProperty("--side", l.side + "px");
+    if (l.navW) root.setProperty("--navw", l.navW + "px");
+    if (l.navSpaces) root.setProperty("--nav-spaces", l.navSpaces + "px");
+    if (l.navFloors) root.setProperty("--nav-floors", l.navFloors + "px");
+    resize();
   }
   renderFloors();
   renderProjects();
   renderChats();
   renderCounts();
-  renderPack();
   renderBuilder();
   renderThemeStatus();
   if (native) native.postMessage({ type: "counts", counts: app.state.counts });
@@ -265,6 +270,15 @@ async function loadState() {
   if (app.tab === "jobs") renderJobs();
   if (app.sel) renderCard();
   if (app.tab === "term") showTerm();
+  // Furniture placed the old way becomes objects you can select, move and resize.
+  for (const r of app.rooms) {
+    const st = r.style;
+    if (!st || !(st.decor || []).length || !(catalog.decor || []).length) continue;
+    st.props = st.props || [];
+    for (const d of st.decor) st.props.push({ kind: d.kind, w: 0.14, h: 0.22, x: Math.max(0, Math.min(0.86, d.x - 0.07)), y: Math.max(0, Math.min(0.78, d.y - 0.22)) });
+    st.decor = [];
+    api("/api/room/style", { method: "POST", body: JSON.stringify({ key: r.key, style: st }) }).catch(() => {});
+  }
   if (!app.framed && app.rooms.length) {
     app.framed = true;
     frameWorld();
@@ -273,7 +287,7 @@ async function loadState() {
     const id = app.pendingSel;
     app.pendingSel = null;
     select(id, true);
-    if (!build.on) showTab("term");
+    showTab("term");
   }
 }
 
@@ -303,7 +317,8 @@ function renderFloors() {
     b.dataset.floor = f.id;
     b.draggable = true;
     b.title = "click to go · double-click to rename · drag to reorder · drop a kennel here to move it";
-    const top = el("span", "fname", `${f.icon || "🏢"} ${f.name}`);
+    const top = el("span", "fname");
+    top.appendChild(el("span", "nm", `${f.icon || "🏢"} ${f.name}`));
     if (f.waiting) top.appendChild(el("span", "fwait", `❗${f.waiting}`));
     const text = el("div", "ftext");
     text.append(top, el("span", "fcount", `${f.kennels} kennel${f.kennels === 1 ? "" : "s"} · ${f.pups} pup${f.pups === 1 ? "" : "s"}`));
@@ -430,15 +445,41 @@ function floorTabAt(x, y) {
   return b && b.closest ? b.closest("#floors .floor[data-floor]") : null;
 }
 
-// The navigator's chats: active ones first, then the latest. Picking one is the
-// same as clicking the pup on the map, switching floors when its kennel is elsewhere.
+// The navigator's chats: every session of the last week, searchable and sortable.
+// Picking one is the same as clicking the pup on the map (hopping floors when needed);
+// rows drag onto kennels, and new ones can be sorted into kennels in one go.
+const prefTimers = {};
+function savePref(key, value) {
+  clearTimeout(prefTimers[key]);
+  prefTimers[key] = setTimeout(() => api("/api/prefs", { method: "POST", body: JSON.stringify({ key, value: JSON.stringify(value) }) }).catch(() => {}), 300);
+}
+const readPref = (key) => { try { return JSON.parse((app.state.prefs || {})[key] || "null"); } catch (_) { return null; } };
+
+const chats = { q: "", sort: "active" };
+const CHAT_SORT = {
+  active: (a, b) => rank(a) - rank(b) || b.updated - a.updated,
+  recent: (a, b) => b.updated - a.updated,
+  messages: (a, b) => b.messages - a.messages || b.updated - a.updated,
+  cost: (a, b) => b.cost - a.cost || b.updated - a.updated,
+  name: (a, b) => a.title.localeCompare(b.title),
+};
+const rank = (p) => ({ waiting: 0, working: 1 }[p.status] ?? 2);
+
 function renderChats() {
   const nav = $("#chats");
-  const pups = app.state.tray.map(pupOf).filter(Boolean);
-  const active = pups.filter((p) => p.status === "waiting" || p.status === "working").sort((a, b) => (a.status === "waiting" ? -1 : 0) - (b.status === "waiting" ? -1 : 0) || b.updated - a.updated);
-  const recent = pups.filter((p) => !active.includes(p)).sort((a, b) => b.updated - a.updated).slice(0, Math.max(0, 14 - active.length));
-  const list = [...active, ...recent];
-  const sig = JSON.stringify([app.sel, list.map((p) => [p.id, p.title, p.status, p.starred, p.role])]);
+  if (!$("#chatq").dataset.ready) {
+    const saved = readPref("tray");
+    if (saved) { chats.q = saved.q || ""; chats.sort = saved.sort && CHAT_SORT[saved.sort] ? saved.sort : "active"; }
+    $("#chatq").value = chats.q;
+    $("#chatsort").value = chats.sort;
+    $("#chatq").dataset.ready = "1";
+  }
+  const q = chats.q.trim().toLowerCase();
+  const list = app.state.tray.map(pupOf).filter(Boolean)
+    .filter((p) => !q || `${p.title} ${p.repo} ${p.kennel} ${p.snippet} ${p.branch} ${p.role}`.toLowerCase().includes(q))
+    .sort(CHAT_SORT[chats.sort]);
+  const fresh = list.filter((p) => !p.kennel);
+  const sig = JSON.stringify([q, chats.sort, app.sel, list.map((p) => [p.id, p.title, p.status, p.starred, p.role, p.kennel, p.term])]);
   if (sig === nav.dataset.sig) return;
   nav.dataset.sig = sig;
   nav.innerHTML = "";
@@ -450,23 +491,33 @@ function renderChats() {
     const star = el("button", "star" + (p.starred ? " on" : ""), p.starred ? "★" : "☆");
     star.title = p.starred ? "unstar" : "star";
     star.onclick = (e) => { e.stopPropagation(); act("star", p.id); };
-    row.append(dot, el("span", "t", `${ROLES[p.role] ? ROLES[p.role].icon + " " : ""}${p.title}`), star);
-    row.title = `${STATUS[p.status].label}${p.kennel ? " · " + p.kennel : ""} · ${relAge(p.updated)} ago`;
+    const body = el("div", "body"), sub = el("div", "sub");
+    body.append(el("div", "t", `${ROLES[p.role] ? ROLES[p.role].icon + " " : ""}${p.title}`), sub);
+    if (p.term) sub.appendChild(el("span", "here", "🖥"));
+    sub.appendChild(p.kennel ? el("span", "k", p.kennel) : el("span", "new", "📥 new"));
+    sub.appendChild(el("span", "age", relAge(p.updated)));
+    row.append(dot, body, star);
+    row.title = `${STATUS[p.status].label}${p.kennel ? " · in " + p.kennel : " · not in a kennel yet"} · click to go to it · double-click to open · drag onto a kennel to file it`;
     row.onclick = () => goToPup(p.id);
     row.ondblclick = () => act("open", p.id);
     draggablePup(row, p);
     nav.appendChild(row);
   }
-  if (!list.length) nav.appendChild(el("div", "empty", "No chats this week."));
+  if (!list.length) nav.appendChild(el("div", "empty", q ? "Nothing matches." : "No chats this week."));
+  const sortBtn = $("#chatsortinto");
+  sortBtn.hidden = !fresh.length;
+  sortBtn.textContent = `✨ Sort ${fresh.length} new`;
+  sortBtn.title = "suggest a kennel for each new chat, then review";
+  sortBtn.onclick = () => openSort(fresh.map((p) => p.id));
 }
 
 // Select a pup as if clicked on the map, hopping to its kennel's floor when needed.
 function goToPup(id) {
-  if (app.ents.has(id)) { select(id, true); if (!build.on) showTab("term"); return; }
+  if (app.ents.has(id)) { select(id, true); showTab("term"); return; }
   const where = (app.state.where || {})[id];
   if (where && where !== app.state.floor) { app.pendingSel = id; goFloor(where); return; }
   select(id, false);
-  if (!build.on) showTab("term");
+  showTab("term");
 }
 
 function renderProjects() {
@@ -483,7 +534,9 @@ function renderProjects() {
     const text = el("div", "ftext");
     const folder = el("span", "fcount" + (sp.root ? "" : " nofolder"), sp.root ? sp.root.replace(/^\/Users\/[^/]+/, "~") : "📂 choose its folder");
     if (!sp.root) folder.onclick = (e) => { e.stopPropagation(); showMenu(e, folderMenu(sp)); };
-    text.append(el("span", "fname", `${sp.icon || "📁"} ${sp.name}`), folder);
+    const nm = el("span", "fname");
+    nm.appendChild(el("span", "nm", `${sp.icon || "📁"} ${sp.name}`));
+    text.append(nm, folder);
     row.append(text, menuButton(() => spaceMenu(sp)));
     row.onclick = () => { if (sp.key !== app.state.space) goSpace(sp.key); };
     row.ondblclick = (e) => { e.preventDefault(); editInline(row, sp.name, "Project name", (name) => editSpace(sp, { name })); };
@@ -521,7 +574,7 @@ function spaceMenu(sp) {
 function folderMenu(sp) {
   return [
     ...app.state.projects.slice(0, 20).map((pr) => [`${sp.root === pr.root ? "✓ " : ""}📁 ${pr.name}  (${pr.count})`, () => editSpace(sp, { root: pr.root, name: sp.root ? undefined : pr.name })]),
-    ["📂 Other folder…", () => { const v = prompt("Folder for this project", sp.root || "~/code/"); if (v && v.trim()) editSpace(sp, { root: v.trim() }); }],
+    ["📂 Another folder…", () => { const v = prompt("Folder for this project", sp.root || "~/code/"); if (v && v.trim()) editSpace(sp, { root: v.trim() }); }],
   ];
 }
 
@@ -575,138 +628,6 @@ function miniDog(fur, status, agent) {
   return cv;
 }
 
-// The sessions list: everything from the last week, grouped and sorted your way.
-// Drag any row onto one of your kennels to file it.
-const tray = { q: "", closed: {}, more: {}, group: "status", sort: "recent" };
-
-const prefTimers = {};
-function savePref(key, value) {
-  clearTimeout(prefTimers[key]);
-  prefTimers[key] = setTimeout(() => api("/api/prefs", { method: "POST", body: JSON.stringify({ key, value: JSON.stringify(value) }) }).catch(() => {}), 300);
-}
-const readPref = (key) => { try { return JSON.parse((app.state.prefs || {})[key] || "null"); } catch (_) { return null; } };
-
-function renderPack() {
-  const box = $("#pack");
-  if (!box.querySelector(".traylist")) {
-    const saved = readPref("tray");
-    if (saved) Object.assign(tray, { q: saved.q || "", closed: saved.closed || {}, group: saved.group || "status", sort: saved.sort || "recent" });
-    box.innerHTML = "";
-    const q = el("input");
-    q.type = "search";
-    q.className = "trayq";
-    q.placeholder = "Filter sessions…";
-    q.value = tray.q;
-    q.oninput = () => { tray.q = q.value; renderTray(); saveTray(); };
-    const opts = el("div", "trayopts");
-    const pick = (label, key, choices) => {
-      const l = el("label", "", label);
-      const sel = el("select");
-      for (const [v, t] of choices) sel.appendChild(new Option(t, v));
-      sel.value = tray[key];
-      sel.dataset.key = key;
-      sel.onchange = () => { tray[key] = sel.value; renderTray(); saveTray(); };
-      l.appendChild(sel);
-      return l;
-    };
-    opts.append(
-      pick("group", "group", [["status", "by status"], ["kennel", "by kennel"], ["project", "by project"], ["role", "by role"], ["none", "none"]]),
-      pick("sort", "sort", [["recent", "most recent"], ["active", "most active"], ["cost", "most expensive"], ["name", "name"]]));
-    box.append(q, opts, el("div", "traylist"));
-  }
-  renderTray();
-}
-
-const saveTray = () => savePref("tray", { q: tray.q, closed: tray.closed, group: tray.group, sort: tray.sort });
-
-const TRAY_SORT = {
-  recent: (a, b) => b.updated - a.updated,
-  active: (a, b) => b.messages - a.messages || b.updated - a.updated,
-  cost: (a, b) => b.cost - a.cost || b.updated - a.updated,
-  name: (a, b) => a.title.localeCompare(b.title),
-};
-
-function trayGroups(pups) {
-  const by = (keyOf, labelOf) => {
-    const m = new Map();
-    for (const p of pups) { const k = keyOf(p); if (!m.has(k)) m.set(k, []); m.get(k).push(p); }
-    return [...m.entries()].map(([k, items]) => [k, labelOf(k), items]);
-  };
-  switch (tray.group) {
-    case "kennel": return by((p) => p.kennel || "", (k) => k ? `🏠 ${k}` : "📥 New, not in a kennel").sort((a, b) => (a[0] === "" ? -1 : b[0] === "" ? 1 : a[0].localeCompare(b[0])));
-    case "project": return by((p) => p.repo || "—", (k) => `📁 ${k}`).sort((a, b) => b[2].length - a[2].length);
-    case "role": return by((p) => p.role || "", (k) => ROLES[k] ? `${ROLES[k].icon} ${ROLES[k].name.split(":")[0]}` : "🐾 Other").sort((a, b) => b[2].length - a[2].length);
-    case "none": return [["all", `All · last week`, pups]];
-  }
-  const used = new Set();
-  const take = (f) => pups.filter((p) => !used.has(p.id) && f(p)).map((p) => (used.add(p.id), p));
-  return [
-    ["waiting", "❗ Needs you", take((p) => p.status === "waiting")],
-    ["working", "⚡ Working", take((p) => p.status === "working")],
-    ["new", "📥 New, not in a kennel", take((p) => !p.kennel)],
-    ["recent", "🕘 Recent", take(() => true)],
-  ];
-}
-
-function renderTray() {
-  const list = $("#pack .traylist");
-  const q = tray.q.trim().toLowerCase();
-  const pups = app.state.tray.map(pupOf).filter(Boolean)
-    .filter((p) => !q || `${p.title} ${p.repo} ${p.kennel} ${p.snippet} ${p.branch} ${p.role}`.toLowerCase().includes(q))
-    .sort(TRAY_SORT[tray.sort] || TRAY_SORT.recent);
-  const groups = trayGroups(pups);
-  // Rebuilding the list under the cursor would break hovers and drags, so only redraw on change.
-  const sig = JSON.stringify([q, tray.group, tray.sort, app.state.space, app.sel, tray.closed, tray.more, groups.map(([k, , items]) => [k, items.map((p) => [p.id, p.title, p.status, p.kennel, p.updated, p.starred, p.term])])]);
-  if (sig === tray.sig) return;
-  tray.sig = sig;
-  list.innerHTML = "";
-  for (const [key, label, items] of groups) {
-    if (!items.length) continue;
-    const g = el("div", "group" + (tray.closed[key] ? " closed" : ""));
-    const h = el("h4", "", `${label} · ${items.length}`);
-    h.onclick = () => { tray.closed[key] = !tray.closed[key]; renderTray(); saveTray(); };
-    g.appendChild(h);
-    if (key === "new" || (tray.group === "kennel" && key === "")) {
-      if (!tray.closed[key]) {
-        const sort = el("button", "sortbtn", "✨ Sort these into kennels");
-        sort.title = "Suggest a kennel for each new session; you review before anything moves";
-        sort.onclick = () => openSort(items.map((p) => p.id));
-        g.appendChild(sort);
-      }
-    }
-    if (!tray.closed[key]) {
-      const limit = tray.more[key] ? items.length : 25;
-      for (const p of items.slice(0, limit)) g.appendChild(memberRow(p));
-      if (items.length > limit) {
-        const more = el("button", "more", `show ${items.length - limit} more`);
-        more.onclick = () => { tray.more[key] = true; renderTray(); };
-        g.appendChild(more);
-      }
-    }
-    list.appendChild(g);
-  }
-  if (!list.children.length) list.appendChild(el("div", "empty", q ? "Nothing matches." : "No sessions in the last week."));
-}
-
-function memberRow(p) {
-  const row = el("div", "member" + (app.sel === p.id ? " on" : ""));
-  row.dataset.id = p.id;
-  const who = el("div", "who");
-  who.appendChild(el("div", "name", (p.starred ? "★ " : "") + (ROLES[p.role] ? ROLES[p.role].icon + " " : "") + p.title));
-  who.appendChild(el("div", "what", p.snippet || p.repo));
-  const side = el("div", "side");
-  if (p.term) side.appendChild(el("span", "pill here", "🖥 here"));
-  else if (p.kennel) side.appendChild(el("span", "pill kennel", p.kennel));
-  side.appendChild(el("span", "age", relAge(p.updated)));
-  const dot = el("span", "dot");
-  dot.style.background = STATUS[p.status].color;
-  row.append(miniDog(p.fur, p.status, p.agent), who, side, dot);
-  row.title = "click to see it · double-click to open · drag onto a kennel to file";
-  row.onclick = () => { select(p.id, app.ents.has(p.id)); if (app.tab === "term") showTerm(); };
-  row.ondblclick = () => act("open", p.id);
-  draggablePup(row, p);
-  return row;
-}
 
 function ago(ms) {
   const d = (app.state.now - ms) / 1000;
@@ -721,7 +642,7 @@ function frameWorld() {
   const st = $("#stage");
   const vw = st.clientWidth, vh = st.clientHeight;
   const W = app.world.w * TILE, H = app.world.h * TILE;
-  const gutter = 210; // keeps the floor navigator off the leftmost rooms
+  const gutter = $("#floornav").getBoundingClientRect().width + 26; // keeps the navigator off the leftmost rooms
   app.cam.z = Math.max(0.75, Math.min(1.25, (vw - gutter) / W));
   app.cam.x = W * app.cam.z < vw - gutter ? -(vw / app.cam.z - W) / 2 : -gutter / app.cam.z;
   app.cam.y = H * app.cam.z < vh ? -(vh / app.cam.z - H) / 2 : 0;
@@ -730,9 +651,10 @@ function frameWorld() {
 
 function select(id, fly) {
   app.sel = id;
+  build.room = null;
   const e = app.ents.get(id);
   if (fly && e) {
-    app.flyTo = { x: e.x, y: e.y };
+    app.flyTo = e.home ? { x: e.home.x, y: e.home.y } : { x: e.x, y: e.y };
   }
   renderCard();
   for (const m of document.querySelectorAll(".member, #chats .chat")) m.classList.toggle("on", m.dataset.id === id);
@@ -743,6 +665,7 @@ function renderCard() {
   if (app.sel && app.sel.startsWith("room:")) { renderRoomCard(app.sel.slice(5)); return; }
   const item = itemOf(app.sel);
   if (item) { renderItemCard(item); return; }
+  if (selectedProp() || selectedBlock()) { renderPieceCard(); return; }
   const p = pupOf(app.sel), t = thingOf(app.sel);
   if (!p && !t) { card.hidden = true; return; }
   card.innerHTML = "";
@@ -763,7 +686,7 @@ function renderCard() {
     if (p.kennel) meta.push("🏠 " + p.kennel);
     const actions = el("div", "actions");
     const btn = (label, fn, primary) => { const b = el("button", primary ? "primary" : "", label); b.onclick = fn; actions.appendChild(b); };
-    btn(p.status === "offline" ? "▶ Resume in a tab" : "↗ Go to", () => act("open", p.id), true);
+    btn(p.status === "offline" ? "▶ Open in a tab" : "↗ Go to", () => act("open", p.id), true);
     btn("🖥 Terminal", () => showTab("term"));
     btn(p.starred ? "★ Unstar" : "☆ Star", () => act("star", p.id));
     btn("📜 Read", () => openTranscript(p.id));
@@ -786,7 +709,10 @@ function renderCard() {
     const sel = el("select");
     sel.appendChild(new Option("— none —", "0"));
     for (const k of ownKennels()) sel.appendChild(new Option(`${k.icon} ${k.name}`, String(k.id), false, k.name === p.kennel));
-    sel.onchange = () => act("move", p.id, { kennel: Number(sel.value) });
+    sel.onchange = async () => {
+      await act("move", p.id, { kennel: Number(sel.value) });
+      if (app.sel === p.id) goToPup(p.id);
+    };
     move.appendChild(sel);
     card.append(row, el("div", "meta", meta.filter(Boolean).join(" · ")), el("div", "snip", p.snippet), actions);
     if (app.lookOpen) card.appendChild(lookPicker(p));
@@ -834,6 +760,31 @@ function lookPicker(p) {
   return box;
 }
 
+function pieceMenu() {
+  const sb = selectedBlock();
+  const items = [];
+  if (sb && sb.block.kind === "door") items.push(["🚪 Use the door", () => useFixture({ type: "block", item: sb.block, room: sb.room })]);
+  items.push(["🗑 Remove", () => removeSelected()]);
+  return items;
+}
+
+function renderPieceCard() {
+  const card = $("#card");
+  const sp = selectedProp(), sb = selectedBlock();
+  const def = sp ? propDef(sp.prop.kind) : kindOf(sb.block.kind);
+  card.innerHTML = "";
+  card.hidden = false;
+  const row = el("div", "row");
+  const close = el("button", "x", "✕");
+  close.onclick = () => { app.sel = sp ? "room:" + sp.room.key : "room:" + sb.room.key; renderCard(); };
+  row.append(el("span", "title", `${def.icon} ${def.name}`), close);
+  const room = sp ? sp.room : sb.room;
+  const what = sp ? ({ under: "Pups dropped on it go under it.", inside: "Pups dropped in it peek out.", on: "Pups dropped on it sit on it.", none: "" }[def.mode] || "") : def.blurb;
+  const actions = el("div", "actions");
+  for (const [label, fn] of pieceMenu()) { const b = el("button", label.startsWith("🗑") ? "" : "primary", label); b.onclick = fn; actions.appendChild(b); }
+  card.append(row, el("div", "meta", `in ${room.icon} ${room.title}`), el("div", "snip", `${what} Drag to move${sp ? ", drag its corner to resize" : ""}, Delete removes it.`), actions);
+}
+
 function renderItemCard(t) {
   const card = $("#card");
   card.innerHTML = "";
@@ -874,9 +825,6 @@ function renderRoomCard(key) {
     } catch (e) { toast(e.message, true); }
   };
   actions.appendChild(b1);
-  const b3 = el("button", "", "🔨 Shape");
-  b3.onclick = () => { setBuild(true); build.room = r.key; renderBuilder(); };
-  actions.appendChild(b3);
   if (r.kennel) {
     const rn = el("button", "", "✎ Rename");
     rn.onclick = () => renameKennel(r);
@@ -884,7 +832,7 @@ function renderRoomCard(key) {
     del.onclick = () => deleteKennel(r);
     actions.append(rn, del);
   }
-  card.append(row, el("div", "snip", r.smart ? `Fills itself: ${r.blurb}.` : r.blurb && !r.blurb.startsWith("/") ? r.blurb : "Your kennel. Drag sessions in from the tray."), actions);
+  card.append(row, el("div", "snip", r.smart ? `Fills itself: ${r.blurb}.` : r.blurb && !r.blurb.startsWith("/") ? r.blurb : "Your kennel. Drag chats in from the list on the left."), actions);
   if (r.older) {
     const older = el("button", "older", `📦 ${r.older} older sessions → Library`);
     older.onclick = () => openLibraryFor(r.title);
@@ -1039,7 +987,7 @@ async function runSearch() {
   if (seq !== searchSeq) return;
   box.innerHTML = "";
   box.hidden = false;
-  if (!items.length) { box.appendChild(el("div", "result", "No pups match — try Ask in the sidebar")); return; }
+  if (!items.length) { box.appendChild(el("div", "result", "No pups match — try the 💬 Ask tab")); return; }
   items.forEach((it, i) => {
     const p = it.pup;
     const r = el("div", "result" + (i === 0 ? " on" : ""));
@@ -1059,7 +1007,7 @@ async function runSearch() {
 }
 
 // ---------- ask ----------
-const PANELS = ["pack", "term", "ask", "build", "jobs", "art"];
+const PANELS = ["term", "ask", "build", "jobs", "art"];
 function showTab(tab) {
   if (tab === "build") { setBuild(true); return; }
   if (build.on) setBuild(false);
@@ -1218,34 +1166,41 @@ canvas.addEventListener("mousedown", (e) => {
   const { sx, sy } = canvasPoint(e);
   const w = screenToWorld(sx, sy);
   const pan = e.button === 1 || spaceHeld || app.tool === "hand";
-  if (!pan && build.on && !build.carry) {
-    const f = fixtureAt(w.x, w.y);
-    if (f) { build.drag = { fixture: f, moved: false }; return; }
-    const pa = !entityAt(sx, sy) && propAt(w);
-    if (pa) {
-      const b = propBox(pa.room, pa.prop);
-      build.prop = pa.prop;
-      build.drag = { prop: pa.prop, room: pa.room, corner: pa.corner, dx: w.x - b.x, dy: w.y - b.y, moved: false };
-      return;
-    }
-  }
   if (!pan && app.tool === "room") {
     drag = { kind: "create", x0: Math.round(w.x), y0: Math.round(w.y), x1: Math.round(w.x), y1: Math.round(w.y), sx: e.clientX, sy: e.clientY, moved: false };
     return;
   }
   if (!pan && !build.carry) {
+    // What's under the pointer, in order: a selected room's handle, a selected object's
+    // corner, a pup or item, a block, an object, a room's wall, then the floor.
     const sr = selectedRoom();
     const h = sr && handleAt(sr, w);
     if (h) { drag = { kind: "resize", room: sr, handle: h, orig: { x: sr.x, y: sr.y, w: sr.w, h: sr.h }, sx: e.clientX, sy: e.clientY, moved: false }; return; }
+    const sp = selectedProp();
+    if (sp) {
+      const b = propBox(sp.room, sp.prop);
+      if (Math.abs(w.x - (b.x + b.w)) < 0.45 && Math.abs(w.y - (b.y + b.h)) < 0.45) {
+        build.drag = { prop: sp.prop, room: sp.room, idx: sp.idx, corner: true, dx: 0, dy: 0, moved: false };
+        return;
+      }
+    }
     const hit = entityAt(sx, sy);
     if (hit) {
       const group = app.multi.has(hit.id) ? [...app.multi].map((id) => app.ents.get(id)).filter(Boolean) : [hit];
       drag = { kind: "pup", ent: hit, group: group.map((g) => ({ ent: g, ox: g.x - w.x, oy: g.y - w.y })), sx: e.clientX, sy: e.clientY, moved: false };
       return;
     }
+    const f = fixtureAt(w.x, w.y);
+    if (f) { build.drag = { fixture: f, moved: false }; return; }
+    const pa = propAt(w);
+    if (pa) {
+      const b = propBox(pa.room, pa.prop);
+      build.drag = { prop: pa.prop, room: pa.room, idx: pa.room.style.props.indexOf(pa.prop), corner: false, dx: w.x - b.x, dy: w.y - b.y, moved: false };
+      return;
+    }
     const r = roomAt(w.x, w.y);
     if (r && (onWall(r, w) || (sr === r && !e.shiftKey))) {
-      drag = { kind: "room", room: r, dx: w.x - r.x, dy: w.y - r.y, sx: e.clientX, sy: e.clientY, moved: false };
+      drag = { kind: "room", room: r, orig: { x: r.x, y: r.y }, dx: w.x - r.x, dy: w.y - r.y, sx: e.clientX, sy: e.clientY, moved: false };
       return;
     }
     if (r || e.shiftKey) {
@@ -1328,15 +1283,15 @@ window.addEventListener("mouseup", async (e) => {
   if (build.drag && build.drag.prop) {
     const d = build.drag;
     build.drag = null;
-    build.room = d.room.key;
-    if (d.moved) saveStyle(d.room, true); else renderBuilder();
+    if (d.moved) saveStyle(d.room, true);
+    pick(`prop:${d.room.key}:${d.idx}`, d.room, () => {});
     return;
   }
   if (build.drag) {
     const d = build.drag;
     build.drag = null;
-    if (d.moved) saveStyle(d.fixture.room);
-    else { build.room = d.fixture.room.key; renderBuilder(); }
+    if (d.moved) { saveStyle(d.fixture.room); return; }
+    if (d.fixture.type === "block") pick(`block:${d.fixture.room.key}:${d.fixture.idx}`, d.fixture.room, () => useFixture(d.fixture));
     return;
   }
   const d = drag;
@@ -1357,10 +1312,10 @@ window.addEventListener("mouseup", async (e) => {
       document.querySelectorAll("#floors .floor.droptarget").forEach((b) => b.classList.remove("droptarget"));
       if (tab && Number(tab.dataset.floor) !== app.state.floor) await moveKennelToFloor(d.room, Number(tab.dataset.floor));
       else if (tab) await loadState();
-      else await saveRoomBox(d.room, false);
+      else await saveRoomBox(d.room, false, d.orig);
       break;
     }
-    case "resize": await saveRoomBox(d.room, true); break;
+    case "resize": await saveRoomBox(d.room, true, d.orig); break;
     case "marquee":
       if (app.multi.size === 1) { select([...app.multi][0], false); app.multi.clear(); }
       else if (app.multi.size) { app.sel = null; renderCard(); }
@@ -1369,19 +1324,15 @@ window.addEventListener("mouseup", async (e) => {
   }
 });
 
+// One meaning everywhere: a click selects (its card above, its panel below), a double
+// click does the main thing, Delete removes, right-click shows the same menu as ⋯.
 function click(sx, sy, w, e) {
-  if (build.on) {
+  if (build.carry) {
     const r = roomAt(w.x, w.y);
-    const hit = !build.carry && entityAt(sx, sy);
-    if (hit) { select(hit.id, false); return; }
-    if (r && build.carry) placeIn(r, build.carry, w);
-    else if (r) { build.room = r.key; app.sel = "room:" + r.key; renderBuilder(); renderCard(); }
-    else { build.room = null; app.sel = null; renderBuilder(); renderCard(); }
+    if (r) placeIn(r, build.carry, w); else toast("click inside a room to put it there", true);
     return;
   }
   const hit = entityAt(sx, sy);
-  const fx = !hit && fixtureAt(w.x, w.y);
-  if (fx) { useFixture(fx); return; }
   if (hit) {
     if (e.shiftKey && hit.kind === "pup") {
       if (app.sel && app.ents.has(app.sel)) app.multi.add(app.sel);
@@ -1390,19 +1341,66 @@ function click(sx, sy, w, e) {
       return;
     }
     app.multi.clear();
-    const now = performance.now();
-    const dbl = app.lastClick.id === hit.id && now - app.lastClick.at < 450;
-    app.lastClick = { id: hit.id, at: now };
+    const dbl = isDouble(hit.id);
     select(hit.id, false);
-    if (hit.kind === "pup" && !build.on) showTab("term");
+    if (hit.kind === "pup" || build.on) showTab("term");
     if (dbl) interact(hit);
     return;
   }
   app.multi.clear();
   const room = roomAt(w.x, w.y);
-  app.sel = room ? "room:" + room.key : null;
+  if (room) { pick("room:" + room.key, room, () => {}); return; }
+  app.sel = null;
+  build.room = null;
   renderCard();
+  if (build.on) renderBuilder();
 }
+
+function isDouble(id) {
+  const now = performance.now();
+  const dbl = app.lastClick.id === id && now - app.lastClick.at < 450;
+  app.lastClick = { id, at: now };
+  return dbl;
+}
+
+// Select a room, an object or a block: its card above, the room's design below.
+function pick(sel, room, onDouble) {
+  const dbl = isDouble(sel);
+  app.sel = sel;
+  build.room = room.key;
+  renderCard();
+  showTab("build");
+  if (dbl) onDouble();
+}
+
+function selectedProp() {
+  const m = /^prop:(.+):(\d+)$/.exec(app.sel || "");
+  const room = m && roomByKey(m[1]);
+  const prop = room && room.style && room.style.props && room.style.props[Number(m[2])];
+  return prop ? { room, prop, idx: Number(m[2]) } : null;
+}
+
+function selectedBlock() {
+  const m = /^block:(.+):(\d+)$/.exec(app.sel || "");
+  const room = m && roomByKey(m[1]);
+  const block = room && room.style && room.style.blocks && room.style.blocks[Number(m[2])];
+  return block ? { room, block, idx: Number(m[2]) } : null;
+}
+
+async function removeSelected() {
+  const sp = selectedProp(), sb = selectedBlock();
+  const r = sp ? sp.room : sb && sb.room;
+  if (!r) return false;
+  const st = styleOf(r);
+  if (sp) st.props.splice(sp.idx, 1);
+  else st.blocks.splice(sb.idx, 1);
+  app.sel = "room:" + r.key;
+  await saveStyle(r);
+  renderCard();
+  renderBuilder();
+  return true;
+}
+
 
 const inRect = (p, d) => p.x >= Math.min(d.x0, d.x1) && p.x <= Math.max(d.x0, d.x1) && p.y - 0.4 >= Math.min(d.y0, d.y1) && p.y - 0.4 <= Math.max(d.y0, d.y1);
 
@@ -1417,10 +1415,13 @@ function snapGuides(r) {
   app.guides = guides;
 }
 
-async function saveRoomBox(r, sized) {
+async function saveRoomBox(r, sized, orig) {
   const st = styleOf(r);
   st.pos = st.pos || {};
   const prev = st.pos[String(app.state.floor)] || {};
+  // An auto-placed room is pinned where it was first, so undo puts it back there
+  // rather than wherever the auto layout would now choose.
+  const pins = !prev.x && prev.x !== 0 && orig ? [[r, { ...st, pos: { ...st.pos, [String(app.state.floor)]: { x: orig.x, y: orig.y } } }]] : [];
   const pos = { x: r.x, y: r.y };
   if (sized) { pos.w = r.w; pos.h = r.h; } else if (prev.w) { pos.w = prev.w; pos.h = prev.h; }
   st.pos[String(app.state.floor)] = pos;
@@ -1432,8 +1433,9 @@ async function saveRoomBox(r, sized) {
     const ost = styleOf(o);
     ost.pos = ost.pos || {};
     ost.pos[fl] = { x: o.x, y: o.y };
-    await api("/api/room/style", { method: "POST", body: JSON.stringify({ key: o.key, style: ost }) }).catch(() => {});
+    pins.push([o, ost]);
   }
+  for (const [o, ost] of pins) await api("/api/room/style", { method: "POST", body: JSON.stringify({ key: o.key, style: ost }) }).catch(() => {});
   await saveStyle(r);
   if (build.on) { build.room = r.key; renderBuilder(); }
 }
@@ -1643,33 +1645,28 @@ canvas.addEventListener("contextmenu", (e) => {
   e.preventDefault();
   const { sx, sy } = canvasPoint(e);
   const w = screenToWorld(sx, sy);
-  if (build.on) {
+  if (!entityAt(sx, sy)) {
     const f = fixtureAt(w.x, w.y);
-    if (f) {
-      const st = styleOf(f.room);
-      (f.type === "decor" ? st.decor : st.blocks).splice(f.idx, 1);
-      saveStyle(f.room).then(renderBuilder);
-      return;
-    }
+    if (f && f.type === "block") { pick(`block:${f.room.key}:${f.idx}`, f.room, () => {}); showMenu(e, pieceMenu()); return; }
     const pa = propAt(w);
-    if (pa) {
-      const st = styleOf(pa.room);
-      st.props = st.props.filter((x) => x !== pa.prop);
-      build.prop = null;
-      saveStyle(pa.room).then(renderBuilder);
-      return;
-    }
+    if (pa) { pick(`prop:${pa.room.key}:${pa.room.style.props.indexOf(pa.prop)}`, pa.room, () => {}); showMenu(e, pieceMenu()); return; }
   }
   const hit = entityAt(sx, sy);
   const r = roomAt(w.x, w.y);
   if (hit && hit.kind === "pup") { select(hit.id, false); showMenu(e, pupMenu(hit)); }
   else if (hit && hit.kind === "item") { select(hit.id, false); const t = itemOf(hit.id); if (t) showMenu(e, itemMenu(t)); }
-  else if (hit) { select(hit.id, false); showMenu(e, [["▶ Start", () => thingAct("start", hit.id)], ["■ Stop", () => thingAct("stop", hit.id)]]); }
+  else if (hit) {
+    select(hit.id, false);
+    const t = thingOf(hit.id);
+    showMenu(e, t && t.running
+      ? [["↗ Focus", () => thingAct("start", hit.id)], ["✋ Stop", () => { if (confirm(`Stop ${t.name}?`)) thingAct("stop", hit.id); }]]
+      : [["▶ Start", () => thingAct("start", hit.id)]]);
+  }
   else if (r) { app.sel = "room:" + r.key; renderCard(); showMenu(e, roomMenu(r)); }
   else showMenu(e, [
     ["🏠 New kennel here", () => createKennel({ x0: Math.round(w.x), y0: Math.round(w.y), x1: Math.round(w.x) + 12, y1: Math.round(w.y) + 8 })],
     ["⤢ Zoom to fit", () => zoomFit()],
-    [build.on ? "✓ Done building" : "🔨 Build mode", () => setBuild(!build.on)],
+    [build.on ? "✓ Done designing" : "🎨 Design this floor", () => setBuild(!build.on)],
   ]);
 });
 
@@ -1702,7 +1699,7 @@ function pupMenu(ent) {
 function roomMenu(r) {
   const st = r.style || {};
   const pos = st.pos && st.pos[String(app.state.floor)];
-  const items = [["🐣 New pup here", () => newPupIn(r)], ["🔨 Customize", () => { setBuild(true); build.room = r.key; renderBuilder(); }]];
+  const items = [["🐣 New pup here", () => newPupIn(r)], ["🎨 Design", () => { build.room = r.key; showTab("build"); }]];
   if (r.kennel) {
     items.push(["✎ Rename…", () => renameKennel(r)]);
     for (const f of app.state.floors) if (f.id !== app.state.floor) items.push([`🏢 Move to ${f.name}`, () => moveKennelToFloor(r, f.id)]);
@@ -1719,6 +1716,8 @@ function roomMenu(r) {
 const convo = { id: null, msgs: [], sig: "" };
 let termUI = { id: null, xterm: null, fit: null, es: null, q: Promise.resolve(), ro: null };
 let focusTermNext = null; // the session whose terminal should take the keyboard when it attaches
+let termTheme = null;
+api("/api/term-theme").then((r) => r.json()).then((t) => { termTheme = t; }).catch(() => {});
 
 function showTerm() {
   const box = $("#term");
@@ -1753,7 +1752,7 @@ function showTerm() {
     const here = el("button", "primary", "▶ Continue here");
     here.title = "starts a second copy of it in this panel; the other terminal keeps its own";
     here.onclick = () => startTerm(p);
-    const go = el("button", "", "↗ Go to it");
+    const go = el("button", "", "↗ Go to");
     go.onclick = () => act("open", p.id);
     acts.append(here, go, el("span", "how", p.pane ? "" : "It's also running in another terminal."));
   }
@@ -1876,21 +1875,51 @@ function attachTerm(p) {
 // focus is only for a terminal the user just started; one attached by selecting a pup
 // on the map must leave the keyboard to the map (Delete, arrows…).
 function mountXterm(id, screen, focus) {
-  const x = new Terminal({ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 12.5, cursorBlink: true, scrollback: 5000,
-    theme: { background: "#1e1e2e", foreground: "#cdd6f4", cursor: "#f5e0dc", selectionBackground: "#585b70" } });
+  const g = termTheme || {};
+  const pal = g.palette || {};
+  const names = ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"];
+  const colors = {};
+  names.forEach((n, i) => {
+    if (pal[i]) colors[n] = pal[i];
+    if (pal[i + 8]) colors["bright" + n[0].toUpperCase() + n.slice(1)] = pal[i + 8];
+  });
+  // Ghostty's look and feel: its font, colors, cursor and padding, Option as Meta,
+  // Unicode 11 widths for the symbols agents draw, GPU rendering, clickable links.
+  const x = new Terminal({
+    fontFamily: `${g.fontFamily ? `"${g.fontFamily}", ` : ""}"SF Mono", Menlo, ui-monospace, monospace`,
+    fontSize: g.fontSize || 13, lineHeight: g.lineHeight || 1, cursorBlink: g.cursorBlink !== false,
+    cursorStyle: { bar: "bar", underline: "underline" }[g.cursorStyle] || "block",
+    macOptionIsMeta: g.optionAsAlt !== false, allowProposedApi: true, scrollback: 10000, drawBoldTextInBrightColors: false,
+    theme: { background: g.background || "#1e1e2e", foreground: g.foreground || "#cdd6f4", cursor: g.cursor || g.foreground || "#f5e0dc",
+      selectionBackground: g.selection || "#585b70", ...colors } });
+  screen.style.background = g.background || "#1e1e2e";
+  screen.style.padding = `${g.paddingY ?? 2}px ${g.paddingX ?? 2}px`;
   const fit = new FitAddon.FitAddon();
   x.loadAddon(fit);
+  if (window.Unicode11Addon) { x.loadAddon(new Unicode11Addon.Unicode11Addon()); x.unicode.activeVersion = "11"; }
+  if (window.WebLinksAddon) x.loadAddon(new WebLinksAddon.WebLinksAddon((e, uri) => window.open(uri, "_blank", "noopener")));
   x.open(screen);
+  if (window.WebglAddon) {
+    try {
+      const gl = new WebglAddon.WebglAddon();
+      gl.onContextLoss(() => gl.dispose());
+      x.loadAddon(gl);
+    } catch (_) { /* the DOM renderer is the fallback */ }
+  }
   fit.fit();
   termUI = { id, xterm: x, fit, es: null, q: Promise.resolve(), ro: null };
   // Keystrokes go in order: each POST waits for the one before.
   const send = (d) => { termUI.q = termUI.q.then(() => api(`/api/term/${id}/input`, { method: "POST", body: JSON.stringify({ data: d }) })).catch(() => {}); };
   x.onData(send);
   // Shift+Enter is a new line in the prompt, not a submit: agents read ESC+Return
-  // (what Option+Enter sends) as a line break.
+  // (what Option+Enter sends) as a line break. ⌘K clears, as in Ghostty.
   x.attachCustomKeyEventHandler((e) => {
     if (e.key === "Enter" && e.shiftKey && !e.metaKey && !e.ctrlKey) {
       if (e.type === "keydown") send("\x1b\r");
+      return false;
+    }
+    if (e.key === "k" && e.metaKey && !e.shiftKey) {
+      if (e.type === "keydown") x.clear();
       return false;
     }
     return true;
@@ -2025,7 +2054,8 @@ async function renameKennel(r) {
 
 async function deleteKennel(r) {
   const n = r.pups.length;
-  if (!r.smart && n && !confirm(`Delete ${r.title}? Its ${n} pups go back to 📥 New; the sessions themselves are kept.`)) return;
+  const what = r.smart ? "The pups it shows stay where they are filed." : `Its ${n} pups go back to 📥 New; the sessions themselves are kept.`;
+  if (n && !confirm(`Delete ${r.title}? ${what}`)) return;
   try {
     await api(`/api/kennels/${r.kennel}/delete`, { method: "POST", body: "{}" });
     app.sel = null; $("#card").hidden = true;
@@ -2104,12 +2134,19 @@ function interact(e) {
 }
 
 window.addEventListener("keydown", (e) => {
-  const typing = ["INPUT", "TEXTAREA"].includes(document.activeElement.tagName);
+  const focus = document.activeElement, tag = focus.tagName;
+  const typing = ["INPUT", "TEXTAREA", "SELECT"].includes(tag) || focus.isContentEditable;
+  if (e.key === "Escape" && lib.open && (!typing || $("#library").contains(focus))) { focus.blur(); closeLibrary(); return; }
   if ((e.key === "/" && !typing) || ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f")) { e.preventDefault(); $("#q").focus(); $("#q").select(); return; }
   if (typing) return;
-  if (e.key === "Escape" && lib.open) { closeLibrary(); return; }
+  if (tag === "BUTTON" && (e.key === "Enter" || e.key === " ")) return;
   if (e.key === "Escape" && build.carry) { build.carry = null; renderBuilder(); return; }
-  if (e.key === "Escape") { $("#sort").hidden = true; $("#floorsheet").hidden = true; hideMenu(); app.multi.clear(); setTool("select"); $("#transcript").hidden = true; app.sel = null; $("#card").hidden = true; build.carry = null; build.room = null; renderBuilder(); return; }
+  if (e.key === "Escape") {
+    const open = [$("#ctxmenu"), $("#transcript"), $("#sort"), $("#floorsheet")].filter((x) => x && !x.hidden);
+    if (open.length) { for (const x of open) x.hidden = true; return; }
+    app.multi.clear(); setTool("select"); app.sel = null; $("#card").hidden = true; build.room = null; renderBuilder(); return;
+  }
+  if (e.key === "?") { $("#helpbtn").click(); return; }
   if (e.key === " " && !e.repeat) { e.preventDefault(); spaceHeld = true; canvas.style.cursor = "grab"; return; }
   if (e.key === "v" || e.key === "1") { setTool("select"); return; }
   if (e.key === "h" || e.key === "2") { setTool("hand"); return; }
@@ -2117,6 +2154,8 @@ window.addEventListener("keydown", (e) => {
   if (e.key === "!" || (e.shiftKey && e.code === "Digit1")) { zoomFit(); return; }
   if ((e.key === "=" || e.key === "+") && !e.metaKey) { zoomAt(app.cam.z * 1.2); return; }
   if (e.key === "-" && !e.metaKey) { zoomAt(app.cam.z / 1.2); return; }
+  if ((e.key === "Delete" || e.key === "Backspace") && (selectedProp() || selectedBlock())) { e.preventDefault(); removeSelected(); return; }
+  if ((e.key === "Delete" || e.key === "Backspace") && selectedRoom() && selectedRoom().kennel) { e.preventDefault(); deleteKennel(selectedRoom()); return; }
   if ((e.key === "Delete" || e.key === "Backspace") && (app.multi.size || (app.sel && (pupOf(app.sel) || itemOf(app.sel))))) {
     const ids = app.multi.size ? [...app.multi] : [app.sel];
     deletePups(ids);
@@ -2354,7 +2393,7 @@ function drawRoom(r) {
   const n = r.pups.length + r.things.length + itemsIn(r).length;
   if (!n) {
     ctx.fillStyle = PAL.empty; ctx.font = "italic 13px Inter, system-ui";
-    ctx.textAlign = "center"; ctx.fillText(isOwnKennel(r) ? "drag sessions here from the tray →" : r.blurb || "empty", x0 + W / 2, y0 + wallH + 62); ctx.textAlign = "left";
+    ctx.textAlign = "center"; ctx.fillText(isOwnKennel(r) ? "drag chats here from the list" : r.blurb || "empty", x0 + W / 2, y0 + wallH + 62); ctx.textAlign = "left";
   }
   if (app.dropRoom === r.key) {
     ctx.fillStyle = "#3d47db1f"; ctx.fillRect(x0, y0, W, H);
@@ -2364,7 +2403,7 @@ function drawRoom(r) {
     ctx.strokeStyle = "#3d47db66"; ctx.lineWidth = 3; ctx.setLineDash([8, 6]);
     ctx.strokeRect(x0 - 10, y0 - 4, W + 20, H + 12); ctx.setLineDash([]);
   }
-  if (build.on && build.room === r.key) {
+  if (build.on && build.room === r.key && app.sel !== "room:" + r.key) {
     ctx.strokeStyle = "#f2b01e"; ctx.lineWidth = 4; ctx.setLineDash([10, 6]);
     ctx.strokeRect(x0 - 10, y0 - 6, W + 20, H + 16); ctx.setLineDash([]);
   }
@@ -2458,7 +2497,7 @@ function drawProps(r) {
       ctx.fillStyle = "#1f2233d9"; roundRect(x + w - tw - 2, y + 4, tw, 18, 9); ctx.fill();
       ctx.fillStyle = "#fff"; ctx.fillText(label, x + w - tw + 4, y + 17);
     }
-    if (build.on && build.prop === pr) {
+    if (app.sel === `prop:${r.key}:${r.style.props.indexOf(pr)}`) {
       ctx.strokeStyle = "#f2b01e"; ctx.lineWidth = 2; ctx.setLineDash([6, 4]); ctx.strokeRect(x - 3, y - 3, w + 6, h + 6); ctx.setLineDash([]);
       ctx.fillStyle = "#fff"; ctx.fillRect(x + w - 2, y + h - 2, 10, 10); ctx.strokeRect(x + w - 2, y + h - 2, 10, 10);
     }
@@ -2738,7 +2777,7 @@ function drawOverlays() {
     ctx.strokeStyle = "#3d47db"; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.ellipse(e.x * TILE, e.y * TILE + 2, 23, 7, 0, 0, 7); ctx.stroke();
   }
   const sr = selectedRoom();
-  if (sr && !build.on) {
+  if (sr) {
     const x0 = sr.x * TILE, y0 = sr.y * TILE, W = sr.w * TILE, H = sr.h * TILE;
     ctx.strokeStyle = "#6965db"; ctx.lineWidth = lw; ctx.strokeRect(x0, y0, W, H);
     const hs = 9 / z, pts = handlePoints(sr);
@@ -2801,7 +2840,7 @@ function render() {
     ctx.textAlign = "center"; ctx.fillStyle = PAL.labelInk;
     ctx.font = "700 20px Inter, system-ui"; ctx.fillText("This floor is empty", cw / 2, ch / 2 - 14);
     ctx.font = "14px Inter, system-ui"; ctx.fillStyle = PAL.empty;
-    ctx.fillText("Draw a kennel with ▭ (R), or open 🔨 Build to add rooms that fill themselves.", cw / 2, ch / 2 + 14);
+    ctx.fillText("Draw a kennel with ▭ (R), or open 🎨 Design to add rooms that fill themselves.", cw / 2, ch / 2 + 14);
     ctx.textAlign = "left";
   }
   if (app.shownZoom !== app.cam.z) { app.shownZoom = app.cam.z; $("#zoomval").textContent = Math.round(app.cam.z * 100) + "%"; }
@@ -2861,7 +2900,7 @@ async function saveStyle(r, quiet) {
     await api("/api/room/style", { method: "POST", body: JSON.stringify({ key: r.key, style: r.style || {} }) });
   } catch (e) { toast(e.message, true); }
   await loadState();
-  if (!quiet && app.state.undo) toast("🔨 " + r.title + " updated", false, true);
+  if (!quiet && app.state.undo) toast("🎨 " + r.title + " updated", false, true);
 }
 
 const decorIcon = (k) => (catalog.decor.find((d) => d.key === k) || { icon: "❓" }).icon;
@@ -2877,9 +2916,13 @@ function drawFixtures(r) {
     ctx.fillStyle = "#0002"; ctx.beginPath(); ctx.ellipse(px, py + 2, 14, 4, 0, 0, 7); ctx.fill();
     ctx.fillStyle = "#000"; ctx.font = "28px system-ui"; ctx.fillText(decorIcon(d.kind), px, py);
   }
-  for (const b of st.blocks || []) {
+  (st.blocks || []).forEach((b, i) => {
     const px = (box.x + b.x * box.w) * TILE, py = (box.y + b.y * box.h) * TILE;
     const cfg = b.config || {};
+    if (app.sel === `block:${r.key}:${i}`) {
+      ctx.strokeStyle = "#3d47db"; ctx.lineWidth = 2.5; ctx.setLineDash([5, 4]);
+      ctx.strokeRect(px - 26, py - 52, 52, 58); ctx.setLineDash([]);
+    }
     ctx.fillStyle = "#0002"; ctx.beginPath(); ctx.ellipse(px, py + 2, 16, 5, 0, 0, 7); ctx.fill();
     ctx.fillStyle = "#000";
     switch (b.kind) {
@@ -2935,19 +2978,20 @@ function drawFixtures(r) {
     const label = b.kind === "door" && cfg.name ? `🚪 ${cfg.name}` : b.kind === "portal" && cfg.workspace ? `🌀 ${cfg.workspace}` :
       b.kind === "chute" ? `🧹 ${cfg.days || 14}d` : `${k.icon} ${k.name}`;
     ctx.textAlign = "left";
-    nameTag(px, py + 6, label, build.drag && build.drag.fixture && build.drag.fixture.item === b);
+    nameTag(px, py + 6, label, app.sel === `block:${r.key}:${i}`);
     ctx.textAlign = "center";
-  }
+  });
   ctx.textAlign = "left";
 }
 
 function setBuild(on) {
   build.on = on;
   $("#buildbtn").classList.toggle("on", on);
-  $("#stage").classList.toggle("building", on);
   if (!on) { build.carry = null; build.drag = null; }
-  for (const x of document.querySelectorAll("#side .tabs button")) x.classList.toggle("on", !on && x.dataset.tab === "pack");
-  for (const p of PANELS) $("#" + p).hidden = p !== (on ? "build" : "pack");
+  if (on) app.tab = "build";
+  for (const x of document.querySelectorAll("#side .tabs button")) x.classList.toggle("on", x.dataset.tab === (on ? "build" : "term"));
+  for (const p of PANELS) $("#" + p).hidden = p !== (on ? "build" : "term");
+  if (!on) { app.tab = "term"; showTerm(); }
   renderBuilder();
 }
 
@@ -2985,16 +3029,17 @@ function placeIn(r, item, w) {
     const pr = { kind: item.kind, w: def.w, h: def.h,
       x: Math.max(0, Math.min(1 - def.w, (w.x - box.x) / box.w - def.w / 2)), y: Math.max(0, Math.min(1 - def.h, (w.y - box.y) / box.h - def.h / 2)) };
     (st.props = st.props || []).push(pr);
-    build.room = r.key; build.prop = pr; build.carry = null;
-    return saveStyle(r).then(renderBuilder);
+    build.room = r.key; build.carry = null;
+    app.sel = `prop:${r.key}:${st.props.length - 1}`;
+    return saveStyle(r).then(() => { renderBuilder(); renderCard(); });
   }
   const placed = { kind: item.kind, x: Math.max(0, Math.min(1, (w.x - box.x) / box.w)), y: Math.max(0, Math.min(1, (w.y + 0.4 - box.y) / box.h)) };
   const st = styleOf(r);
   if (item.type === "decor") (st.decor = st.decor || []).push(placed);
   else { placed.config = {}; (st.blocks = st.blocks || []).push(placed); }
   build.room = r.key;
-  if (item.type === "block") build.carry = null;
-  return saveStyle(r).then(renderBuilder);
+  if (item.type === "block") { build.carry = null; app.sel = `block:${r.key}:${st.blocks.length - 1}`; }
+  return saveStyle(r).then(() => { renderBuilder(); renderCard(); });
 }
 
 async function addSmart(k) {
@@ -3010,11 +3055,14 @@ function renderBuilder() {
   if (!box || box.hidden) return;
   // Redrawing under someone typing a block's settings would lose what they typed.
   if (box.contains(document.activeElement) && document.activeElement.tagName === "INPUT") return;
+  const top = box.dataset.room === String(build.room) ? box.scrollTop : 0;
+  box.dataset.room = String(build.room);
+  requestAnimationFrame(() => { box.scrollTop = top; });
   box.innerHTML = "";
   const head = el("div", "buildhead");
   const done = el("button", "", "Done");
   done.onclick = () => setBuild(false);
-  head.append(el("b", "", "🔨 Building"), el("span", "", "drag rooms by their wall · right-click furniture to remove"), done);
+  head.append(el("b", "", "🎨 Design"), el("span", "", "click a piece to select it · drag to move · corner resizes · Delete removes"), done);
   box.appendChild(head);
   const r = build.room && roomByKey(build.room);
   if (!r) {
@@ -3032,17 +3080,11 @@ function renderBuilder() {
       sm.appendChild(c);
     }
     box.appendChild(sm);
-    box.appendChild(el("h3", "", "blocks: click one, then click a room (or drag it there)"));
+    box.appendChild(el("h3", "", "blocks: click one, then click in a room, or drag it there"));
     box.appendChild(blockChips());
     return;
   }
   const st = styleOf(r);
-  if ((st.decor || []).length && catalog.decor) {
-    st.props = st.props || [];
-    for (const d of st.decor) st.props.push({ kind: d.kind, w: 0.14, h: 0.22, x: Math.max(0, Math.min(0.86, d.x - 0.07)), y: Math.max(0, Math.min(0.78, d.y - 0.22)) });
-    st.decor = [];
-    saveStyle(r, true);
-  }
   box.appendChild(el("div", "roomname", `${r.icon} ${r.title}`));
 
   box.appendChild(el("h3", "", "templates"));
@@ -3090,17 +3132,17 @@ function renderBuilder() {
   }
   box.appendChild(cl);
 
-  box.appendChild(el("h3", "", "objects: click one, then click in the room · drag a pup onto it"));
+  box.appendChild(el("h3", "", "objects: click one, then click in the room, or drag it there"));
   const ob = el("div", "chips");
   for (const [k, def] of Object.entries(PROPS)) {
     const c = chip(`${def.icon} ${def.name}`, false, () => { build.carry = build.carry && build.carry.kind === k ? null : { type: "prop", kind: k }; renderBuilder(); }, build.carry && build.carry.kind === k ? "carry" : "");
-    c.title = def.hint + " · drag its corner to resize, right-click to remove";
+    c.title = def.hint + " · drag its corner to resize · Delete removes it";
     carriable(c, { type: "prop", kind: k });
     ob.appendChild(c);
   }
   box.appendChild(ob);
 
-  box.appendChild(el("h3", "", "furniture — pick one, then click in the room"));
+  box.appendChild(el("h3", "", "furniture: click one, then click in the room, or drag it there"));
   const dc = el("div", "chips");
   for (const d of catalog.decor) {
     const b = el("button", "decor" + (build.carry && build.carry.kind === d.key ? " carry" : ""), d.icon);
@@ -3111,7 +3153,7 @@ function renderBuilder() {
   }
   box.appendChild(dc);
 
-  box.appendChild(el("h3", "", "blocks: click one, then click in the room (or drag it there)"));
+  box.appendChild(el("h3", "", "blocks: click one, then click in the room, or drag it there"));
   box.appendChild(blockChips());
 
   (st.blocks || []).forEach((b, i) => {
@@ -3137,7 +3179,7 @@ function renderBuilder() {
   });
 
   const reset = el("button", "danger", "Reset this room");
-  reset.onclick = async () => { await api("/api/room/reset", { method: "POST", body: JSON.stringify({ key: r.key }) }); await loadState(); renderBuilder(); };
+  reset.onclick = async () => { if (!confirm(`Reset ${r.title} to its default look? Its objects and blocks go away.`)) return; await api("/api/room/reset", { method: "POST", body: JSON.stringify({ key: r.key }) }); await loadState(); renderBuilder(); };
   box.appendChild(reset);
 }
 
@@ -3682,6 +3724,41 @@ $("#organizefloors").onclick = openFloorSheet;
 $("#floorsheet .apply").onclick = applyFloorSheet;
 $("#floorsheet .cancel").onclick = () => ($("#floorsheet").hidden = true);
 $("#floorsheet").addEventListener("click", (e) => { if (e.target.id === "floorsheet") $("#floorsheet").hidden = true; });
+function saveLayout(part) {
+  app.layout = Object.assign(app.layout || {}, part);
+  savePref("layout", app.layout);
+}
+
+// The navigator's sections resize by dragging the lines between them, and the whole
+// navigator by its right edge; sizes are remembered.
+function dragResize(e, onMove, onDone) {
+  e.preventDefault();
+  const x0 = e.clientX, y0 = e.clientY;
+  document.body.classList.add("resizing");
+  const move = (ev) => onMove(ev.clientX - x0, ev.clientY - y0);
+  const up = () => {
+    window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up);
+    document.body.classList.remove("resizing");
+    onDone();
+  };
+  window.addEventListener("mousemove", move); window.addEventListener("mouseup", up);
+}
+for (const g of document.querySelectorAll("#floornav .grip")) {
+  g.addEventListener("mousedown", (e) => {
+    const list = $(g.dataset.grip === "spaces" ? "#spaces" : "#floors");
+    const h0 = list.getBoundingClientRect().height;
+    const v = g.dataset.grip === "spaces" ? "--nav-spaces" : "--nav-floors";
+    let h = h0;
+    dragResize(e, (dx, dy) => { h = Math.max(36, h0 + dy); document.documentElement.style.setProperty(v, h + "px"); },
+      () => saveLayout({ [g.dataset.grip === "spaces" ? "navSpaces" : "navFloors"]: h }));
+  });
+}
+$("#navgrip").addEventListener("mousedown", (e) => {
+  const w0 = $("#floornav").getBoundingClientRect().width;
+  dragResize(e, (dx) => document.documentElement.style.setProperty("--navw", Math.max(150, Math.min(420, w0 + dx)) + "px"),
+    () => saveLayout({ navW: $("#floornav").getBoundingClientRect().width }));
+});
+
 // Drag the side panel's left edge to resize it; the width is remembered.
 (() => {
   const grip = $("#sidegrip");
@@ -3697,7 +3774,7 @@ $("#floorsheet").addEventListener("click", (e) => { if (e.target.id === "floorsh
     const up = () => {
       window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up);
       document.body.classList.remove("resizing");
-      savePref("layout", { side: $("#side").getBoundingClientRect().width });
+      saveLayout({ side: $("#side").getBoundingClientRect().width });
     };
     window.addEventListener("mousemove", move); window.addEventListener("mouseup", up);
   });
@@ -3707,9 +3784,12 @@ $("#sort .cancel").onclick = () => ($("#sort").hidden = true);
 $("#sort").addEventListener("click", (e) => { if (e.target.id === "sort") $("#sort").hidden = true; });
 app.space = null;
 $("#addspacebtn").onclick = newProject;
+$("#chatq").oninput = () => { chats.q = $("#chatq").value; renderChats(); savePref("tray", { q: chats.q, sort: chats.sort }); };
+$("#chatq").addEventListener("keydown", (e) => { if (e.key === "Escape") { $("#chatq").value = ""; $("#chatq").oninput(); $("#chatq").blur(); } e.stopPropagation(); });
+$("#chatsort").onchange = () => { chats.sort = $("#chatsort").value; renderChats(); savePref("tray", { q: chats.q, sort: chats.sort }); };
 $("#themebtn").onclick = cycleAppearance;
 systemDark.addEventListener("change", () => applyAppearance(appearance));
 applyAppearance(appearance);
-$("#helpbtn").onclick = () => toast("drag sessions from the tray onto a kennel · drag a room’s wall to move it, its handles to resize · right-click anything · t tell · V/H/R tools · arrows or Space-drag pan · ⌘-scroll zoom · ⌘Z undo");
+$("#helpbtn").onclick = () => toast("click selects · drag moves · drag a chat onto a kennel to file it · a room’s wall moves it, its handles resize it · double-click opens · Delete removes · right-click for more · Esc steps back · V/H/R tools · L library · B design · T light/dark · arrows or Space-drag pan · ⌘-scroll zoom · ⌘Z undo");
 resize();
 Promise.all([loadCatalog(), loadState(), loadTreats()]).then(() => { listen(); requestAnimationFrame(frame); }).catch((e) => toast(e.message, true));

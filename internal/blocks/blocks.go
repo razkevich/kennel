@@ -29,7 +29,7 @@ type Swatch struct {
 
 var Floors = []Swatch{
 	{"wood", "Wood", " "}, {"grass", "Grass", "⠂"}, {"tiles", "Tiles", "░"}, {"carpet", "Carpet", "·"},
-	{"water", "Water", "~"}, {"stone", "Stone", "∴"}, {"metal", "Metal", "▪"}, {"rug", "Rug", "▒"}, {"checker", "Checker", "⁘"},
+	{"water", "Water", "~"}, {"stone", "Stone", "∴"}, {"metal", "Metal", "▪"}, {"rug", "Plush", "▒"}, {"checker", "Checker", "⁘"},
 }
 
 var Walls = []Swatch{

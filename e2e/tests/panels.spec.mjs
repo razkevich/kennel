@@ -67,10 +67,10 @@ test("jobs and artifacts panels", async ({ page }) => {
 
 test("sort new sessions into kennels: suggestions, adjust, file all, one undo", async ({ page }) => {
   await open(page);
-  const newCount = async () => Number((await page.locator("#pack h4", { hasText: "New, not in a kennel" }).textContent()).match(/· (\d+)/)[1]);
+  const newCount = async () => (await page.locator("#chatsortinto").isVisible()) ? Number((await page.locator("#chatsortinto").textContent()).match(/Sort (\d+)/)[1]) : 0;
   const before = await newCount();
   const kennelsBefore = await page.evaluate(() => window.kennel.app.state.kennels.length);
-  await page.locator("#pack .sortbtn").click();
+  await page.locator("#chatsortinto").click();
   const sheet = page.locator("#sort");
   await expect(sheet).toBeVisible();
   await expect(sheet.locator(".sortrow").first()).toBeVisible();

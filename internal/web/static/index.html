@@ -40,16 +40,19 @@
       <div class="libsel" id="libsel" hidden><span id="libselcount"></span><select id="libmove"></select><button id="libdo">move</button><button id="libclear">clear</button></div>
       <div id="libbody"></div>
     </div>
-    <aside id="floornav" aria-label="projects and floors">
+    <aside id="floornav" aria-label="projects, floors and chats">
+      <div id="navgrip" title="drag to resize"></div>
       <div class="fhead"><b>📁 Projects</b><button id="addspacebtn" title="start a project">＋</button></div>
       <nav id="spaces"></nav>
-      <div class="fsep"></div>
+      <div class="fsep grip" data-grip="spaces" title="drag to resize"></div>
       <div class="fhead"><b>🏢 Floors</b><button id="addfloorbtn" title="new floor">＋</button></div>
       <nav id="floors"></nav>
       <button id="organizefloors" title="Let the model group your kennels into floors; you review before anything moves">✨ Organize into floors</button>
-      <div class="fsep"></div>
-      <div class="fhead"><b>💬 Chats</b></div>
+      <div class="fsep grip" data-grip="floors" title="drag to resize"></div>
+      <div class="fhead"><b>💬 Chats</b><select id="chatsort" title="sort"><option value="active">active first</option><option value="recent">most recent</option><option value="messages">most active</option><option value="cost">most expensive</option><option value="name">name</option></select></div>
+      <input id="chatq" type="search" placeholder="Search chats…">
       <nav id="chats"></nav>
+      <button id="chatsortinto" hidden></button>
     </aside>
     <div id="tools" role="toolbar" aria-label="tools">
       <button data-tool="select" title="Select: drag pups, move and resize rooms (V)">↖<i>1</i></button>
@@ -60,7 +63,7 @@
     <div id="ctxmenu" hidden></div>
     <div id="dock">
       <button id="libbtn" class="dockbtn" title="all sessions (L)"><span>📚</span>Library</button>
-      <button id="buildbtn" class="dockbtn" title="build mode (B)"><span>🔨</span>Build</button>
+      <button id="buildbtn" class="dockbtn" title="design rooms and add new ones (B)"><span>🎨</span>Design</button>
       <button id="helpbtn" class="dockbtn icon" title="help">?</button>
     </div>
   </div>
@@ -68,14 +71,13 @@
     <div id="sidegrip" title="drag to resize"></div>
     <div id="card" hidden></div>
     <div class="tabs">
-      <button data-tab="pack" class="on" title="Sessions from the last week: drag onto a kennel to file">🐾 Sessions</button>
-      <button data-tab="term" title="The selected pup's terminal">🖥</button>
+      <button data-tab="term" class="on" title="The selected pup's terminal">🖥 Terminal</button>
       <button data-tab="ask" title="Ask">💬</button>
       <button data-tab="jobs" title="Jobs & things">⏰</button>
       <button data-tab="art" title="Shelf: artifacts, links, files, channels">📎</button>
+      <button data-tab="build" title="Design: the selected room, or rooms to add">🎨</button>
     </div>
-    <section id="pack"></section>
-    <section id="term" hidden></section>
+    <section id="term"></section>
     <section id="build" hidden></section>
     <section id="jobs" hidden></section>
     <section id="art" hidden></section>
@@ -103,6 +105,9 @@
 
 <script src="vendor/xterm.js"></script>
 <script src="vendor/addon-fit.js"></script>
+<script src="vendor/addon-webgl.js"></script>
+<script src="vendor/addon-unicode11.js"></script>
+<script src="vendor/addon-web-links.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

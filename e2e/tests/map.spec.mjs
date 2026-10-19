@@ -1,14 +1,14 @@
 import { test, expect } from "@playwright/test";
 import { open, post, pupId, thingKey, clickEntity, dragTo } from "./helpers.mjs";
 
-test("shows the office with live counts and the session tray", async ({ page }) => {
+test("shows the office with live counts and the chats", async ({ page }) => {
   await open(page);
   await expect(page.locator("#counts")).toContainText("1 needs you");
   await expect(page.locator("#counts")).toContainText("2 working");
   await expect(page.locator("#floors .floor.on .fname")).toContainText("🏢 Main");
-  await expect(page.locator("#pack")).toContainText("Needs you · 1");
-  await expect(page.locator("#pack")).toContainText("New, not in a kennel");
-  await expect(page.locator("#pack .member", { hasText: "FLAKY-CI" })).toBeVisible();
+  // Chats lead with whoever needs you, then who's working.
+  await expect(page.locator("#chats .chat").first()).toContainText("FLAKY-CI");
+  await expect(page.locator("#chatsortinto")).toContainText(/Sort \d+ new/);
   const rooms = await page.evaluate(() => window.kennel.app.rooms.map((r) => r.title));
   expect(rooms).toEqual(expect.arrayContaining(["The Yard", "Workshop", "Firehouse", "Helping Out", "Best in Show", "Payments"]));
   // Each pup stands in one room at most.
@@ -16,16 +16,15 @@ test("shows the office with live counts and the session tray", async ({ page }) 
   expect(new Set(ids).size).toBe(ids.length);
 });
 
-test("tray: filter, collapse groups, drag a session onto a kennel to file it", async ({ page }) => {
+test("chats: search, sort, drag one onto a kennel to file it", async ({ page }) => {
   await open(page);
-  const tray = page.locator("#pack");
-  await tray.locator(".trayq").fill("pg-upgrade");
-  await expect(tray.locator(".member")).toHaveCount(1);
-  await tray.locator(".trayq").fill("");
-  await tray.locator("h4", { hasText: "New" }).click();
-  await expect(tray.locator(".group.closed")).toHaveCount(1);
-  await expect(tray.locator(".group.closed .member")).toHaveCount(0);
-  await tray.locator("h4", { hasText: "New" }).click();
+  await page.locator("#chatq").fill("pg-upgrade");
+  await expect(page.locator("#chats .chat")).toHaveCount(1);
+  await page.locator("#chatq").fill("");
+  await page.locator("#chatsort").selectOption("name");
+  const names = (await page.locator("#chats .chat .t").allTextContents()).map((n) => n.replace(/^[^A-Za-z0-9]+/, ""));
+  expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b)));
+  await page.locator("#chatsort").selectOption("active");
 
   const id = await pupId(page, "RATE-LIMITS");
   const payments = await page.evaluate(() => window.kennel.app.rooms.find((r) => r.title === "Payments").key);
@@ -35,19 +34,20 @@ test("tray: filter, collapse groups, drag a session onto a kennel to file it", a
     app.cam.y = (r.y + r.h / 2) * 32 - st.clientHeight / app.cam.z / 2;
   }, payments);
   const at = await page.evaluate((k) => window.kennel.roomPos(k, 0.5, 0.6), payments);
-  await tray.locator(`.member[data-id="${id}"]`).dragTo(page.locator("#map"), { targetPosition: { x: at.x - (await page.locator("#map").boundingBox()).x, y: at.y - (await page.locator("#map").boundingBox()).y } });
+  const box = await page.locator("#map").boundingBox();
+  await expect(page.locator(`#chats .chat[data-id="${id}"] .new`)).toHaveCount(1);
+  await page.locator(`#chats .chat[data-id="${id}"]`).dragTo(page.locator("#map"), { targetPosition: { x: at.x - box.x, y: at.y - box.y } });
   await expect(page.locator("#toast")).toContainText("filed into 💳 Payments");
-  await expect(tray.locator(`.member[data-id="${id}"] .pill.kennel`)).toHaveText("Payments");
+  await expect(page.locator(`#chats .chat[data-id="${id}"] .new`)).toHaveCount(0);
   await expect.poll(() => page.evaluate((k) => window.kennel.app.rooms.find((r) => r.key === k).pups.length, payments)).toBe(1);
   await page.keyboard.press("Meta+z");
   await expect.poll(() => page.evaluate((k) => window.kennel.app.rooms.find((r) => r.key === k).pups.length, payments)).toBe(0);
 });
-
 test("projects: start one, link a folder, its own floors and sessions, remembered, removable", async ({ page }) => {
   await open(page);
   await expect(page.locator("#spaces .space.on .fname")).toContainText("My work");
   // A project is a folder: start one from a folder your sessions used.
-  const all = await page.locator("#pack .member").count();
+  const all = await page.locator("#chats .chat").count();
   await page.locator("#addspacebtn").click();
   await page.locator("#ctxmenu button", { hasText: "📁 infra" }).click();
   await expect(page.locator("#spaces .space.on .fname")).toContainText("infra");
@@ -55,8 +55,8 @@ test("projects: start one, link a folder, its own floors and sessions, remembere
   // A fresh project starts with one floor and no rooms, and only that folder's sessions.
   await expect(page.locator("#floors .floor.on .fname")).toHaveText("🏢 Main");
   await expect.poll(() => page.evaluate(() => window.kennel.app.rooms.length)).toBe(0);
-  await expect.poll(() => page.locator("#pack .member").count()).toBeLessThan(all);
-  const projects = await page.evaluate(() => [...document.querySelectorAll("#pack .member")].map((m) => window.kennel.app.state.pups[m.dataset.id].project));
+  await expect.poll(() => page.locator("#chats .chat").count()).toBeLessThan(all);
+  const projects = await page.evaluate(() => [...document.querySelectorAll("#chats .chat")].map((m) => window.kennel.app.state.pups[m.dataset.id].project));
   expect(new Set(projects)).toEqual(new Set(["/Users/demo/code/infra"]));
   // Smart rooms here only pick from that folder.
   await page.keyboard.press("b");
@@ -87,19 +87,20 @@ test("projects: start one, link a folder, its own floors and sessions, remembere
   await post(page, `/api/spaces/${id}/delete`, {});
   await post(page, `/api/floors/${floorId}/delete`, {});
 });
-test("filters are remembered across reloads: list text, collapsed group, library filters", async ({ page }) => {
+test("filters are remembered across reloads: chat search and sort, library filters", async ({ page }) => {
   await open(page);
-  await page.locator("#pack .trayq").fill("pg");
-  await page.locator("#pack h4", { hasText: "New" }).click();
+  await page.locator("#chatq").fill("pg");
+  await page.locator("#chatsort").selectOption("recent");
+  await page.locator("#chatq").blur();
   await page.keyboard.press("l");
   await page.locator("#libagent").selectOption("codex");
   await page.locator("#libgroup").selectOption("agent");
   await page.keyboard.press("Escape");
   await page.waitForTimeout(500);
   await page.goto("/?t=e2e");
-  await page.waitForFunction(() => window.kennel && window.kennel.app.state && document.querySelector("#pack .trayq"));
-  await expect(page.locator("#pack .trayq")).toHaveValue("pg");
-  await expect(page.locator("#pack .group.closed")).toHaveCount(1);
+  await page.waitForFunction(() => window.kennel && window.kennel.app.state && document.querySelector("#chatq").dataset.ready);
+  await expect(page.locator("#chatq")).toHaveValue("pg");
+  await expect(page.locator("#chatsort")).toHaveValue("recent");
   await page.keyboard.press("l");
   await expect(page.locator("#libagent")).toHaveValue("codex");
   await expect(page.locator("#libgroup")).toHaveValue("agent");
@@ -107,8 +108,8 @@ test("filters are remembered across reloads: list text, collapsed group, library
   await page.locator("#libagent").selectOption("");
   await page.locator("#libgroup").selectOption("day");
   await page.keyboard.press("Escape");
-  await page.locator("#pack h4", { hasText: "New" }).click();
-  await page.locator("#pack .trayq").fill("");
+  await page.locator("#chatq").fill("");
+  await page.locator("#chatsort").selectOption("active");
   await page.waitForTimeout(500);
 });
 test("clicking a pup opens its card, double-click resumes it", async ({ page }) => {
@@ -125,13 +126,13 @@ test("clicking a pup opens its card, double-click resumes it", async ({ page }) 
   await expect(page.locator("#toast")).toContainText(`claude --resume ${id}`);
 });
 
-test("card buttons: star shows up in the pack, read opens the transcript", async ({ page }) => {
+test("card buttons: star shows up in the chats, read opens the transcript", async ({ page }) => {
   await open(page);
-  await page.locator("#pack .member", { hasText: "CHECKOUT-V2" }).click();
+  await page.locator("#chats .chat", { hasText: "CHECKOUT-V2" }).click();
   const card = page.locator("#card");
   await expect(card).toContainText("CHECKOUT-V2");
   await card.getByRole("button", { name: "☆ Star" }).click();
-  await expect(page.locator("#pack .member", { hasText: /★.*CHECKOUT-V2/ })).toBeVisible();
+  await expect(page.locator("#chats .chat", { hasText: "CHECKOUT-V2" }).locator(".star.on")).toBeVisible();
   await expect(card.getByRole("button", { name: "★ Unstar" })).toBeVisible();
 
   await card.getByRole("button", { name: "📜 Read" }).click();
@@ -321,6 +322,7 @@ test("shelves: pin links to kennels from the panel, see them on the wall and the
   await page.locator("#card .cardshelf .item", { hasText: "payments-oncall" }).locator("button.dots").click();
   await page.locator("#ctxmenu button", { hasText: "Take off the shelf" }).click();
   await expect(page.locator("#card .cardshelf .item")).toHaveCount(1);
+  await page.locator("#side .tabs button[data-tab=art]").click();
   await expect(panel.locator("h4", { hasText: "Loose" })).toBeVisible();
   await panel.locator(".item", { hasText: "payments-oncall" }).locator("button.dots").click();
   await page.locator("#ctxmenu button", { hasText: "Remove" }).click();
@@ -378,43 +380,27 @@ test("the terminal panel: messages, resume here, type into it, move to a tab", a
   const term = page.locator("#term");
   await expect.poll(() => term.locator(".m.user, .m.assistant").count()).toBeGreaterThan(0);
   await term.locator("button", { hasText: "Resume here" }).click();
-  const screen = term.locator(".xterm-rows");
-  await expect(screen).toContainText(`would run: claude --resume ${id}`);
+  const screen = { text: () => page.evaluate(() => window.kennel.termText()) };
+  await expect.poll(screen.text).toContain(`would run: claude --resume ${id}`);
   await page.keyboard.type("hello pty");
   await page.keyboard.press("Enter");
-  await expect(screen).toContainText("hello pty");
-  await page.locator('#side .tabs button[data-tab="pack"]').click();
-  await expect(page.locator(`#pack .member[data-id="${id}"] .pill.here`)).toBeVisible();
+  await expect.poll(screen.text).toContain("hello pty");
+  await expect(page.locator(`#chats .chat[data-id="${id}"] .here`)).toBeVisible();
   // Back to it: it re-attaches with the scrollback.
-  await page.locator(`#pack .member[data-id="${id}"]`).click();
+  await page.locator(`#chats .chat[data-id="${id}"]`).click();
   await page.locator('#side .tabs button[data-tab="term"]').click();
-  await expect(screen).toContainText("hello pty");
+  await expect.poll(screen.text).toContain("hello pty");
   await term.locator("button", { hasText: "Stop" }).click();
   await expect.poll(() => page.evaluate((i) => window.kennel.app.state.pups[i].term, id)).toBe(false);
   // A pup running in another terminal can still continue here (a second copy), or Go to.
   const far = await page.evaluate(() => Object.values(window.kennel.app.state.pups).find((p) => p.status !== "offline" && !p.pane)?.id);
   await clickEntity(page, far);
-  await expect(term.locator("button", { hasText: "Go to it" })).toBeVisible();
+  await expect(term.locator("button", { hasText: "Go to" })).toBeVisible();
   await term.locator("button", { hasText: "Continue here" }).click();
-  await expect(term.locator(".xterm-rows")).toContainText(`would run: claude --resume ${far}`);
+  await expect.poll(screen.text).toContain(`would run: claude --resume ${far}`);
   await term.locator("button", { hasText: "Stop" }).click();
 });
 
-test("sessions list: group and sort", async ({ page }) => {
-  await open(page);
-  const tray = page.locator("#pack");
-  await tray.locator('select[data-key="group"]').selectOption("role");
-  await expect(tray.locator("h4", { hasText: "Firefighter" })).toBeVisible();
-  await tray.locator('select[data-key="group"]').selectOption("project");
-  await expect(tray.locator("h4", { hasText: "📁 infra" })).toBeVisible();
-  await tray.locator('select[data-key="group"]').selectOption("none");
-  await tray.locator('select[data-key="sort"]').selectOption("name");
-  const names = await tray.locator(".member .name").allTextContents();
-  const plain = names.map((n) => n.replace(/^[^A-Za-z0-9]+/, ""));
-  expect(plain).toEqual([...plain].sort((a, b) => a.localeCompare(b)));
-  await tray.locator('select[data-key="group"]').selectOption("status");
-  await tray.locator('select[data-key="sort"]').selectOption("recent");
-});
 test("pups wear their role: a role icon on the card and in the New list", async ({ page }) => {
   await open(page);
   const roles = await page.evaluate(() => Object.fromEntries(Object.values(window.kennel.app.state.pups).map((p) => [p.title, p.role])));
@@ -423,7 +409,7 @@ test("pups wear their role: a role icon on the card and in the New list", async 
   const id = await pupId(page, "INCIDENT-0612");
   await clickEntity(page, id);
   await expect(page.locator("#card .role")).toHaveText("🧑‍🚒");
-  await expect(page.locator("#pack .member", { hasText: "review infra#91" })).toContainText("🧐");
+  await expect(page.locator("#chats .chat", { hasText: "review infra#91" })).toContainText("🧐");
 });
 
 test("agent messages render as markdown, safely", async ({ page }) => {

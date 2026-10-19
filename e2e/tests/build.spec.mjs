@@ -62,6 +62,7 @@ test("build mode: template, floor, furniture, blocks, moving rooms", async ({ pa
     return window.kennel.roomPos(k, pr.x + pr.w / 2, pr.y + pr.h / 2);
   }, L);
   await page.mouse.click(plant.x, plant.y, { button: "right" });
+  await page.locator("#ctxmenu button", { hasText: "Remove" }).click();
   await expect.poll(async () => ((await room(page, L)).style.props || []).length).toBe(3);
 
   // Leave build mode and use the door: it spawns a pup with the preset name.
@@ -76,7 +77,7 @@ test("build mode: template, floor, furniture, blocks, moving rooms", async ({ pa
       const d = r.style.blocks.find((b) => b.kind === "door");
       return window.kennel.roomPos(k, d.x, d.y - 0.05);
     }, L);
-    await page.mouse.click(door.x, door.y);
+    await page.mouse.dblclick(door.x, door.y);
     await expect(page.locator("#toast")).toContainText("claude -n PAGER", { timeout: 1500 });
   }).toPass({ timeout: 10000 });
 });
@@ -126,6 +127,9 @@ test("room card: start a new pup in a kennel and add existing pups from search",
   await expect(row).toBeVisible();
   await row.getByRole("button", { name: "＋" }).click();
   await expect.poll(() => page.evaluate(() => Object.values(window.kennel.app.state.pups).some((p) => p.title === "RATE-LIMITS" && p.kennel === "Night shift"))).toBeTruthy();
+  // Put things back for the other tests: deleting the kennel sends its pups back to New.
+  const night = await page.evaluate(() => window.kennel.app.rooms.find((r) => r.title === "Night shift").kennel);
+  await post(page, `/api/kennels/${night}/delete`, {});
 });
 
 test("builder with no room picked: add a smart room, drag a block onto a room, click-to-place", async ({ page }) => {
@@ -157,6 +161,7 @@ test("builder with no room picked: add a smart room, drag a block onto a room, c
   const wall = await page.evaluate((k) => window.kennel.wallPos(k), rug);
   await page.mouse.click(wall.x, wall.y);
   await expect(page.locator("#card")).toContainText("Fills itself");
+  page.once("dialog", (d) => d.accept());
   await page.locator("#card button", { hasText: "Delete" }).click();
   await expect.poll(() => page.evaluate(() => window.kennel.app.rooms.some((r) => r.smart === "rug"))).toBe(false);
 });
